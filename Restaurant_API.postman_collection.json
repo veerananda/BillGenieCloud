@@ -1,0 +1,429 @@
+{
+  "info": {
+    "name": "Restaurant API - Complete Collection",
+    "description": "Complete API collection for Restaurant POS System with inventory deduction",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "restaurant_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "menu_item_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        },
+        "description": "Check if API is running"
+      }
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register Restaurant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.data && jsonData.data.access_token) {",
+                  "        pm.collectionVariables.set('access_token', jsonData.data.access_token);",
+                  "        pm.collectionVariables.set('restaurant_id', jsonData.data.restaurant.id);",
+                  "        console.log('✅ Token saved:', jsonData.data.access_token);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"restaurant_name\": \"Test Restaurant\",\n  \"owner_name\": \"John Doe\",\n  \"email\": \"john@restaurant.com\",\n  \"phone\": \"9876543210\",\n  \"password\": \"password123\",\n  \"address\": \"123 Main Street\",\n  \"city\": \"Mumbai\",\n  \"cuisine\": \"Indian\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.data && jsonData.data.access_token) {",
+                  "        pm.collectionVariables.set('access_token', jsonData.data.access_token);",
+                  "        console.log('✅ Token updated:', jsonData.data.access_token);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@restaurant.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Menu Items",
+      "item": [
+        {
+          "name": "Create Menu Item - Paneer Tikka",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.data && jsonData.data.id) {",
+                  "        pm.collectionVariables.set('menu_item_id', jsonData.data.id);",
+                  "        console.log('✅ Menu item ID saved:', jsonData.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Paneer Tikka\",\n  \"category\": \"appetizer\",\n  \"description\": \"Grilled cottage cheese with Indian spices\",\n  \"price\": 250,\n  \"cost_price\": 120,\n  \"is_veg\": true,\n  \"is_available\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/menu",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "menu"]
+            }
+          }
+        },
+        {
+          "name": "Create Menu Item - Butter Chicken",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Butter Chicken\",\n  \"category\": \"main\",\n  \"description\": \"Creamy tomato-based chicken curry\",\n  \"price\": 350,\n  \"cost_price\": 180,\n  \"is_veg\": false,\n  \"is_available\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/menu",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "menu"]
+            }
+          }
+        },
+        {
+          "name": "Get All Menu Items",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/menu",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "menu"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Inventory",
+      "item": [
+        {
+          "name": "Setup Inventory for Menu Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"menu_item_id\": \"{{menu_item_id}}\",\n  \"quantity\": 50,\n  \"unit\": \"pieces\",\n  \"min_level\": 10,\n  \"max_level\": 100\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/inventory",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "inventory"]
+            }
+          }
+        },
+        {
+          "name": "Get All Inventory",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/inventory",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "inventory"]
+            },
+            "description": "Check inventory levels - should decrease after orders"
+          }
+        },
+        {
+          "name": "Update Inventory Quantity",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 75\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/inventory/{{menu_item_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "inventory", "{{menu_item_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "Create Order (Auto Deducts Inventory)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.data && jsonData.data.id) {",
+                  "        pm.collectionVariables.set('order_id', jsonData.data.id);",
+                  "        console.log('✅ Order created:', jsonData.data.id);",
+                  "        console.log('📦 Inventory deducted automatically!');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"table_number\": 5,\n  \"customer_name\": \"Jane Smith\",\n  \"items\": [\n    {\n      \"menu_item_id\": \"{{menu_item_id}}\",\n      \"quantity\": 2,\n      \"notes\": \"Extra spicy\"\n    }\n  ],\n  \"notes\": \"Birthday celebration\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "orders"]
+            },
+            "description": "✅ This will automatically deduct inventory!"
+          }
+        },
+        {
+          "name": "Get All Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "orders"]
+            }
+          }
+        },
+        {
+          "name": "Get Order by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "orders", "{{order_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Complete Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}/complete",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "orders", "{{order_id}}", "complete"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Order (Restores Inventory)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/orders/{{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "orders", "{{order_id}}"]
+            },
+            "description": "✅ This will restore inventory automatically!"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Testing Flow",
+      "item": [
+        {
+          "name": "Full Flow Test",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Run requests in this order:\n\n1. Authentication → Register Restaurant\n2. Menu Items → Create Menu Item\n3. Inventory → Setup Inventory (quantity: 50)\n4. Inventory → Get All Inventory (verify: 50)\n5. Orders → Create Order (quantity: 2)\n6. Inventory → Get All Inventory (verify: 48) ✅\n7. Orders → Create Order again (quantity: 3)\n8. Inventory → Get All Inventory (verify: 45) ✅\n\nThis proves inventory deduction works!"
+          }
+        }
+      ]
+    }
+  ]
+}
