@@ -29,6 +29,9 @@ type AuthResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
 	TokenType    string `json:"token_type"`
+	RestaurantID string `json:"restaurant_id"`
+	UserID       string `json:"user_id"`
+	Role         string `json:"role"`
 }
 
 type RegisterRequest struct {
@@ -136,16 +139,25 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 		return nil, err
 	}
 
+	refreshToken, err := s.GenerateRefreshToken(&user)
+	if err != nil {
+		return nil, err
+	}
+
 	return &AuthResponse{
-		AccessToken: accessToken,
-		ExpiresIn:   3600, // 1 hour
-		TokenType:   "Bearer",
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    3600, // 1 hour for access token
+		TokenType:    "Bearer",
+		RestaurantID: user.RestaurantID,
+		UserID:       user.ID,
+		Role:         user.Role,
 	}, nil
 }
 
 // GenerateAccessToken creates a new JWT access token
 func (s *AuthService) GenerateAccessToken(user *models.User) (string, error) {
-	expirationTime := time.Now().Add(time.Hour)
+	expirationTime := time.Now().Add(1 * time.Hour)
 
 	claims := &TokenClaims{
 		UserID:       user.ID,
@@ -165,6 +177,78 @@ func (s *AuthService) GenerateAccessToken(user *models.User) (string, error) {
 	}
 
 	return tokenString, nil
+}
+
+// GenerateRefreshToken creates a refresh token valid for 7 days and stores in DB
+func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
+	expirationTime := time.Now().Add(7 * 24 * time.Hour)
+
+	claims := &TokenClaims{
+		UserID:       user.ID,
+		RestaurantID: user.RestaurantID,
+		Role:         user.Role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(s.jwtSecret))
+	if err != nil {
+		return "", err
+	}
+
+	// Store in database
+	refreshToken := &models.RefreshToken{
+		UserID:    user.ID,
+		Token:     tokenString,
+		ExpiresAt: expirationTime,
+	}
+
+	if err := s.db.Create(refreshToken).Error; err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
+}
+
+// RefreshAccessToken validates refresh token and returns new access token
+func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse, error) {
+	// Validate refresh token
+	claims, err := s.ValidateToken(refreshTokenStr)
+	if err != nil {
+		return nil, errors.New("invalid refresh token")
+	}
+
+	// Check if refresh token exists in database and is not expired
+	var refreshToken models.RefreshToken
+	if err := s.db.Where("token = ? AND expires_at > ?", refreshTokenStr, time.Now()).First(&refreshToken).Error; err != nil {
+		return nil, errors.New("refresh token not found or expired")
+	}
+
+	// Get user
+	var user models.User
+	if err := s.db.Where("id = ?", claims.UserID).First(&user).Error; err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	// Generate new access token
+	newAccessToken, err := s.GenerateAccessToken(&user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &AuthResponse{
+		AccessToken:  newAccessToken,
+		RefreshToken: refreshTokenStr,
+		ExpiresIn:    3600, // 1 hour
+		TokenType:    "Bearer",
+		RestaurantID: user.RestaurantID,
+		UserID:       user.ID,
+		Role:         user.Role,
+	}, nil
 }
 
 // ValidateToken validates and parses JWT token

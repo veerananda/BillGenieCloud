@@ -41,6 +41,14 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// Global hub instance for broadcasting
+var globalHub *WebSocketHub
+
+// SetGlobalHub sets the global WebSocket hub
+func SetGlobalHub(hub *WebSocketHub) {
+	globalHub = hub
+}
+
 // NewWebSocketHub creates a new WebSocket hub
 func NewWebSocketHub() *WebSocketHub {
 	return &WebSocketHub{

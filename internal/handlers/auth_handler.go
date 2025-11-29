@@ -142,6 +142,39 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	})
 }
 
+// RefreshToken refreshes access token using refresh token
+// @Summary Refresh access token
+// @Description Get new access token using refresh token
+// @Accept json
+// @Produce json
+// @Param request body map[string]string true "Refresh token"
+// @Success 200 {object} services.AuthResponse
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/refresh [post]
+func (h *AuthHandler) RefreshToken(c *gin.Context) {
+	var req struct {
+		RefreshToken string `json:"refresh_token" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("❌ Binding error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Refresh the access token
+	authResponse, err := h.authService.RefreshAccessToken(req.RefreshToken)
+	if err != nil {
+		log.Printf("❌ Token refresh failed: %v", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("✅ Access token refreshed successfully")
+
+	c.JSON(http.StatusOK, authResponse)
+}
+
 // HealthCheck is a simple health endpoint
 // @Summary Health check
 // @Description Returns 200 if server is healthy

@@ -162,7 +162,7 @@ func (h *InventoryHandler) UpdateInventory(c *gin.Context) {
 		}
 	}
 
-	log.Printf("✅ Inventory updated: Menu Item %d, Quantity: %.2f", menuItemID, req.Quantity)
+	log.Printf("✅ Inventory updated: Menu Item %s, Quantity: %.2f", menuItemID, req.Quantity)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Inventory updated successfully",

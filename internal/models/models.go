@@ -53,16 +53,21 @@ type Restaurant struct {
 	TotalStaff      int             `json:"total_staff" gorm:"default:5"`
 	SubscriptionEnd time.Time       `json:"subscription_end"`
 	IsActive        bool            `json:"is_active" gorm:"default:true"`
-	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"` // Customizable settings
-	CreatedAt       time.Time       `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt       time.Time       `json:"updated_at" gorm:"autoUpdateTime"`
+	IsSelfService   bool            `json:"is_self_service" gorm:"default:false"` // True for self-service, False for dine-in
+	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"`           // Customizable settings
+	// Restaurant Profile fields
+	ContactNumber string    `json:"contact_number"`
+	UPIQRCode     string    `json:"upi_qr_code" gorm:"type:text"` // Base64 encoded QR code
+	CreatedAt     time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt     time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
-	Users     []User      `json:"-" gorm:"foreignKey:RestaurantID"`
-	Orders    []Order     `json:"-" gorm:"foreignKey:RestaurantID"`
-	MenuItems []MenuItem  `json:"-" gorm:"foreignKey:RestaurantID"`
-	Inventory []Inventory `json:"-" gorm:"foreignKey:RestaurantID"`
-	AuditLogs []AuditLog  `json:"-" gorm:"foreignKey:RestaurantID"`
+	Users            []User            `json:"-" gorm:"foreignKey:RestaurantID"`
+	Orders           []Order           `json:"-" gorm:"foreignKey:RestaurantID"`
+	MenuItems        []MenuItem        `json:"-" gorm:"foreignKey:RestaurantID"`
+	Inventory        []Inventory       `json:"-" gorm:"foreignKey:RestaurantID"`
+	AuditLogs        []AuditLog        `json:"-" gorm:"foreignKey:RestaurantID"`
+	RestaurantTables []RestaurantTable `json:"-" gorm:"foreignKey:RestaurantID"`
 }
 
 // TableName specifies the table name
@@ -80,18 +85,22 @@ func (r *Restaurant) BeforeCreate(tx *gorm.DB) error {
 
 // Order represents a customer order
 type Order struct {
-	ID              string     `gorm:"primaryKey" json:"id"`
-	RestaurantID    string     `json:"restaurant_id" gorm:"index" validate:"required"`
-	TableNumber     int        `json:"table_number" validate:"required,min=1"`
-	CustomerName    string     `json:"customer_name"`
-	OrderNumber     int        `json:"order_number" gorm:"index"`                        // Sequential order number
-	Status          string     `json:"status" gorm:"default:'pending';type:varchar(50)"` // pending, confirmed, completed, cancelled
-	SubTotal        float64    `json:"sub_total" gorm:"type:numeric(10,2);default:0"`
-	TaxAmount       float64    `json:"tax_amount" gorm:"type:numeric(10,2);default:0"`
-	DiscountAmount  float64    `json:"discount_amount" gorm:"type:numeric(10,2);default:0"`
-	Total           float64    `json:"total" gorm:"type:numeric(10,2);default:0"`
-	PaymentMethod   string     `json:"payment_method" gorm:"type:varchar(50)"` // "cash", "card", "upi"
-	PaymentID       string     `json:"payment_id"`                             // Razorpay payment ID
+	ID             string  `gorm:"primaryKey" json:"id"`
+	RestaurantID   string  `json:"restaurant_id" gorm:"index" validate:"required"`
+	TableNumber    string  `json:"table_number" validate:"required"`
+	TableID        *string `json:"table_id" gorm:"index"` // Link to RestaurantTable for dine-in orders
+	CustomerName   string  `json:"customer_name"`
+	OrderNumber    int     `json:"order_number" gorm:"index"`                        // Sequential order number
+	Status         string  `json:"status" gorm:"default:'pending';type:varchar(50)"` // pending, confirmed, completed, cancelled
+	SubTotal       float64 `json:"sub_total" gorm:"type:numeric(10,2);default:0"`
+	TaxAmount      float64 `json:"tax_amount" gorm:"type:numeric(10,2);default:0"`
+	DiscountAmount float64 `json:"discount_amount" gorm:"type:numeric(10,2);default:0"`
+	Total          float64 `json:"total" gorm:"type:numeric(10,2);default:0"`
+	PaymentMethod  string  `json:"payment_method" gorm:"type:varchar(50)"` // "cash", "card", "upi"
+	PaymentID      string  `json:"payment_id"`                             // Razorpay payment ID
+	// Payment completion details
+	AmountReceived  float64    `json:"amount_received,omitempty" gorm:"type:numeric(10,2)"`
+	ChangeReturned  float64    `json:"change_returned,omitempty" gorm:"type:numeric(10,2)"`
 	Notes           string     `json:"notes" gorm:"type:text"`
 	CreatedByUserID string     `json:"created_by_user_id"`
 	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
@@ -126,6 +135,7 @@ type OrderItem struct {
 	UnitRate  float64   `json:"unit_rate" gorm:"type:numeric(10,2)"`
 	Total     float64   `json:"total" gorm:"type:numeric(10,2)"`
 	Status    string    `json:"status" gorm:"default:'pending';type:varchar(50)"` // pending, preparing, ready, served
+	SubId     string    `json:"sub_id,omitempty" gorm:"index"`                    // Batch tracking for incremental orders
 	Notes     string    `json:"notes" gorm:"type:text"`
 	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
 
@@ -285,7 +295,7 @@ type NotificationEvent struct {
 // OrderEventData for WebSocket events
 type OrderEventData struct {
 	OrderID     string  `json:"order_id"`
-	TableNo     int     `json:"table_no"`
+	TableNo     string  `json:"table_no"`
 	Status      string  `json:"status"`
 	TotalAmount float64 `json:"total_amount"`
 	ItemCount   int     `json:"item_count"`
@@ -298,4 +308,87 @@ type InventoryEventData struct {
 	Quantity   float64 `json:"quantity"`
 	IsLow      bool    `json:"is_low"`
 	MinLevel   float64 `json:"min_level"`
+}
+
+// Ingredient represents a raw ingredient used in menu items
+type Ingredient struct {
+	ID           string    `gorm:"primaryKey" json:"id"`
+	RestaurantID string    `json:"restaurant_id" gorm:"index" validate:"required"`
+	Name         string    `json:"name" gorm:"not null"`
+	Unit         string    `json:"unit" gorm:"type:varchar(50)"` // pieces, grams, ml, liters, kg, etc.
+	CurrentStock float64   `json:"current_stock" gorm:"type:numeric(10,2);default:0"`
+	FullStock    float64   `json:"full_stock" gorm:"type:numeric(10,2);default:0"`
+	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+
+	// Relations
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+}
+
+// TableName specifies the table name
+func (Ingredient) TableName() string {
+	return "ingredients"
+}
+
+// BeforeCreate generates UUID
+func (i *Ingredient) BeforeCreate(tx *gorm.DB) error {
+	if i.ID == "" {
+		i.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// RestaurantTable represents a physical table in a dine-in restaurant
+type RestaurantTable struct {
+	ID             string    `gorm:"primaryKey" json:"id"`
+	RestaurantID   string    `json:"restaurant_id" gorm:"index" validate:"required"`
+	Name           string    `json:"name" gorm:"not null;index"` // "1", "2", "1a", "VIP1", etc.
+	IsOccupied     bool      `json:"is_occupied" gorm:"default:false"`
+	Capacity       *int      `json:"capacity"`                      // Seating capacity - number of members
+	CurrentOrderID *string   `json:"current_order_id" gorm:"index"` // Link to active order, nullable
+	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt      time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+
+	// Relations
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+	Order      *Order      `json:"-" gorm:"foreignKey:CurrentOrderID"`
+}
+
+// TableName specifies the table name
+func (RestaurantTable) TableName() string {
+	return "restaurant_tables"
+}
+
+// BeforeCreate generates UUID
+func (rt *RestaurantTable) BeforeCreate(tx *gorm.DB) error {
+	if rt.ID == "" {
+		rt.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// RefreshToken stores refresh tokens for users
+type RefreshToken struct {
+	ID        string    `gorm:"primaryKey" json:"id"`
+	UserID    string    `json:"user_id" gorm:"index" validate:"required"`
+	Token     string    `json:"token" gorm:"type:text;index"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+
+	// Relations
+	User *User `json:"-" gorm:"foreignKey:UserID"`
+}
+
+// TableName specifies the table name
+func (RefreshToken) TableName() string {
+	return "refresh_tokens"
+}
+
+// BeforeCreate generates UUID
+func (rt *RefreshToken) BeforeCreate(tx *gorm.DB) error {
+	if rt.ID == "" {
+		rt.ID = uuid.New().String()
+	}
+	return nil
 }

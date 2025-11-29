@@ -3,18 +3,26 @@ package config
 import (
 	"fmt"
 	"log"
+	"time"
+
+	"restaurant-api/internal/migrations"
+	"restaurant-api/internal/models"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"restaurant-api/internal/models"
 )
 
 func InitializeDatabase(cfg *Config) *gorm.DB {
-	// Build DSN
+	// Build DSN with production SSL mode
+	sslMode := "disable"
+	if cfg.Environment == "production" {
+		sslMode = "require" // Enforce SSL in production
+	}
+
 	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
-		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort,
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
+		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort, sslMode,
 	)
 
 	// Connect to database
@@ -25,6 +33,24 @@ func InitializeDatabase(cfg *Config) *gorm.DB {
 	if err != nil {
 		log.Fatalf("❌ Failed to connect to database: %v", err)
 		return nil
+	}
+
+	// Configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("❌ Failed to configure connection pool: %v", err)
+		return nil
+	}
+
+	// Set connection pool settings for production
+	if cfg.Environment == "production" {
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetMaxOpenConns(100)
+		sqlDB.SetConnMaxLifetime(time.Hour)
+	} else {
+		sqlDB.SetMaxIdleConns(5)
+		sqlDB.SetMaxOpenConns(20)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	}
 
 	log.Println("✅ Database connected successfully")
@@ -41,8 +67,11 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.OrderItem{},
 		&models.MenuItem{},
 		&models.Inventory{},
+		&models.Ingredient{},
 		&models.Transaction{},
 		&models.AuditLog{},
+		&models.RestaurantTable{},
+		&models.RefreshToken{},
 	)
 
 	if err != nil {
@@ -50,6 +79,13 @@ func MigrateDatabase(db *gorm.DB) {
 	}
 
 	log.Println("✅ Database migrations completed")
+
+	// Run custom migrations
+	if err := migrations.ChangeTableNumberToString(db); err != nil {
+		log.Printf("⚠️  Migration ChangeTableNumberToString skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ ChangeTableNumberToString migration completed")
+	}
 }
 
 func CloseDatabase(db *gorm.DB) {
