@@ -59,7 +59,7 @@ func LoadConfig() *Config {
 		DBDriver:    getEnv("DATABASE_DRIVER", "postgres"),
 
 		// Server
-		ServerPort:  getEnv("SERVER_PORT", "3000"),
+		ServerPort:  getEnv("PORT", getEnv("SERVER_PORT", "3000")), // Heroku sets PORT, fallback to SERVER_PORT
 		Environment: getEnv("SERVER_ENV", "development"),
 		APIBaseURL:  getEnv("API_BASE_URL", "http://localhost:3000"),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
