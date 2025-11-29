@@ -1,1 +1,1 @@
-web: bin/restaurant-api
+web: cmd/server/server
