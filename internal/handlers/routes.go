@@ -61,6 +61,7 @@ func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/inventory")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(middleware.RoleMiddleware("admin", "manager")) // Only admin and manager can manage inventory
 	{
 		protected.GET("", inventoryHandler.GetInventory)
 		protected.GET("/alerts", inventoryHandler.GetLowStockAlert)
@@ -69,7 +70,7 @@ func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("/restock", inventoryHandler.RestockInventory)
 	}
 
-	log.Println("✅ Inventory routes registered")
+	log.Println("✅ Inventory routes registered (admin/manager only)")
 }
 
 // SetupMenuRoutes registers menu endpoints
@@ -204,6 +205,7 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/ingredients")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(middleware.RoleMiddleware("admin", "manager")) // Only admin and manager can manage ingredients
 	{
 		protected.GET("", ingredientHandler.ListIngredients)
 		protected.POST("", ingredientHandler.CreateIngredient)
@@ -211,7 +213,7 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.DELETE("/:ingredient_id", ingredientHandler.DeleteIngredient)
 	}
 
-	log.Println("✅ Ingredient routes registered")
+	log.Println("✅ Ingredient routes registered (admin/manager only)")
 }
 
 // SetupPublicRoutes registers public endpoints (no authentication required)

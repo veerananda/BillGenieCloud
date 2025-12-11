@@ -16,20 +16,20 @@ type UserService struct {
 	db *gorm.DB
 }
 
-// CreateUserRequest for creating new staff/manager
+// CreateUserRequest for creating new staff/manager/chef
 type CreateUserRequest struct {
 	Name     string `json:"name" validate:"required,min=2"`
 	Email    string `json:"email" validate:"required,email"`
 	Phone    string `json:"phone" validate:"required"`
 	Password string `json:"password" validate:"required,min=6"`
-	Role     string `json:"role" validate:"required,oneof=manager staff"`
+	Role     string `json:"role" validate:"required,oneof=manager staff chef"`
 }
 
-// UpdateUserRequest for updating existing staff/manager
+// UpdateUserRequest for updating existing staff/manager/chef
 type UpdateUserRequest struct {
 	Name     string `json:"name" validate:"omitempty,min=2"`
 	Phone    string `json:"phone"`
-	Role     string `json:"role" validate:"omitempty,oneof=manager staff"`
+	Role     string `json:"role" validate:"omitempty,oneof=manager staff chef"`
 	IsActive *bool  `json:"is_active"`
 }
 
@@ -40,11 +40,38 @@ func NewUserService(db *gorm.DB) *UserService {
 	}
 }
 
-// CreateUser creates a new staff or manager user for a restaurant
+// CreateUser creates a new staff, manager, or chef user for a restaurant
 func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*models.User, error) {
 	// Validate role
-	if req.Role != "manager" && req.Role != "staff" {
-		return nil, errors.New("invalid role. must be 'manager' or 'staff'")
+	if req.Role != "manager" && req.Role != "staff" && req.Role != "chef" {
+		return nil, errors.New("invalid role. must be 'manager', 'staff', or 'chef'")
+	}
+
+	// Check account limits: 1 admin, 1 manager, 2 staff, 1 chef (max 5 total)
+	var userCounts struct {
+		AdminCount   int64
+		ManagerCount int64
+		StaffCount   int64
+		ChefCount    int64
+	}
+
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "admin").Count(&userCounts.AdminCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "manager").Count(&userCounts.ManagerCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "staff").Count(&userCounts.StaffCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "chef").Count(&userCounts.ChefCount)
+
+	log.Printf("📊 Current user counts for restaurant %s: Admin=%d, Manager=%d, Staff=%d, Chef=%d",
+		restaurantID, userCounts.AdminCount, userCounts.ManagerCount, userCounts.StaffCount, userCounts.ChefCount)
+
+	// Enforce limits
+	if req.Role == "manager" && userCounts.ManagerCount >= 1 {
+		return nil, errors.New("account limit reached: only 1 manager account is allowed per restaurant")
+	}
+	if req.Role == "staff" && userCounts.StaffCount >= 2 {
+		return nil, errors.New("account limit reached: only 2 staff accounts are allowed per restaurant")
+	}
+	if req.Role == "chef" && userCounts.ChefCount >= 1 {
+		return nil, errors.New("account limit reached: only 1 chef account is allowed per restaurant")
 	}
 
 	// Check if email already exists in this restaurant
@@ -87,7 +114,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 func (s *UserService) ListUsers(restaurantID string, filters map[string]interface{}) ([]models.User, error) {
 	var users []models.User
 
-	query := s.db.Where("restaurant_id = ? AND role IN ('manager', 'staff')", restaurantID)
+	query := s.db.Where("restaurant_id = ? AND role IN ('manager', 'staff', 'chef', 'admin')", restaurantID)
 
 	// Apply filters
 	if role, ok := filters["role"].(string); ok && role != "" {

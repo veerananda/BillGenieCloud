@@ -18,10 +18,10 @@ type Config struct {
 	DBDriver    string
 
 	// Server
-	ServerPort      string
-	Environment     string
-	APIBaseURL      string
-	LogLevel        string
+	ServerPort  string
+	Environment string
+	APIBaseURL  string
+	LogLevel    string
 
 	// JWT
 	JWTSecret          string
@@ -30,9 +30,9 @@ type Config struct {
 	RefreshJWTSecret   string
 
 	// WebSocket
-	WebSocketPort      string
-	WebSocketReadBuf   int
-	WebSocketWriteBuf  int
+	WebSocketPort     string
+	WebSocketReadBuf  int
+	WebSocketWriteBuf int
 
 	// Razorpay
 	RazorpayKeyID     string
@@ -71,7 +71,7 @@ func LoadConfig() *Config {
 		RefreshJWTSecret:   getEnv("REFRESH_JWT_SECRET", "your-refresh-secret-key"),
 
 		// WebSocket
-		WebSocketPort:    getEnv("WEBSOCKET_PORT", "3001"),
+		WebSocketPort:     getEnv("WEBSOCKET_PORT", "3001"),
 		WebSocketReadBuf:  getIntEnv("WEBSOCKET_READ_BUFFER", 1024),
 		WebSocketWriteBuf: getIntEnv("WEBSOCKET_WRITE_BUFFER", 1024),
 
