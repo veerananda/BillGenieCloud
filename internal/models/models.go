@@ -13,7 +13,7 @@ type User struct {
 	ID             string    `gorm:"primaryKey" json:"id"`
 	RestaurantID   string    `json:"restaurant_id" gorm:"index"`
 	Name           string    `json:"name" gorm:"not null"`
-	Email          string    `json:"email" gorm:"index;uniqueIndex:idx_restaurant_email"` // Email only required for admin
+	Email          string    `json:"email" gorm:"index"` // Email only required for admin, nullable for staff
 	Phone          string    `json:"phone"`
 	PasswordHash   string    `json:"-" gorm:"not null"`
 	Role           string    `json:"role" gorm:"not null;type:varchar(50)"` // "admin", "manager", "staff"

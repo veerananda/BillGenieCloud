@@ -20,14 +20,14 @@ type UserService struct {
 // CreateUserRequest for creating new staff/manager/chef
 // Note: Email is optional for staff/manager/chef (they use staff_key + password)
 // Email is only required for admin during registration
-// StaffKey is generated on frontend and passed here (format: SK_XXXXXXX)
+// StaffKey is generated on frontend and passed here (format: SK_XXXXXXXXXX - 13 chars total)
 type CreateUserRequest struct {
 	Name      string `json:"name" validate:"required,min=2"`
 	Email     string `json:"email" validate:"omitempty,email"`
 	Phone     string `json:"phone" validate:"required"`
 	Password  string `json:"password" validate:"required,min=6"`
 	Role      string `json:"role" validate:"required,oneof=manager staff chef"`
-	StaffKey  string `json:"staff_key" validate:"required,min=5"` // Frontend-generated key (SK_XXXXXXX)
+	StaffKey  string `json:"staff_key" validate:"required,len=13"` // Frontend-generated key (SK_XXXXXXXXXX)
 }
 
 // UpdateUserRequest for updating existing staff/manager/chef

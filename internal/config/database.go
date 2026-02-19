@@ -74,6 +74,13 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Println("✅ FixRestaurantCodeNulls migration completed")
 	}
 
+	// Fix email constraint: drop old global unique constraint and create partial per-restaurant constraint
+	if err := migrations.FixEmailConstraint(db); err != nil {
+		log.Printf("⚠️  Migration FixEmailConstraint skipped or failed (may already be fixed): %v", err)
+	} else {
+		log.Println("✅ FixEmailConstraint migration completed")
+	}
+
 	// Now run AutoMigrate on all models
 	err := db.AutoMigrate(
 		&models.User{},
