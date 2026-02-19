@@ -10,16 +10,18 @@ import (
 
 // User represents a staff member or restaurant owner
 type User struct {
-	ID           string    `gorm:"primaryKey" json:"id"`
-	RestaurantID string    `json:"restaurant_id" gorm:"index"`
-	Name         string    `json:"name" gorm:"not null"`
-	Email        string    `json:"email" gorm:"unique" validate:"email"`
-	Phone        string    `json:"phone"`
-	PasswordHash string    `json:"-" gorm:"not null"`
-	Role         string    `json:"role" gorm:"not null;type:varchar(50)"` // "admin", "manager", "staff"
-	IsActive     bool      `json:"is_active" gorm:"default:true"`
-	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	ID             string    `gorm:"primaryKey" json:"id"`
+	RestaurantID   string    `json:"restaurant_id" gorm:"index"`
+	Name           string    `json:"name" gorm:"not null"`
+	Email          string    `json:"email" gorm:"index;uniqueIndex:idx_restaurant_email"` // Email only required for admin
+	Phone          string    `json:"phone"`
+	PasswordHash   string    `json:"-" gorm:"not null"`
+	Role           string    `json:"role" gorm:"not null;type:varchar(50)"` // "admin", "manager", "staff"
+	IsActive       bool      `json:"is_active" gorm:"default:true"`
+	StaffKey       string    `json:"staff_key" gorm:"unique;index"` // Globally unique per-staff key (not null enforced in migration)
+	KeyGeneratedAt time.Time `json:"key_generated_at" gorm:"autoCreateTime:milli"`
+	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt      time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
@@ -42,6 +44,7 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 // Restaurant represents a restaurant business
 type Restaurant struct {
 	ID              string          `gorm:"primaryKey" json:"id"`
+	RestaurantCode  string          `json:"restaurant_code" gorm:"unique;size:10;index"` // Unique code for login (not null enforced in migration)
 	Name            string          `json:"name" gorm:"not null;index"`
 	OwnerName       string          `json:"owner_name"`
 	Email           string          `json:"email"`
@@ -53,8 +56,9 @@ type Restaurant struct {
 	TotalStaff      int             `json:"total_staff" gorm:"default:5"`
 	SubscriptionEnd time.Time       `json:"subscription_end"`
 	IsActive        bool            `json:"is_active" gorm:"default:true"`
-	IsSelfService   bool            `json:"is_self_service" gorm:"default:false"` // True for self-service, False for dine-in
-	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"`           // Customizable settings
+	IsSelfService   bool            `json:"is_self_service" gorm:"default:false"`   // True for self-service, False for dine-in
+	IsEmailVerified bool            `json:"is_email_verified" gorm:"default:false"` // Email verification status
+	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"`             // Customizable settings
 	// Restaurant Profile fields
 	ContactNumber string    `json:"contact_number"`
 	UPIQRCode     string    `json:"upi_qr_code" gorm:"type:text"` // Base64 encoded QR code
@@ -389,6 +393,90 @@ func (RefreshToken) TableName() string {
 func (rt *RefreshToken) BeforeCreate(tx *gorm.DB) error {
 	if rt.ID == "" {
 		rt.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// UserSession represents an active user session (tracks concurrent logins)
+type UserSession struct {
+	ID           string    `gorm:"primaryKey" json:"id"`
+	UserID       string    `json:"user_id" gorm:"index;not null"`
+	RestaurantID string    `json:"restaurant_id" gorm:"index;not null"`
+	AccessToken  string    `json:"access_token" gorm:"type:text;not null"`
+	LoginTime    time.Time `json:"login_time" gorm:"autoCreateTime"`
+	LastActivity time.Time `json:"last_activity" gorm:"autoUpdateTime"`
+	DeviceInfo   string    `json:"device_info"` // Optional: device/app info
+	IsActive     bool      `json:"is_active" gorm:"default:true"`
+
+	// Relations
+	User       *User       `json:"-" gorm:"foreignKey:UserID"`
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+}
+
+// TableName specifies the table name
+func (UserSession) TableName() string {
+	return "user_sessions"
+}
+
+// BeforeCreate generates UUID
+func (us *UserSession) BeforeCreate(tx *gorm.DB) error {
+	if us.ID == "" {
+		us.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// PasswordReset stores password reset tokens for users
+type PasswordReset struct {
+	ID        string    `gorm:"primaryKey" json:"id"`
+	UserID    string    `json:"user_id" gorm:"index;not null"`
+	Email     string    `json:"email" gorm:"index"`
+	Token     string    `json:"token" gorm:"type:text;uniqueIndex;not null"` // Unique reset token (hashed)
+	ExpiresAt time.Time `json:"expires_at"`
+	IsUsed    bool      `json:"is_used" gorm:"default:false"` // Mark as used after password reset
+	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+
+	// Relations
+	User *User `json:"-" gorm:"foreignKey:UserID"`
+}
+
+// TableName specifies the table name
+func (PasswordReset) TableName() string {
+	return "password_resets"
+}
+
+// BeforeCreate generates UUID
+func (pr *PasswordReset) BeforeCreate(tx *gorm.DB) error {
+	if pr.ID == "" {
+		pr.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// EmailVerification represents email verification tokens
+type EmailVerification struct {
+	ID           string    `gorm:"primaryKey" json:"id"`
+	RestaurantID string    `json:"restaurant_id" gorm:"index;not null"`
+	Email        string    `json:"email" gorm:"not null"`
+	Token        string    `json:"token" gorm:"unique;not null"`
+	ExpiresAt    time.Time `json:"expires_at" gorm:"not null"`
+	IsUsed       bool      `json:"is_used" gorm:"default:false"`
+	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
+
+	// Relations
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+}
+
+// TableName specifies the table name
+func (EmailVerification) TableName() string {
+	return "email_verifications"
+}
+
+// BeforeCreate generates UUID
+func (ev *EmailVerification) BeforeCreate(tx *gorm.DB) error {
+	if ev.ID == "" {
+		ev.ID = uuid.New().String()
 	}
 	return nil
 }

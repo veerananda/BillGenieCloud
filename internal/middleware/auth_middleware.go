@@ -4,10 +4,13 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"restaurant-api/internal/models"
 	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // AuthMiddleware validates JWT tokens
@@ -40,6 +43,24 @@ func AuthMiddleware(authService *services.AuthService) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			c.Abort()
 			return
+		}
+
+		// Validate user session (enforce single concurrent login for staff/chef)
+		// Note: Skip session validation for admin users (they can have multiple sessions)
+		if claims.Role != "admin" {
+			isValid, err := authService.ValidateUserSession(claims.UserID, token)
+			if err != nil {
+				log.Printf("⚠️  Session validation failed: %v", err)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+				c.Abort()
+				return
+			}
+			if !isValid {
+				log.Printf("❌ User %s attempted to use invalidated session", claims.UserID)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "session invalidated. Another device has logged in with your account"})
+				c.Abort()
+				return
+			}
 		}
 
 		// Store user info in context
@@ -139,5 +160,63 @@ func LoggingMiddleware() gin.HandlerFunc {
 		log.Printf("📝 %s %s", c.Request.Method, c.Request.URL.Path)
 		c.Next()
 		log.Printf("✅ %d %s %s", c.Writer.Status(), c.Request.Method, c.Request.URL.Path)
+	}
+}
+
+// SubscriptionMiddleware checks if restaurant subscription is active
+// Allows 30-day free trial, then requires active subscription
+func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Skip subscription check for public endpoints and auth endpoints
+		path := c.Request.URL.Path
+		if strings.HasPrefix(path, "/auth/") || strings.HasPrefix(path, "/public/") || path == "/health" {
+			c.Next()
+			return
+		}
+
+		restaurantID, exists := c.Get("restaurant_id")
+		if !exists {
+			// If no restaurant_id, let auth middleware handle it
+			c.Next()
+			return
+		}
+
+		// Check restaurant subscription status
+		var restaurant models.Restaurant
+		if err := db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+			log.Printf("❌ Failed to fetch restaurant: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check subscription status"})
+			c.Abort()
+			return
+		}
+
+		// Check if subscription has expired
+		if time.Now().After(restaurant.SubscriptionEnd) {
+			daysExpired := int(time.Since(restaurant.SubscriptionEnd).Hours() / 24)
+			log.Printf("⚠️ Subscription expired for restaurant %s (%d days ago)", restaurantID, daysExpired)
+
+			c.JSON(http.StatusPaymentRequired, gin.H{
+				"error":            "subscription_expired",
+				"message":          "Your 30-day free trial has ended. Please subscribe to continue using BillGenie.",
+				"subscription_end": restaurant.SubscriptionEnd,
+				"days_expired":     daysExpired,
+			})
+			c.Abort()
+			return
+		}
+
+		// Calculate days remaining in trial/subscription
+		daysRemaining := int(time.Until(restaurant.SubscriptionEnd).Hours() / 24)
+
+		// Add subscription info to context for use in handlers
+		c.Set("subscription_end", restaurant.SubscriptionEnd)
+		c.Set("days_remaining", daysRemaining)
+
+		// Log warning if subscription is expiring soon (less than 7 days)
+		if daysRemaining <= 7 && daysRemaining > 0 {
+			log.Printf("⚠️ Subscription expiring soon for restaurant %s (%d days remaining)", restaurantID, daysRemaining)
+		}
+
+		c.Next()
 	}
 }

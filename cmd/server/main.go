@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -30,6 +31,12 @@ func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
 
+	// Control logging output
+	if !cfg.EnableLogging {
+		log.SetOutput(io.Discard)
+		gin.DefaultWriter = io.Discard
+	}
+
 	// Set Gin mode
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -51,7 +58,9 @@ func main() {
 	router.Use(middleware.CORSMiddleware(cfg.CORSAllowedOrigins))
 
 	// Setup logging middleware
-	router.Use(middleware.LoggingMiddleware())
+	if cfg.EnableLogging {
+		router.Use(middleware.LoggingMiddleware())
+	}
 
 	// Initialize WebSocket hub
 	wsHub := handlers.NewWebSocketHub()

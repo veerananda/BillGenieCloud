@@ -368,3 +368,52 @@ func (h *UserHandler) GetStaffStats(c *gin.Context) {
 
 	log.Printf("✅ Retrieved staff stats for restaurant %s", restaurantID)
 }
+
+// RegenerateStaffKey regenerates the staff key for a user
+// @Summary Regenerate staff key
+// @Description Regenerates a new unique staff key for a staff member
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param user_id path string true "User ID"
+// @Success 200 {object} map[string]interface{} "New staff key generated"
+// @Failure 400 {object} map[string]string "Bad request"
+// @Failure 403 {object} map[string]string "Forbidden"
+// @Failure 404 {object} map[string]string "User not found"
+// @Router /users/{user_id}/regenerate-key [post]
+func (h *UserHandler) RegenerateStaffKey(c *gin.Context) {
+	userID := c.Param("user_id")
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "restaurant_id not found in context"})
+		return
+	}
+
+	// Check if the user exists and belongs to this restaurant
+	user, err := h.userService.GetUser(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Verify user belongs to this restaurant
+	if user.RestaurantID != restaurantID.(string) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only manage staff from your restaurant"})
+		return
+	}
+
+	// Regenerate the staff key
+	newKey, err := h.userService.RegenerateStaffKey(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to regenerate staff key"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Staff key regenerated successfully",
+		"staff_key": newKey,
+		"user_id":   userID,
+	})
+
+	log.Printf("✅ Regenerated staff key for user %s in restaurant %s", userID, restaurantID)
+}

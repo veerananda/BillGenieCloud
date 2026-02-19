@@ -32,16 +32,17 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 
 	// Return profile data
 	c.JSON(http.StatusOK, gin.H{
-		"id":              restaurant.ID,
-		"name":            restaurant.Name,
-		"address":         restaurant.Address,
-		"phone":           restaurant.Phone,
-		"contact_number":  restaurant.ContactNumber,
-		"email":           restaurant.Email,
-		"upi_qr_code":     restaurant.UPIQRCode,
-		"city":            restaurant.City,
-		"cuisine":         restaurant.Cuisine,
-		"is_self_service": restaurant.IsSelfService,
+		"id":               restaurant.ID,
+		"name":             restaurant.Name,
+		"address":          restaurant.Address,
+		"phone":            restaurant.Phone,
+		"contact_number":   restaurant.ContactNumber,
+		"email":            restaurant.Email,
+		"upi_qr_code":      restaurant.UPIQRCode,
+		"city":             restaurant.City,
+		"cuisine":          restaurant.Cuisine,
+		"is_self_service":  restaurant.IsSelfService,
+		"subscription_end": restaurant.SubscriptionEnd,
 	})
 }
 

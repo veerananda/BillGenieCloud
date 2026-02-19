@@ -643,3 +643,83 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 		"status":   input.Status,
 	})
 }
+
+// UpdateOrderItemsByMenuID updates all items with a specific menu item ID
+// @Summary Update order items by menu item ID
+// @Description Update status of all items in an order with a specific menu item ID (for bulk updates)
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param order_id path string true "Order ID"
+// @Param menu_id path string true "Menu Item ID"
+// @Param request body map[string]string true "Status update"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Router /orders/:order_id/menu-items/:menu_id/status [put]
+func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	orderID := c.Param("order_id")
+	menuItemID := c.Param("menu_id")
+
+	var input struct {
+		Status string `json:"status" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate status
+	validStatuses := []string{"pending", "cooking", "ready", "served"}
+	isValid := false
+	for _, s := range validStatuses {
+		if input.Status == s {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status. Must be: pending, cooking, ready, or served"})
+		return
+	}
+
+	err := h.orderService.UpdateOrderItemsByMenuID(restaurantID.(string), orderID, menuItemID, input.Status)
+	if err != nil {
+		log.Printf("❌ Order items status update failed: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("✅ Order items with menu_id %s updated to status: %s", menuItemID, input.Status)
+
+	// Broadcast order status change via WebSocket
+	if globalHub != nil {
+		event := models.NotificationEvent{
+			Type:      "order_status_changed",
+			RoomID:    restaurantID.(string),
+			Timestamp: time.Now(),
+			Data: json.RawMessage(toJSON(map[string]interface{}{
+				"order_id":   orderID,
+				"menu_id":    menuItemID,
+				"status":     input.Status,
+				"bulk_update": true,
+			})),
+		}
+		globalHub.BroadcastToRoom(restaurantID.(string), event)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Order items status updated successfully",
+		"menu_id":  menuItemID,
+		"order_id": orderID,
+		"status":   input.Status,
+	})
+}
+

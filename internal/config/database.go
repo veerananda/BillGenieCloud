@@ -60,6 +60,21 @@ func InitializeDatabase(cfg *Config) *gorm.DB {
 func MigrateDatabase(db *gorm.DB) {
 	log.Println("🔄 Running database migrations...")
 
+	// Fix any null staff_key values BEFORE AutoMigrate adds NOT NULL constraint
+	if err := migrations.FixStaffKeyNulls(db); err != nil {
+		log.Printf("⚠️  Migration FixStaffKeyNulls skipped or failed (may already be fixed): %v", err)
+	} else {
+		log.Println("✅ FixStaffKeyNulls migration completed")
+	}
+
+	// Fix any null restaurant codes BEFORE AutoMigrate adds NOT NULL constraint
+	if err := migrations.FixRestaurantCodeNulls(db); err != nil {
+		log.Printf("⚠️  Migration FixRestaurantCodeNulls skipped or failed (may already be fixed): %v", err)
+	} else {
+		log.Println("✅ FixRestaurantCodeNulls migration completed")
+	}
+
+	// Now run AutoMigrate on all models
 	err := db.AutoMigrate(
 		&models.User{},
 		&models.Restaurant{},
@@ -72,6 +87,9 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.AuditLog{},
 		&models.RestaurantTable{},
 		&models.RefreshToken{},
+		&models.UserSession{},
+		&models.PasswordReset{},
+		&models.EmailVerification{},
 	)
 
 	if err != nil {
@@ -80,11 +98,26 @@ func MigrateDatabase(db *gorm.DB) {
 
 	log.Println("✅ Database migrations completed")
 
-	// Run custom migrations
+	// Enforce NOT NULL constraint on restaurant_code column after fixing nulls
+	if err := migrations.EnforceRestaurantCodeNotNull(db); err != nil {
+		log.Printf("⚠️  Migration EnforceRestaurantCodeNotNull failed: %v", err)
+	} else {
+		log.Println("✅ EnforceRestaurantCodeNotNull migration completed")
+	}
+
+	// Run remaining custom migrations
+
 	if err := migrations.ChangeTableNumberToString(db); err != nil {
 		log.Printf("⚠️  Migration ChangeTableNumberToString skipped or failed (may already be applied): %v", err)
 	} else {
 		log.Println("✅ ChangeTableNumberToString migration completed")
+	}
+
+	// Fix user email uniqueness to be per-restaurant instead of global
+	if err := migrations.FixUserEmailUniqueness(db); err != nil {
+		log.Printf("⚠️  Migration FixUserEmailUniqueness skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ FixUserEmailUniqueness migration completed")
 	}
 }
 

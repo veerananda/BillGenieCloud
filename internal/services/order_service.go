@@ -544,3 +544,33 @@ func (s *OrderService) UpdateOrderItemStatus(restaurantID string, orderID string
 
 	return nil
 }
+
+// UpdateOrderItemsByMenuID updates all items with a specific menu item ID to a new status
+func (s *OrderService) UpdateOrderItemsByMenuID(restaurantID string, orderID string, menuItemID string, status string) error {
+	// First verify the order belongs to the restaurant
+	var order models.Order
+	if err := s.db.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+		First(&order).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return errors.New("order not found")
+		}
+		return err
+	}
+
+	// Update all order items with this menu item ID to the new status
+	result := s.db.Model(&models.OrderItem{}).
+		Where("order_id = ? AND menu_id = ?", orderID, menuItemID).
+		Update("status", status)
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.New("no order items found with this menu item ID")
+	}
+
+	log.Printf("✅ Updated %d order items with menu_id %s -> status %s", result.RowsAffected, menuItemID, status)
+
+	return nil
+}
