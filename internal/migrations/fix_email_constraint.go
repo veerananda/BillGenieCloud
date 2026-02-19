@@ -6,9 +6,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// FixEmailConstraint drops the old global unique constraint on email and creates
-// a per-restaurant partial unique index that only applies to non-null emails.
-// This allows multiple staff members to have null emails while enforcing admin email uniqueness per restaurant.
+// FixEmailConstraint drops the old idx_restaurant_email constraint and creates
+// a partial unique index on email that only applies to non-null values.
+// This allows admin emails to be globally unique while allowing staff/manager/chef 
+// to have null emails (they authenticate with staff_key instead).
 func FixEmailConstraint(db *gorm.DB) error {
 	// Step 1: Drop the old idx_restaurant_email unique constraint if it exists
 	dropConstraint := db.Exec(`
@@ -23,11 +24,11 @@ func FixEmailConstraint(db *gorm.DB) error {
 		fmt.Println("✅ Dropped old idx_restaurant_email constraint")
 	}
 
-	// Step 2: Create a partial unique index that only applies to non-null emails
-	// This enforces unique emails per restaurant (for admins) but allows multiple nulls (for staff)
+	// Step 2: Create a partial unique index on email globally (not per-restaurant)
+	// This enforces unique emails for admins but allows multiple nulls for staff/manager/chef
 	createIndex := db.Exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_email_partial 
-		ON users(restaurant_id, email) 
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_email_partial 
+		ON users(email) 
 		WHERE email IS NOT NULL AND email != ''
 	`)
 
@@ -41,6 +42,6 @@ func FixEmailConstraint(db *gorm.DB) error {
 		return nil
 	}
 
-	fmt.Println("✅ Created partial unique index idx_restaurant_email_partial for non-null emails")
+	fmt.Println("✅ Created partial unique index idx_email_partial for globally unique admin emails")
 	return nil
 }
