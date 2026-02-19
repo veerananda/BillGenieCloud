@@ -80,6 +80,11 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		return nil, errors.New("account limit reached: only 1 chef account is allowed per restaurant")
 	}
 
+	// For staff/manager/chef, if email not provided, use the staff_key as email (it's globally unique)
+	if req.Email == "" && (req.Role == "staff" || req.Role == "manager" || req.Role == "chef") {
+		req.Email = req.StaffKey  // Use staff_key as email since it's globally unique
+	}
+
 	// Check if email already exists in this restaurant (only if email is provided)
 	if req.Email != "" {
 		var existingUser models.User
