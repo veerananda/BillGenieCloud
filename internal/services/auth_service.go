@@ -602,20 +602,27 @@ func generateRandomToken(length int) string {
 }
 
 // sendEmailSMTP sends an email using SMTP settings from environment variables
-// Required env vars: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
-// Optional: SMTP_FROM (defaults to SMTP_USER)
+// Required env vars: SMTP_HOST, SMTP_PORT and either
+// SMTP_USER/SMTP_PASS or SMTP_MAIL/SMTP_APP_PASSWORD
+// Optional: SMTP_FROM (defaults to SMTP_USER/SMTP_MAIL)
 func sendEmailSMTP(to, subject, body string) error {
 	host := os.Getenv("SMTP_HOST")
 	port := os.Getenv("SMTP_PORT")
 	user := os.Getenv("SMTP_USER")
+	if user == "" {
+		user = os.Getenv("SMTP_MAIL")
+	}
 	pass := os.Getenv("SMTP_PASS")
+	if pass == "" {
+		pass = os.Getenv("SMTP_APP_PASSWORD")
+	}
 	from := os.Getenv("SMTP_FROM")
 	if from == "" {
 		from = user
 	}
 
 	if host == "" || port == "" || user == "" || pass == "" {
-		return errors.New("smtp is not configured (SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS)")
+		return errors.New("smtp is not configured (SMTP_HOST/SMTP_PORT and SMTP_USER/SMTP_PASS or SMTP_MAIL/SMTP_APP_PASSWORD)")
 	}
 
 	addr := fmt.Sprintf("%s:%s", host, port)

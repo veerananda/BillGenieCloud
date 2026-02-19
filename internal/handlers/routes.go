@@ -20,10 +20,6 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 		public.POST("/auth/register", authHandler.Register)
 		public.POST("/auth/login", authHandler.Login)
 		public.POST("/auth/refresh", authHandler.RefreshToken)
-		public.POST("/auth/forgot-password", authHandler.ForgotPassword)
-		public.POST("/auth/reset-password", authHandler.ResetPassword)
-		public.POST("/auth/verify-email", authHandler.VerifyEmail)
-		public.POST("/auth/resend-verification", authHandler.ResendVerificationEmail)
 		public.GET("/health", authHandler.HealthCheck)
 	}
 
@@ -53,7 +49,6 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("/:order_id/complete-payment", orderHandler.CompleteOrderWithPayment)
 		protected.PUT("/:order_id/cancel", orderHandler.CancelOrder)
 		protected.PUT("/:order_id/items/:item_id/status", orderHandler.UpdateOrderItemStatus)
-		protected.PUT("/:order_id/menu-items/:menu_id/status", orderHandler.UpdateOrderItemsByMenuID)
 	}
 
 	log.Println("✅ Order routes registered")
@@ -198,9 +193,6 @@ func SetupUserRoutes(router *gin.Engine, db *gorm.DB) {
 
 		// Restore a deleted staff user
 		protected.POST("/:user_id/restore", userHandler.RestoreUser)
-
-		// Regenerate staff key for a user
-		protected.POST("/:user_id/regenerate-key", userHandler.RegenerateStaffKey)
 	}
 
 	log.Println("✅ User routes registered with full implementation")

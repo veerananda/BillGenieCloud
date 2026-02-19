@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"restaurant-api/internal/models"
@@ -17,9 +18,11 @@ type UserService struct {
 }
 
 // CreateUserRequest for creating new staff/manager/chef
+// Note: Email is optional for staff/manager/chef (they use staff_key + password)
+// Email is only required for admin during registration
 type CreateUserRequest struct {
 	Name     string `json:"name" validate:"required,min=2"`
-	Email    string `json:"email"` // Optional - only for reference, not used for login
+	Email    string `json:"email" validate:"omitempty,email"`
 	Phone    string `json:"phone" validate:"required"`
 	Password string `json:"password" validate:"required,min=6"`
 	Role     string `json:"role" validate:"required,oneof=manager staff chef"`
@@ -47,35 +50,41 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		return nil, errors.New("invalid role. must be 'manager', 'staff', or 'chef'")
 	}
 
-	// Check account limits: 1 admin, 1 manager, 3 staff (max 5 total)
-	// Business Model: 1 month free trial, then subscription required
+	// Check account limits: 1 admin, 1 manager, 2 staff, 1 chef (max 5 total)
 	var userCounts struct {
 		AdminCount   int64
 		ManagerCount int64
 		StaffCount   int64
+		ChefCount    int64
 	}
 
 	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "admin").Count(&userCounts.AdminCount)
 	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "manager").Count(&userCounts.ManagerCount)
-	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role IN (?)", restaurantID, []string{"staff", "chef"}).Count(&userCounts.StaffCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "staff").Count(&userCounts.StaffCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "chef").Count(&userCounts.ChefCount)
 
-	log.Printf("📊 Current user counts for restaurant %s: Admin=%d, Manager=%d, Staff=%d (including chefs)",
-		restaurantID, userCounts.AdminCount, userCounts.ManagerCount, userCounts.StaffCount)
+	log.Printf("📊 Current user counts for restaurant %s: Admin=%d, Manager=%d, Staff=%d, Chef=%d",
+		restaurantID, userCounts.AdminCount, userCounts.ManagerCount, userCounts.StaffCount, userCounts.ChefCount)
 
-	// Enforce limits - admins cannot be created via this endpoint (only during registration)
+	// Enforce limits
 	if req.Role == "manager" && userCounts.ManagerCount >= 1 {
-		return nil, errors.New("account limit reached: only 1 manager account allowed per restaurant")
+		return nil, errors.New("account limit reached: only 1 manager account is allowed per restaurant")
 	}
-	if (req.Role == "staff" || req.Role == "chef") && userCounts.StaffCount >= 3 {
-		return nil, errors.New("account limit reached: maximum 3 staff/chef accounts allowed per restaurant")
+	if req.Role == "staff" && userCounts.StaffCount >= 2 {
+		return nil, errors.New("account limit reached: only 2 staff accounts are allowed per restaurant")
+	}
+	if req.Role == "chef" && userCounts.ChefCount >= 1 {
+		return nil, errors.New("account limit reached: only 1 chef account is allowed per restaurant")
 	}
 
-	// Check if email already exists in this restaurant
-	var existingUser models.User
-	if err := s.db.Where("restaurant_id = ? AND email = ?", restaurantID, req.Email).First(&existingUser).Error; err == nil {
-		return nil, errors.New("email already exists in this restaurant")
-	} else if err != gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("database error: %w", err)
+	// Check if email already exists in this restaurant (only if email is provided)
+	if req.Email != "" {
+		var existingUser models.User
+		if err := s.db.Where("restaurant_id = ? AND email = ?", restaurantID, req.Email).First(&existingUser).Error; err == nil {
+			return nil, errors.New("email already exists in this restaurant")
+		} else if err != gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("database error: %w", err)
+		}
 	}
 
 	// Hash password
@@ -83,9 +92,6 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 	if err != nil {
 		return nil, fmt.Errorf("password hashing failed: %w", err)
 	}
-
-	// Generate unique staff key
-	staffKey := generateStaffKey()
 
 	// Create new user
 	user := &models.User{
@@ -97,7 +103,6 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		PasswordHash: hashedPassword,
 		Role:         req.Role,
 		IsActive:     true,
-		StaffKey:     staffKey,
 	}
 
 	// Save to database
@@ -106,7 +111,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	log.Printf("✅ User created: %s (ID: %s, Staff Key: %s, Role: %s, Restaurant: %s)", user.Email, user.ID, user.StaffKey, user.Role, restaurantID)
+	log.Printf("✅ User created: %s (ID: %s, Role: %s, Restaurant: %s)", user.Email, user.ID, user.Role, restaurantID)
 	return user, nil
 }
 
@@ -212,24 +217,6 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 	return user, nil
 }
 
-// RegenerateStaffKey regenerates a staff key for a user
-func (s *UserService) RegenerateStaffKey(userID string) (string, error) {
-	// Generate new staff key
-	newStaffKey := generateStaffKey()
-
-	// Update user with new key
-	if err := s.db.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
-		"staff_key":        newStaffKey,
-		"key_generated_at": time.Now(),
-	}).Error; err != nil {
-		log.Printf("❌ Failed to regenerate staff key: %v", err)
-		return "", fmt.Errorf("failed to regenerate staff key: %w", err)
-	}
-
-	log.Printf("✅ Staff key regenerated for user: %s (New Key: %s)", userID, newStaffKey)
-	return newStaffKey, nil
-}
-
 // DeleteUser soft-deletes a user by setting is_active to false
 func (s *UserService) DeleteUser(userID string, restaurantID string) error {
 	// Fetch user
@@ -308,4 +295,45 @@ func (s *UserService) GetAdminCount(restaurantID string) (int64, error) {
 	}
 
 	return count, nil
+}
+
+func (s *UserService) RegenerateStaffKey(userID string) (string, error) {
+	user, err := s.GetUser(userID)
+	if err != nil {
+		return "", err
+	}
+
+	if user.Role != "manager" && user.Role != "staff" && user.Role != "chef" {
+		return "", errors.New("staff key can only be regenerated for manager/staff/chef users")
+	}
+
+	var newStaffKey string
+	for i := 0; i < 10; i++ {
+		candidate := "SK_" + strings.ToUpper(strings.ReplaceAll(uuid.New().String()[:10], "-", ""))
+
+		var count int64
+		if err := s.db.Model(&models.User{}).Where("staff_key = ?", candidate).Count(&count).Error; err != nil {
+			return "", fmt.Errorf("failed to validate staff key uniqueness: %w", err)
+		}
+
+		if count == 0 {
+			newStaffKey = candidate
+			break
+		}
+	}
+
+	if newStaffKey == "" {
+		return "", errors.New("failed to generate unique staff key")
+	}
+
+	if err := s.db.Model(user).Updates(map[string]interface{}{
+		"staff_key":        newStaffKey,
+		"key_generated_at": time.Now(),
+		"updated_at":       time.Now(),
+	}).Error; err != nil {
+		return "", fmt.Errorf("failed to regenerate staff key: %w", err)
+	}
+
+	log.Printf("✅ Staff key regenerated for user: %s", userID)
+	return newStaffKey, nil
 }
