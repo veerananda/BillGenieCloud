@@ -706,9 +706,9 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 			RoomID:    restaurantID.(string),
 			Timestamp: time.Now(),
 			Data: json.RawMessage(toJSON(map[string]interface{}{
-				"order_id":   orderID,
-				"menu_id":    menuItemID,
-				"status":     input.Status,
+				"order_id":    orderID,
+				"menu_id":     menuItemID,
+				"status":      input.Status,
 				"bulk_update": true,
 			})),
 		}
@@ -722,4 +722,3 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 		"status":   input.Status,
 	})
 }
-

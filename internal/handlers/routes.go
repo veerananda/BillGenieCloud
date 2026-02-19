@@ -59,7 +59,6 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 	log.Println("✅ Order routes registered")
 }
 
-
 // SetupInventoryRoutes registers inventory endpoints
 func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env

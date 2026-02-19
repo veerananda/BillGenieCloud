@@ -35,6 +35,7 @@ func main() {
 	if !cfg.EnableLogging {
 		log.SetOutput(io.Discard)
 		gin.DefaultWriter = io.Discard
+		gin.DefaultErrorWriter = io.Discard
 	}
 
 	// Set Gin mode
@@ -52,7 +53,11 @@ func main() {
 	config.MigrateDatabase(db)
 
 	// Create router
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
+	if cfg.EnableLogging {
+		router.Use(gin.Logger())
+	}
 
 	// Setup gzip compression middleware (must be early)
 	router.Use(middleware.GzipMiddleware())
