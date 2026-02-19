@@ -371,11 +371,12 @@ func (h *UserHandler) GetStaffStats(c *gin.Context) {
 
 // RegenerateStaffKey regenerates the staff key for a user
 // @Summary Regenerate staff key
-// @Description Regenerates a new unique staff key for a staff member
+// @Description Regenerates a new unique staff key and optionally password for a staff member
 // @Tags users
 // @Accept json
 // @Produce json
 // @Param user_id path string true "User ID"
+// @Param RegenerateStaffKeyRequest body services.RegenerateStaffKeyRequest false "Optional new password"
 // @Success 200 {object} map[string]interface{} "New staff key generated"
 // @Failure 400 {object} map[string]string "Bad request"
 // @Failure 403 {object} map[string]string "Forbidden"
@@ -402,15 +403,27 @@ func (h *UserHandler) RegenerateStaffKey(c *gin.Context) {
 		return
 	}
 
-	// Regenerate the staff key
-	newKey, err := h.userService.RegenerateStaffKey(userID)
+	// Parse optional request body (new password)
+	var req services.RegenerateStaffKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// It's okay if no body provided (password is optional)
+		req = services.RegenerateStaffKeyRequest{}
+	}
+
+	// Regenerate the staff key (and password if provided)
+	newKey, err := h.userService.RegenerateStaffKey(userID, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to regenerate staff key"})
 		return
 	}
 
+	responseMsg := "Staff key regenerated successfully"
+	if req.NewPassword != nil && *req.NewPassword != "" {
+		responseMsg += " (password also updated)"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message":   "Staff key regenerated successfully",
+		"message":   responseMsg,
 		"staff_key": newKey,
 		"user_id":   userID,
 	})

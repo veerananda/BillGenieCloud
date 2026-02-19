@@ -11,15 +11,22 @@ import (
 // This allows admin emails to be globally unique while allowing staff/manager/chef 
 // to have null emails (they authenticate with staff_key instead).
 func FixEmailConstraint(db *gorm.DB) error {
-	// Step 1: Drop the old idx_restaurant_email unique constraint if it exists
+	// Step 1: Drop the old unique index/constraint if it exists
+	// Try dropping as index first
+	dropIndex := db.Exec(`DROP INDEX IF EXISTS idx_restaurant_email`)
+	if dropIndex.Error != nil {
+		fmt.Printf("⚠️  Could not drop idx_restaurant_email index: %v\n", dropIndex.Error)
+	} else {
+		fmt.Println("✅ Dropped old idx_restaurant_email index")
+	}
+
+	// Try dropping as constraint
 	dropConstraint := db.Exec(`
 		ALTER TABLE users 
 		DROP CONSTRAINT IF EXISTS idx_restaurant_email
 	`)
-
 	if dropConstraint.Error != nil {
-		// It's okay if constraint doesn't exist
-		fmt.Printf("⚠️  Could not drop idx_restaurant_email (may not exist): %v\n", dropConstraint.Error)
+		fmt.Printf("⚠️  Could not drop idx_restaurant_email constraint: %v\n", dropConstraint.Error)
 	} else {
 		fmt.Println("✅ Dropped old idx_restaurant_email constraint")
 	}

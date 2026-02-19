@@ -34,6 +34,7 @@ type CreateUserRequest struct {
 type UpdateUserRequest struct {
 	Name     string `json:"name" validate:"omitempty,min=2"`
 	Phone    string `json:"phone"`
+	Password string `json:"password" validate:"required,min=6"` // Required: password must always be updated
 	Role     string `json:"role" validate:"omitempty,oneof=manager staff chef"`
 	IsActive *bool  `json:"is_active"`
 }
@@ -215,6 +216,13 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		updates["is_active"] = *req.IsActive
 	}
 
+	// Password is required - always hash and update it
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("password hashing failed: %w", err)
+	}
+	updates["password_hash"] = hashedPassword
+
 	// Save updates
 	if err := s.db.Model(user).Updates(updates).Error; err != nil {
 		log.Printf("❌ Failed to update user: %v", err)
@@ -226,7 +234,7 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		return nil, fmt.Errorf("failed to refresh user data: %w", err)
 	}
 
-	log.Printf("✅ User updated: %s (ID: %s)", user.Email, user.ID)
+	log.Printf("✅ User updated: %s (ID: %s, password updated)", user.Email, user.ID)
 	return user, nil
 }
 
@@ -310,7 +318,13 @@ func (s *UserService) GetAdminCount(restaurantID string) (int64, error) {
 	return count, nil
 }
 
-func (s *UserService) RegenerateStaffKey(userID string) (string, error) {
+// RegenerateStaffKeyRequest for regenerating staff key and optionally password
+type RegenerateStaffKeyRequest struct {
+	NewPassword *string `json:"new_password" validate:"omitempty,min=6"` // Optional: if provided, password is also updated
+}
+
+// RegenerateStaffKey regenerates a new staff key and optionally updates password
+func (s *UserService) RegenerateStaffKey(userID string, req RegenerateStaffKeyRequest) (string, error) {
 	user, err := s.GetUser(userID)
 	if err != nil {
 		return "", err
@@ -339,14 +353,30 @@ func (s *UserService) RegenerateStaffKey(userID string) (string, error) {
 		return "", errors.New("failed to generate unique staff key")
 	}
 
-	if err := s.db.Model(user).Updates(map[string]interface{}{
+	// Prepare update map
+	updateMap := map[string]interface{}{
 		"staff_key":        newStaffKey,
 		"key_generated_at": time.Now(),
 		"updated_at":       time.Now(),
-	}).Error; err != nil {
+	}
+
+	// If new password provided, hash and update it
+	if req.NewPassword != nil && *req.NewPassword != "" {
+		hashedPassword, err := hashPassword(*req.NewPassword)
+		if err != nil {
+			return "", fmt.Errorf("password hashing failed: %w", err)
+		}
+		updateMap["password_hash"] = hashedPassword
+	}
+
+	if err := s.db.Model(user).Updates(updateMap).Error; err != nil {
 		return "", fmt.Errorf("failed to regenerate staff key: %w", err)
 	}
 
-	log.Printf("✅ Staff key regenerated for user: %s", userID)
+	logMsg := fmt.Sprintf("✅ Staff key regenerated for user: %s", userID)
+	if req.NewPassword != nil && *req.NewPassword != "" {
+		logMsg += " (password also updated)"
+	}
+	log.Printf(logMsg)
 	return newStaffKey, nil
 }
