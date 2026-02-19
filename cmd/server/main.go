@@ -54,6 +54,9 @@ func main() {
 	// Create router
 	router := gin.Default()
 
+	// Setup gzip compression middleware (must be early)
+	router.Use(middleware.GzipMiddleware())
+
 	// Setup CORS middleware
 	router.Use(middleware.CORSMiddleware(cfg.CORSAllowedOrigins))
 
