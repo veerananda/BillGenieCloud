@@ -20,12 +20,14 @@ type UserService struct {
 // CreateUserRequest for creating new staff/manager/chef
 // Note: Email is optional for staff/manager/chef (they use staff_key + password)
 // Email is only required for admin during registration
+// StaffKey is generated on frontend and passed here (format: SK_XXXXXXX)
 type CreateUserRequest struct {
-	Name     string `json:"name" validate:"required,min=2"`
-	Email    string `json:"email" validate:"omitempty,email"`
-	Phone    string `json:"phone" validate:"required"`
-	Password string `json:"password" validate:"required,min=6"`
-	Role     string `json:"role" validate:"required,oneof=manager staff chef"`
+	Name      string `json:"name" validate:"required,min=2"`
+	Email     string `json:"email" validate:"omitempty,email"`
+	Phone     string `json:"phone" validate:"required"`
+	Password  string `json:"password" validate:"required,min=6"`
+	Role      string `json:"role" validate:"required,oneof=manager staff chef"`
+	StaffKey  string `json:"staff_key" validate:"required,min=5"` // Frontend-generated key (SK_XXXXXXX)
 }
 
 // UpdateUserRequest for updating existing staff/manager/chef
@@ -87,6 +89,16 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		}
 	}
 
+	// Check if staff key already exists (globally unique)
+	if req.StaffKey != "" {
+		var existingUser models.User
+		if err := s.db.Where("staff_key = ?", req.StaffKey).First(&existingUser).Error; err == nil {
+			return nil, errors.New("staff key already in use, please regenerate a new key")
+		} else if err != gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("database error: %w", err)
+		}
+	}
+
 	// Hash password
 	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
@@ -102,6 +114,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		Phone:        req.Phone,
 		PasswordHash: hashedPassword,
 		Role:         req.Role,
+		StaffKey:     req.StaffKey, // Save the frontend-generated staff key
 		IsActive:     true,
 	}
 
@@ -111,7 +124,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	log.Printf("✅ User created: %s (ID: %s, Role: %s, Restaurant: %s)", user.Email, user.ID, user.Role, restaurantID)
+	log.Printf("✅ User created: %s (StaffKey: %s, ID: %s, Role: %s, Restaurant: %s)", user.Name, user.StaffKey, user.ID, user.Role, restaurantID)
 	return user, nil
 }
 
