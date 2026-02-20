@@ -622,7 +622,7 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	log.Printf("✅ Order item %s status updated to: %s", itemID, input.Status)
 
 	// Fetch updated order with all items for comprehensive broadcast
-	updatedOrder, err := h.orderService.GetOrder(restaurantID.(string), orderID)
+	updatedOrder, err := h.orderService.GetOrderByID(restaurantID.(string), orderID)
 	if err != nil {
 		log.Printf("⚠️  Could not fetch updated order for broadcast: %v", err)
 	} else if globalHub != nil {
