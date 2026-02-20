@@ -298,17 +298,28 @@ type NotificationEvent struct {
 
 // OrderEventData for WebSocket events
 type OrderEventData struct {
-	OrderID       string        `json:"order_id"`
-	OrderNumber   int           `json:"order_number"`
-	TableID       *string       `json:"table_id,omitempty"`
-	TableNo       string        `json:"table_no"`
-	TableOccupied bool          `json:"table_occupied"` // Track table occupation status
-	Status        string        `json:"status"`
-	SubTotal      float64       `json:"sub_total"`
-	TaxAmount     float64       `json:"tax_amount"`
-	TotalAmount   float64       `json:"total_amount"`
-	ItemCount     int           `json:"item_count"`
-	Items         []OrderItem   `json:"items,omitempty"` // Include items for detailed updates
+	OrderID       string              `json:"order_id"`
+	OrderNumber   int                 `json:"order_number"`
+	TableID       *string             `json:"table_id,omitempty"`
+	TableNo       string              `json:"table_no"`
+	TableOccupied bool                `json:"table_occupied"` // Track table occupation status
+	Status        string              `json:"status"`
+	SubTotal      float64             `json:"sub_total"`
+	TaxAmount     float64             `json:"tax_amount"`
+	TotalAmount   float64             `json:"total_amount"`
+	ItemCount     int                 `json:"item_count"`
+	Items         []BroadcastOrderItem `json:"items,omitempty"` // Include items with names for detailed updates
+}
+
+// BroadcastOrderItem includes item names for WebSocket broadcasts
+type BroadcastOrderItem struct {
+	ID          string  `json:"id"`
+	MenuID      string  `json:"menu_id"`
+	Name        string  `json:"name"`           // Item name from MenuItem
+	Quantity    int     `json:"quantity"`
+	UnitRate    float64 `json:"unit_rate"`
+	Status      string  `json:"status"`         // pending, cooking, ready, served
+	SubId       string  `json:"sub_id,omitempty"`
 }
 
 // TableEventData for WebSocket table status updates

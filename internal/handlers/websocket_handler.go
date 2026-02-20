@@ -247,6 +247,24 @@ func (c *WebSocketClient) writePump() {
 func BroadcastOrderUpdate(hub *WebSocketHub, restaurantID string, order *models.Order) {
 	tableOccupied := order.Status != "cancelled" && order.Status != "completed"
 	
+	// Transform OrderItems to BroadcastOrderItems with item names
+	broadcastItems := make([]models.BroadcastOrderItem, 0, len(order.Items))
+	for _, item := range order.Items {
+		itemName := ""
+		if item.MenuItem != nil {
+			itemName = item.MenuItem.Name
+		}
+		broadcastItems = append(broadcastItems, models.BroadcastOrderItem{
+			ID:       item.ID,
+			MenuID:   item.MenuID,
+			Name:     itemName,
+			Quantity: item.Quantity,
+			UnitRate: item.UnitRate,
+			Status:   item.Status,
+			SubId:    item.SubId,
+		})
+	}
+	
 	event := models.NotificationEvent{
 		Type:      "order_created",
 		RoomID:    restaurantID,
@@ -261,12 +279,12 @@ func BroadcastOrderUpdate(hub *WebSocketHub, restaurantID string, order *models.
 			SubTotal:      order.SubTotal,
 			TaxAmount:     order.TaxAmount,
 			TotalAmount:   order.Total,
-			ItemCount:     len(order.Items),
-			Items:         order.Items,
+			ItemCount:     len(broadcastItems),
+			Items:         broadcastItems,
 		})),
 	}
 	hub.BroadcastToRoom(restaurantID, event)
-	log.Printf("📤 Broadcast order update: Order #%d (Table: %s, Occupied: %v) to room %s", order.OrderNumber, order.TableNumber, tableOccupied, restaurantID)
+	log.Printf("📤 Broadcast order update: Order #%d (Table: %s, Occupied: %v, Items: %d) to room %s", order.OrderNumber, order.TableNumber, tableOccupied, len(broadcastItems), restaurantID)
 }
 
 // BroadcastTableUpdate broadcasts table status changes (occupied/empty)
