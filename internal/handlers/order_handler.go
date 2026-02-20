@@ -436,6 +436,11 @@ func (h *OrderHandler) CompleteOrder(c *gin.Context) {
 
 	log.Printf("✅ Order completed: #%d", order.OrderNumber)
 
+	// Broadcast order completion via WebSocket
+	if globalHub != nil {
+		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Order marked as completed",
 		"order": gin.H{
@@ -518,6 +523,11 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 
 	log.Printf("✅ [Handler] Order #%d completed with %s payment. Response:", order.OrderNumber, input.PaymentMethod)
 
+	// Broadcast order completion via WebSocket
+	if globalHub != nil {
+		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Order completed successfully",
 		"order": gin.H{
@@ -559,6 +569,12 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	}
 
 	log.Printf("✅ Order cancelled: %s, Inventory restored", orderID)
+
+	// Fetch cancelled order and broadcast the cancellation
+	order, err := h.orderService.GetOrderByID(restaurantID.(string), orderID)
+	if err == nil && globalHub != nil {
+		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "Order cancelled and inventory restored",
