@@ -254,9 +254,9 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	log.Printf("✅ Staff user updated: %s", userID)
 }
 
-// DeleteUser deletes (soft-delete) a staff user (Admin only)
-// @Summary Delete staff user
-// @Description Soft-delete a staff member (sets is_active to false)
+// DeleteUser permanently deletes a staff user from database (Admin only)
+// @Summary Delete staff user permanently
+// @Description Hard-delete a staff member (removes from database, sets user references to NULL)
 // @Security BearerAuth
 // @Accept json
 // @Produce json

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -54,6 +55,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 	}
 
 	// Check account limits: 1 admin, 1 manager, 2 staff, 1 chef (max 5 total)
+	// Only count ACTIVE users to allow recreation after deletion
 	var userCounts struct {
 		AdminCount   int64
 		ManagerCount int64
@@ -61,10 +63,10 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		ChefCount    int64
 	}
 
-	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "admin").Count(&userCounts.AdminCount)
-	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "manager").Count(&userCounts.ManagerCount)
-	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "staff").Count(&userCounts.StaffCount)
-	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ?", restaurantID, "chef").Count(&userCounts.ChefCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "admin", true).Count(&userCounts.AdminCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "manager", true).Count(&userCounts.ManagerCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "staff", true).Count(&userCounts.StaffCount)
+	s.db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "chef", true).Count(&userCounts.ChefCount)
 
 	log.Printf("📊 Current user counts for restaurant %s: Admin=%d, Manager=%d, Staff=%d, Chef=%d",
 		restaurantID, userCounts.AdminCount, userCounts.ManagerCount, userCounts.StaffCount, userCounts.ChefCount)
@@ -140,13 +142,21 @@ func (s *UserService) ListUsers(restaurantID string, filters map[string]interfac
 
 	query := s.db.Where("restaurant_id = ? AND role IN ('manager', 'staff', 'chef', 'admin')", restaurantID)
 
-	// Apply filters
-	if role, ok := filters["role"].(string); ok && role != "" {
-		query = query.Where("role = ?", role)
-	}
-
+	// Default: show only active users (unless explicitly requesting inactive)
+	shouldShowInactive := false
 	if isActive, ok := filters["is_active"].(bool); ok {
 		query = query.Where("is_active = ?", isActive)
+		if !isActive {
+			shouldShowInactive = true
+		}
+	} else {
+		// By default, show only active users (hide deleted ones)
+		query = query.Where("is_active = ?", true)
+	}
+
+	// Apply role filter if provided
+	if role, ok := filters["role"].(string); ok && role != "" {
+		query = query.Where("role = ?", role)
 	}
 
 	// Sort by creation date descending
@@ -280,13 +290,58 @@ func (s *UserService) DeleteUser(userID string, restaurantID string) error {
 		}
 	}
 
-	// Soft delete: set is_active to false
-	if err := s.db.Model(user).Update("is_active", false).Update("updated_at", time.Now()).Error; err != nil {
-		log.Printf("❌ Failed to delete user: %v", err)
-		return fmt.Errorf("failed to delete user: %w", err)
+	// Hard delete with cleanup: Begin transaction
+	tx := s.db.BeginTx(context.Background(), nil)
+
+	// 1. Set CreatedByUserID to NULL in orders table (keep order history intact)
+	if err := tx.Model(&models.Order{}).Where("created_by_user_id = ?", userID).Update("created_by_user_id", nil).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Failed to update orders: %v", err)
+		return fmt.Errorf("failed to update orders: %w", err)
 	}
 
-	log.Printf("✅ User deleted (soft): %s (ID: %s)", user.Email, userID)
+	// 2. Set UserID to NULL in audit_logs table (keep audit trail)
+	if err := tx.Model(&models.AuditLog{}).Where("user_id = ?", userID).Update("user_id", nil).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Failed to update audit logs: %v", err)
+		return fmt.Errorf("failed to update audit logs: %w", err)
+	}
+
+	// 3. Delete refresh tokens
+	if err := tx.Where("user_id = ?", userID).Delete(&models.RefreshToken{}).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Failed to delete refresh tokens: %v", err)
+		return fmt.Errorf("failed to delete refresh tokens: %w", err)
+	}
+
+	// 4. Delete user sessions
+	if err := tx.Where("user_id = ?", userID).Delete(&models.UserSession{}).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Failed to delete user sessions: %v", err)
+		return fmt.Errorf("failed to delete user sessions: %w", err)
+	}
+
+	// 5. Delete password reset records
+	if err := tx.Where("user_id = ?", userID).Delete(&models.PasswordReset{}).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Failed to delete password reset records: %v", err)
+		return fmt.Errorf("failed to delete password reset records: %w", err)
+	}
+
+	// 6. Hard delete the user record
+	if err := tx.Delete(user).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Failed to hard delete user: %v", err)
+		return fmt.Errorf("failed to hard delete user: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("❌ Failed to commit transaction: %v", err)
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("✅ User permanently deleted: %s (ID: %s)", user.Email, userID)
 	return nil
 }
 
