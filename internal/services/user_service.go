@@ -34,7 +34,7 @@ type CreateUserRequest struct {
 type UpdateUserRequest struct {
 	Name     string `json:"name" validate:"omitempty,min=2"`
 	Phone    string `json:"phone"`
-	Password string `json:"password" validate:"required,min=6"` // Required: password must always be updated
+	Password string `json:"password" validate:"omitempty,min=6"` // Optional: only update if provided
 	Role     string `json:"role" validate:"omitempty,oneof=manager staff chef"`
 	IsActive *bool  `json:"is_active"`
 }
@@ -221,12 +221,19 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		updates["is_active"] = *req.IsActive
 	}
 
-	// Password is required - always hash and update it
-	hashedPassword, err := hashPassword(req.Password)
-	if err != nil {
-		return nil, fmt.Errorf("password hashing failed: %w", err)
+	// Password is optional - only hash and update if provided
+	if req.Password != "" {
+		hashedPassword, err := hashPassword(req.Password)
+		if err != nil {
+			return nil, fmt.Errorf("password hashing failed: %w", err)
+		}
+		updates["password_hash"] = hashedPassword
 	}
-	updates["password_hash"] = hashedPassword
+
+	// If no updates provided, return error
+	if len(updates) == 0 {
+		return nil, errors.New("no fields to update")
+	}
 
 	// Save updates
 	if err := s.db.Model(user).Updates(updates).Error; err != nil {
@@ -239,7 +246,12 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		return nil, fmt.Errorf("failed to refresh user data: %w", err)
 	}
 
-	log.Printf("✅ User updated: %s (ID: %s, password updated)", user.Email, user.ID)
+	logMsg := "✅ User updated: " + user.Email + " (ID: " + user.ID
+	if req.Password != "" {
+		logMsg += ", password updated"
+	}
+	logMsg += ")"
+	log.Printf("%s", logMsg)
 	return user, nil
 }
 
