@@ -117,19 +117,40 @@ func (h *WebSocketHub) Run() {
 func (h *WebSocketHub) BroadcastToRoom(roomID string, message interface{}) {
 	h.mu.RLock()
 	room, exists := h.roomMap[roomID]
+	clientCount := len(room)
 	h.mu.RUnlock()
 
 	if !exists {
+		log.Printf("⚠️  [BROADCAST FAILED] Room %s does not exist! Connected rooms: %v", roomID, h.getRoomList())
 		return
 	}
+
+	if clientCount == 0 {
+		log.Printf("⚠️  [BROADCAST FAILED] Room %s exists but has 0 clients!", roomID)
+		return
+	}
+
+	log.Printf("📤 [BROADCAST] Sending to %d clients in room %s", clientCount, roomID)
 
 	for _, client := range room {
 		select {
 		case client.send <- message:
+			log.Printf("   ✓ Message sent to client %s", client.userID)
 		default:
 			log.Printf("⚠️  Client send buffer full for %s in room %s", client.userID, roomID)
 		}
 	}
+}
+
+// getRoomList returns list of all connected rooms (for debugging)
+func (h *WebSocketHub) getRoomList() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	rooms := make([]string, 0, len(h.roomMap))
+	for roomID := range h.roomMap {
+		rooms = append(rooms, roomID)
+	}
+	return rooms
 }
 
 // HandleWebSocket handles WebSocket connections

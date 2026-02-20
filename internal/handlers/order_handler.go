@@ -627,14 +627,19 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	orderID := c.Param("order_id")
 	itemID := c.Param("item_id")
 
+	log.Printf("🔵 [UpdateOrderItemStatus] Called with orderID=%s, itemID=%s, restaurantID=%v", orderID, itemID, restaurantID)
+
 	var input struct {
 		Status string `json:"status" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("❌ Binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	log.Printf("   New status: %s", input.Status)
 
 	// Validate status
 	validStatuses := []string{"pending", "cooking", "ready", "served"}
@@ -664,6 +669,7 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	if err != nil {
 		log.Printf("⚠️  Could not fetch updated order for broadcast: %v", err)
 	} else if globalHub != nil {
+		log.Printf("📡 [BROADCAST TRIGGER] Broadcasting order update for order #%d", updatedOrder.OrderNumber)
 		// Broadcast full order status change with complete order details
 		BroadcastOrderUpdate(globalHub, restaurantID.(string), updatedOrder)
 		
@@ -686,6 +692,8 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 				CurrentOrderID: nil,
 			})
 		}
+	} else {
+		log.Printf("❌ [BROADCAST FAILED] globalHub is nil!")
 	}
 
 	c.JSON(http.StatusOK, gin.H{
