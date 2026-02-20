@@ -257,6 +257,14 @@ func (h *TableHandler) SetTableOccupied(c *gin.Context) {
 		return
 	}
 
+	// Broadcast table status change to all connected clients
+	if globalHub != nil {
+		BroadcastTableUpdate(globalHub, restaurantID, &table)
+		log.Printf("📤 SetTableOccupied: Broadcasted table occupied: %s (ID: %s)", table.Name, table.ID)
+	} else {
+		log.Printf("⚠️  SetTableOccupied: WebSocket hub not available, skipping broadcast")
+	}
+
 	log.Printf("✅ SetTableOccupied success: Table %s now occupied with order %s", tableID, req.OrderID)
 	c.JSON(http.StatusOK, table)
 }
@@ -285,6 +293,14 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 	}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update table"})
 		return
+	}
+
+	// Broadcast table status change to all connected clients
+	if globalHub != nil {
+		BroadcastTableUpdate(globalHub, restaurantID, &table)
+		log.Printf("📤 SetTableVacant: Broadcasted table vacant: %s (ID: %s)", table.Name, table.ID)
+	} else {
+		log.Printf("⚠️  SetTableVacant: WebSocket hub not available, skipping broadcast")
 	}
 
 	c.JSON(http.StatusOK, table)

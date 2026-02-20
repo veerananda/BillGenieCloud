@@ -439,6 +439,17 @@ func (h *OrderHandler) CompleteOrder(c *gin.Context) {
 	// Broadcast order completion via WebSocket
 	if globalHub != nil {
 		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+		
+		// If this is a dine-in order, also broadcast that the table is now vacant
+		if order.TableID != nil && *order.TableID != "" {
+			log.Printf("📍 Order #%d is dine-in, broadcasting table %s as vacant", order.OrderNumber, order.TableNumber)
+			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{
+				ID:             *order.TableID,
+				Name:           order.TableNumber,
+				IsOccupied:     false,
+				CurrentOrderID: nil,
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -526,6 +537,17 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 	// Broadcast order completion via WebSocket
 	if globalHub != nil {
 		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+		
+		// If this is a dine-in order, also broadcast that the table is now vacant
+		if order.TableID != nil && *order.TableID != "" {
+			log.Printf("📍 Order #%d is dine-in, broadcasting table %s as vacant", order.OrderNumber, order.TableNumber)
+			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{
+				ID:             *order.TableID,
+				Name:           order.TableNumber,
+				IsOccupied:     false,
+				CurrentOrderID: nil,
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
