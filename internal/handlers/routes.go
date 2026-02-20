@@ -194,6 +194,9 @@ func SetupUserRoutes(router *gin.Engine, db *gorm.DB) {
 
 		// Restore a deleted staff user
 		protected.POST("/:user_id/restore", userHandler.RestoreUser)
+
+		// Regenerate staff key for a user
+		protected.POST("/:user_id/regenerate-key", userHandler.RegenerateStaffKey)
 	}
 
 	log.Println("✅ User routes registered with full implementation")
