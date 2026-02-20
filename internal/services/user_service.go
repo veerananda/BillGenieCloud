@@ -1,7 +1,6 @@
 package services
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -143,12 +142,8 @@ func (s *UserService) ListUsers(restaurantID string, filters map[string]interfac
 	query := s.db.Where("restaurant_id = ? AND role IN ('manager', 'staff', 'chef', 'admin')", restaurantID)
 
 	// Default: show only active users (unless explicitly requesting inactive)
-	shouldShowInactive := false
 	if isActive, ok := filters["is_active"].(bool); ok {
 		query = query.Where("is_active = ?", isActive)
-		if !isActive {
-			shouldShowInactive = true
-		}
 	} else {
 		// By default, show only active users (hide deleted ones)
 		query = query.Where("is_active = ?", true)
@@ -291,7 +286,7 @@ func (s *UserService) DeleteUser(userID string, restaurantID string) error {
 	}
 
 	// Hard delete with cleanup: Begin transaction
-	tx := s.db.BeginTx(context.Background(), nil)
+	tx := s.db.Begin()
 
 	// 1. Set CreatedByUserID to NULL in orders table (keep order history intact)
 	if err := tx.Model(&models.Order{}).Where("created_by_user_id = ?", userID).Update("created_by_user_id", nil).Error; err != nil {
