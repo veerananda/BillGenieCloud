@@ -250,10 +250,13 @@ func BroadcastOrderUpdate(hub *WebSocketHub, restaurantID string, order *models.
 	// Transform OrderItems to BroadcastOrderItems with item names
 	broadcastItems := make([]models.BroadcastOrderItem, 0, len(order.Items))
 	for _, item := range order.Items {
-		itemName := ""
-		if item.MenuItem != nil {
+		itemName := "Unknown Item"
+		if item.MenuItem != nil && item.MenuItem.Name != "" {
 			itemName = item.MenuItem.Name
+		} else {
+			log.Printf("⚠️  MenuItem missing for item %s (MenuID: %s)", item.ID, item.MenuID)
 		}
+		log.Printf("    🔄 Broadcasting item %s: name=%s, status=%s, qty=%d", item.ID, itemName, item.Status, item.Quantity)
 		broadcastItems = append(broadcastItems, models.BroadcastOrderItem{
 			ID:       item.ID,
 			MenuID:   item.MenuID,
@@ -284,7 +287,13 @@ func BroadcastOrderUpdate(hub *WebSocketHub, restaurantID string, order *models.
 		})),
 	}
 	hub.BroadcastToRoom(restaurantID, event)
-	log.Printf("📤 Broadcast order update: Order #%d (Table: %s, Occupied: %v, Items: %d) to room %s", order.OrderNumber, order.TableNumber, tableOccupied, len(broadcastItems), restaurantID)
+	
+	// Log the full broadcast data for debugging
+	log.Printf("📤 Broadcast order update: Order #%d (Table: %s, Status: %s, Items: %d) to room %s", 
+		order.OrderNumber, order.TableNumber, order.Status, len(broadcastItems), restaurantID)
+	for idx, item := range broadcastItems {
+		log.Printf("   [%d] %s (status: %s)", idx, item.Name, item.Status)
+	}
 }
 
 // BroadcastTableUpdate broadcasts table status changes (occupied/empty)
