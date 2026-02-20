@@ -49,6 +49,7 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("/:order_id/complete-payment", orderHandler.CompleteOrderWithPayment)
 		protected.PUT("/:order_id/cancel", orderHandler.CancelOrder)
 		protected.PUT("/:order_id/items/:item_id/status", orderHandler.UpdateOrderItemStatus)
+		protected.PUT("/:order_id/menu-items/:menu_id/status", orderHandler.UpdateOrderItemsByMenuID)
 	}
 
 	log.Println("✅ Order routes registered")
