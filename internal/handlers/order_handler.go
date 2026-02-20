@@ -621,19 +621,33 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 
 	log.Printf("✅ Order item %s status updated to: %s", itemID, input.Status)
 
-	// Broadcast order status change via WebSocket
-	if globalHub != nil {
-		event := models.NotificationEvent{
-			Type:      "order_status_changed",
-			RoomID:    restaurantID.(string),
-			Timestamp: time.Now(),
-			Data: json.RawMessage(toJSON(map[string]interface{}{
-				"order_id": orderID,
-				"item_id":  itemID,
-				"status":   input.Status,
-			})),
+	// Fetch updated order with all items for comprehensive broadcast
+	updatedOrder, err := h.orderService.GetOrder(restaurantID.(string), orderID)
+	if err != nil {
+		log.Printf("⚠️  Could not fetch updated order for broadcast: %v", err)
+	} else if globalHub != nil {
+		// Broadcast full order status change with complete order details
+		BroadcastOrderUpdate(globalHub, restaurantID.(string), updatedOrder)
+		
+		// Check if ALL items are served - if so, broadcast table as unoccupied
+		allServed := true
+		for _, item := range updatedOrder.Items {
+			if item.Status != "served" && item.Status != "cancelled" {
+				allServed = false
+				break
+			}
 		}
-		globalHub.BroadcastToRoom(restaurantID.(string), event)
+		
+		if allServed && updatedOrder.TableID != nil {
+			log.Printf("📍 All items served for order #%d on table %s, marking table as unoccupied", updatedOrder.OrderNumber, updatedOrder.TableNumber)
+			// Broadcast table status change (unoccupied)
+			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{
+				ID:             *updatedOrder.TableID,
+				Name:           updatedOrder.TableNumber,
+				IsOccupied:     false,
+				CurrentOrderID: nil,
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

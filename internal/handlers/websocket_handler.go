@@ -243,22 +243,47 @@ func (c *WebSocketClient) writePump() {
 	}
 }
 
-// BroadcastOrderUpdate broadcasts order creation/update to restaurant
+// BroadcastOrderUpdate broadcasts enhanced order creation/update with full details
 func BroadcastOrderUpdate(hub *WebSocketHub, restaurantID string, order *models.Order) {
+	tableOccupied := order.Status != "cancelled" && order.Status != "completed"
+	
 	event := models.NotificationEvent{
 		Type:      "order_created",
 		RoomID:    restaurantID,
 		Timestamp: time.Now(),
 		Data: json.RawMessage(toJSON(models.OrderEventData{
-			OrderID:     order.ID,
-			TableNo:     order.TableNumber,
-			Status:      order.Status,
-			TotalAmount: order.Total,
-			ItemCount:   len(order.Items),
+			OrderID:       order.ID,
+			OrderNumber:   order.OrderNumber,
+			TableID:       order.TableID,
+			TableNo:       order.TableNumber,
+			TableOccupied: tableOccupied,
+			Status:        order.Status,
+			SubTotal:      order.SubTotal,
+			TaxAmount:     order.TaxAmount,
+			TotalAmount:   order.Total,
+			ItemCount:     len(order.Items),
+			Items:         order.Items,
 		})),
 	}
 	hub.BroadcastToRoom(restaurantID, event)
-	log.Printf("📤 Broadcast order update: Order #%d to room %s", order.OrderNumber, restaurantID)
+	log.Printf("📤 Broadcast order update: Order #%d (Table: %s, Occupied: %v) to room %s", order.OrderNumber, order.TableNumber, tableOccupied, restaurantID)
+}
+
+// BroadcastTableUpdate broadcasts table status changes (occupied/empty)
+func BroadcastTableUpdate(hub *WebSocketHub, restaurantID string, table *models.RestaurantTable) {
+	event := models.NotificationEvent{
+		Type:      "table_status_changed",
+		RoomID:    restaurantID,
+		Timestamp: time.Now(),
+		Data: json.RawMessage(toJSON(models.TableEventData{
+			TableID:        table.ID,
+			TableNumber:    table.Name,
+			IsOccupied:     table.IsOccupied,
+			CurrentOrderID: table.CurrentOrderID,
+		})),
+	}
+	hub.BroadcastToRoom(restaurantID, event)
+	log.Printf("📤 Broadcast table update: Table %s (Occupied: %v) to room %s", table.Name, table.IsOccupied, restaurantID)
 }
 
 // BroadcastInventoryUpdate broadcasts inventory changes

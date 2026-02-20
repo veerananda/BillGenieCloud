@@ -298,11 +298,25 @@ type NotificationEvent struct {
 
 // OrderEventData for WebSocket events
 type OrderEventData struct {
-	OrderID     string  `json:"order_id"`
-	TableNo     string  `json:"table_no"`
-	Status      string  `json:"status"`
-	TotalAmount float64 `json:"total_amount"`
-	ItemCount   int     `json:"item_count"`
+	OrderID       string        `json:"order_id"`
+	OrderNumber   int           `json:"order_number"`
+	TableID       *string       `json:"table_id,omitempty"`
+	TableNo       string        `json:"table_no"`
+	TableOccupied bool          `json:"table_occupied"` // Track table occupation status
+	Status        string        `json:"status"`
+	SubTotal      float64       `json:"sub_total"`
+	TaxAmount     float64       `json:"tax_amount"`
+	TotalAmount   float64       `json:"total_amount"`
+	ItemCount     int           `json:"item_count"`
+	Items         []OrderItem   `json:"items,omitempty"` // Include items for detailed updates
+}
+
+// TableEventData for WebSocket table status updates
+type TableEventData struct {
+	TableID        string `json:"table_id"`
+	TableNumber    string `json:"table_number"`
+	IsOccupied     bool   `json:"is_occupied"`
+	CurrentOrderID *string `json:"current_order_id,omitempty"`
 }
 
 // InventoryEventData for WebSocket inventory updates
