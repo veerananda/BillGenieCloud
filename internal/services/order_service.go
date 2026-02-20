@@ -483,8 +483,16 @@ func (s *OrderService) ListOrders(restaurantID string, status string, limit int,
 	query := s.db.Where("restaurant_id = ?", restaurantID)
 
 	if status != "" {
-		query = query.Where("status = ?", status)
-		log.Printf("🔵 [ListOrders] Filtering by status: %s", status)
+		// Support special status values
+		if status == "active" {
+			// Return pending and cooking orders (not completed)
+			query = query.Where("status IN ?", []string{"pending", "cooking"})
+			log.Printf("🔵 [ListOrders] Filtering for active orders (pending and cooking only)")
+		} else {
+			// Filter by exact status
+			query = query.Where("status = ?", status)
+			log.Printf("🔵 [ListOrders] Filtering by status: %s", status)
+		}
 	} else {
 		log.Printf("🔵 [ListOrders] No status filter - getting ALL orders")
 	}

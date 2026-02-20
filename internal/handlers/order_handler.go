@@ -279,7 +279,7 @@ func (h *OrderHandler) UpdateOrder(c *gin.Context) {
 // @Description Get paginated list of orders
 // @Security ApiKeyAuth
 // @Produce json
-// @Param status query string false "Filter by status (pending, completed, cancelled)"
+// @Param status query string false "Filter by status: pending, cooking, completed, or active (pending+cooking only)"
 // @Param limit query int false "Items per page (default: 20)"
 // @Param offset query int false "Pagination offset (default: 0)"
 // @Success 200 {object} map[string]interface{}
