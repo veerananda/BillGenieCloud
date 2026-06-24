@@ -876,7 +876,11 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	if order.OrderType == "counter" && order.TrackingToken != "" {
+		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
+	}
+
+	resp := gin.H{
 		"message": "Order completed successfully",
 		"order": gin.H{
 			"id":              order.ID,
@@ -888,7 +892,22 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 			"change_returned": order.ChangeReturned,
 			"completed_at":    order.CompletedAt,
 		},
-	})
+	}
+	if order.OrderType == "counter" && order.TrackingToken != "" {
+		ticket := order.TicketNumber
+		if ticket <= 0 {
+			ticket = order.OrderNumber
+		}
+		resp["tracking_token"] = order.TrackingToken
+		resp["tracking_url"] = services.BuildTrackingURL(order.TrackingToken)
+		resp["ticket_number"] = ticket
+		orderResp := resp["order"].(gin.H)
+		orderResp["ticket_number"] = ticket
+		orderResp["tracking_token"] = order.TrackingToken
+		orderResp["tracking_url"] = services.BuildTrackingURL(order.TrackingToken)
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // StartCheckout acquires a checkout lock for an order (one device at a time).
@@ -1093,10 +1112,12 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	} else if globalHub != nil {
 		if completedOrder, didComplete, completeErr := h.orderService.TryCompleteCounterOrderAfterKitchen(restaurantID.(string), orderID); completeErr == nil && didComplete {
 			BroadcastOrderEvent(globalHub, restaurantID.(string), "order_completed", completedOrder)
+			NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
 		} else {
 			BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, itemID, "", false)
 		}
 		// Table stays occupied until order is completed/paid — do not auto-vacate when all items served
+		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1171,6 +1192,7 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 			} else {
 				BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, "", menuItemID, true)
 			}
+			NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
 		}
 	}
 

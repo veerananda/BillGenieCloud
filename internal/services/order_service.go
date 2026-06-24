@@ -502,6 +502,14 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 	if isCounter {
 		// Paid at counter — keep pending so kitchen can prepare items
 		updates["completed_at"] = now
+		token, tokenErr := GenerateTrackingToken()
+		if tokenErr != nil {
+			tx.Rollback()
+			return nil, tokenErr
+		}
+		expires := now.Add(trackingTTL)
+		updates["tracking_token"] = token
+		updates["tracking_expires_at"] = expires
 	} else {
 		updates["status"] = "completed"
 		updates["completed_at"] = now
