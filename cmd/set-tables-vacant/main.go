@@ -29,6 +29,15 @@ func main() {
 
 	log.Println("✅ Connected to database")
 
+	// Clear active order links first
+	clearOrders := db.Model(&models.RestaurantTable{}).
+		Where("1=1").
+		Update("current_order_id", nil)
+	if clearOrders.Error != nil {
+		log.Fatalf("❌ Failed to clear current_order_id: %v", clearOrders.Error)
+	}
+	log.Printf("✅ Cleared current_order_id from %d tables", clearOrders.RowsAffected)
+
 	// Update all tables to be vacant (green)
 	result := db.Model(&models.RestaurantTable{}).
 		Where("1=1").

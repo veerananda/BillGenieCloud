@@ -324,25 +324,17 @@ Test 8: Invalid restaurant_id        ✅ Properly handled (0 results)
 
 **Options:**
 
-#### Option A: Heroku (Recommended for MVP)
-- **Pros:** Simple deployment, auto-scaling, free tier available
-- **Cons:** Cold starts, limited control
-- **Cost:** $0-7/month initially
-- **Guide:** See `DEPLOY_HEROKU.md`
-
-#### Option B: DigitalOcean (Recommended for Production)
-- **Pros:** More control, consistent performance, Bangalore region
-- **Cons:** More setup required
-- **Cost:** $20/month for 2GB droplet
-- **Guide:** See `DEPLOY_DIGITALOCEAN.md`
+#### Production: Fly.io + DigitalOcean Postgres + Upstash Redis
+- **API:** Fly.io (`bom`) — https://billgenie-api.fly.dev
+- **Database:** DigitalOcean Managed Postgres (`blr1`)
+- **Redis:** Upstash for WebSocket fan-out
+- **Guide:** See `DEPLOY_FLY.md`
 
 **Deployment Checklist:**
-- [ ] Choose platform (Heroku or DigitalOcean)
-- [ ] Set up environment variables
-- [ ] Configure database connection
-- [ ] Deploy backend
+- [ ] Configure Fly secrets (`scripts/set-fly-secrets.ps1`)
+- [ ] Deploy API (`make deploy-fly`)
 - [ ] Test all endpoints in production
-- [ ] Set up SSL certificate (HTTPS)
+- [ ] Point mobile app at `https://billgenie-api.fly.dev`
 - [ ] Configure domain name (optional)
 - [ ] Set up monitoring (error tracking, uptime)
 
@@ -377,7 +369,7 @@ Test 8: Invalid restaurant_id        ✅ Properly handled (0 results)
 ### ✅ Complete
 - `README.md` - Project overview
 - `API_DOCUMENTATION.md` - Comprehensive API reference (updated with public endpoints)
-- `DEPLOY_HEROKU.md` - Heroku deployment guide
+- `DEPLOY_FLY.md` - Fly.io production deployment guide
 - `DEPLOY_DIGITALOCEAN.md` - DigitalOcean deployment guide
 - `BACKEND_STATUS.md` - This document
 - Test scripts with examples

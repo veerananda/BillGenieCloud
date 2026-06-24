@@ -155,7 +155,7 @@ eas build --profile production --platform android
 
 ## Step 7 — Register first restaurant
 
-Heroku data is gone — start fresh:
+If migrating from an old host, start fresh on DigitalOcean Postgres:
 
 1. Open the app → **Register** a new restaurant
 2. Add menu items and tables
