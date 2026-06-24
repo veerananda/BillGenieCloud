@@ -1049,14 +1049,19 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	orderID := c.Param("order_id")
 	itemID := c.Param("item_id")
 
+	log.Printf("🔵 [UpdateOrderItemStatus] Called with orderID=%s, itemID=%s, restaurantID=%v", orderID, itemID, restaurantID)
+
 	var input struct {
 		Status string `json:"status" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("❌ Binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	log.Printf("   New status: %s", input.Status)
 
 	// Validate status
 	validStatuses := []string{"pending", "cooking", "ready", "served"}
@@ -1161,7 +1166,11 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 	if globalHub != nil {
 		updatedOrder, fetchErr := h.orderService.GetOrderByID(restaurantID.(string), orderID)
 		if fetchErr == nil {
-			BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, "", menuItemID, true)
+			if completedOrder, didComplete, completeErr := h.orderService.TryCompleteCounterOrderAfterKitchen(restaurantID.(string), orderID); completeErr == nil && didComplete {
+				BroadcastOrderEvent(globalHub, restaurantID.(string), "order_completed", completedOrder)
+			} else {
+				BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, "", menuItemID, true)
+			}
 		}
 	}
 

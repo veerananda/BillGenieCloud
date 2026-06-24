@@ -329,16 +329,16 @@ type OrderEventData struct {
 	TotalAmount   float64       `json:"total_amount"`
 	ItemCount     int           `json:"item_count"`
 	Items         []WSOrderItem `json:"items,omitempty"`
-	PaymentMethod string      `json:"payment_method,omitempty"`
-	IsSelfService bool        `json:"is_self_service,omitempty"`
-	OrderType     string      `json:"order_type,omitempty"`
-	TicketNumber  int         `json:"ticket_number,omitempty"`
-	ServiceMode   string      `json:"service_mode,omitempty"`
-	CreatedAt     time.Time   `json:"created_at,omitempty"`
-	UpdatedAt     time.Time   `json:"updated_at,omitempty"`
-	ItemID        string      `json:"item_id,omitempty"`
-	MenuID        string      `json:"menu_id,omitempty"`
-	BulkUpdate    bool        `json:"bulk_update,omitempty"`
+	PaymentMethod string        `json:"payment_method,omitempty"`
+	IsSelfService bool          `json:"is_self_service,omitempty"`
+	OrderType     string        `json:"order_type,omitempty"`
+	TicketNumber  int           `json:"ticket_number,omitempty"`
+	ServiceMode   string        `json:"service_mode,omitempty"`
+	CreatedAt     time.Time     `json:"created_at,omitempty"`
+	UpdatedAt     time.Time     `json:"updated_at,omitempty"`
+	ItemID        string        `json:"item_id,omitempty"`
+	MenuID        string        `json:"menu_id,omitempty"`
+	BulkUpdate    bool          `json:"bulk_update,omitempty"`
 }
 
 // TableEventData for WebSocket table status updates
