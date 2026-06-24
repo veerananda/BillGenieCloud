@@ -139,16 +139,17 @@ go build -o restaurant-api cmd/server/main.go
 
 ## Deployment
 
-### Heroku
-```bash
-git push heroku main
+Production runs on **Fly.io** (API, Mumbai) with **DigitalOcean Postgres** (Bangalore) and **Upstash Redis**.
+
+```powershell
+# See DEPLOY_FLY.md for full setup
+.\scripts\set-fly-secrets.ps1
+.\scripts\deploy-fly.ps1
 ```
 
-### DigitalOcean
-```bash
-scp restaurant-api user@droplet:/opt/
-ssh user@droplet "chmod +x /opt/restaurant-api && /opt/restaurant-api"
-```
+- **API:** https://billgenie-api.fly.dev
+- **Health:** https://billgenie-api.fly.dev/health
+- **Guide:** [DEPLOY_FLY.md](./DEPLOY_FLY.md)
 
 ## Environment Variables
 

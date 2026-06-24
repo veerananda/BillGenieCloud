@@ -106,9 +106,9 @@ docker-build:
 	docker build -t restaurant-api:latest .
 	@echo "✅ Docker image built"
 
-# Deploy to Heroku
-deploy-heroku:
-	git push heroku main
+# Deploy to Fly.io (see DEPLOY_FLY.md)
+deploy-fly:
+	powershell -ExecutionPolicy Bypass -File scripts/deploy-fly.ps1
 
 # Version information
 version:
