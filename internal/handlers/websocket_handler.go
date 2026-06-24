@@ -44,9 +44,21 @@ var upgrader = websocket.Upgrader{
 // Global hub instance for broadcasting
 var globalHub *WebSocketHub
 
+// EventPublisher publishes events to all connected clients (local hub + optional Redis).
+type EventPublisher interface {
+	Publish(roomID string, event models.NotificationEvent)
+}
+
+var globalPublisher EventPublisher
+
 // SetGlobalHub sets the global WebSocket hub
 func SetGlobalHub(hub *WebSocketHub) {
 	globalHub = hub
+}
+
+// SetEventPublisher sets the global event publisher (hub-only or Redis-backed).
+func SetEventPublisher(publisher EventPublisher) {
+	globalPublisher = publisher
 }
 
 // NewWebSocketHub creates a new WebSocket hub
@@ -170,6 +182,8 @@ func HandleWebSocket(c *gin.Context, hub *WebSocketHub) {
 		Type:      "connected",
 		RoomID:    roomID,
 		Timestamp: time.Now(),
+		Version:   1,
+		Seq:       time.Now().UnixNano(),
 		Data:      json.RawMessage(`{"message":"Connected to server"}`),
 	}
 	client.send <- welcomeMsg
@@ -243,62 +257,144 @@ func (c *WebSocketClient) writePump() {
 	}
 }
 
-// BroadcastOrderUpdate broadcasts enhanced order creation/update with full details
-func BroadcastOrderUpdate(hub *WebSocketHub, restaurantID string, order *models.Order) {
-	tableOccupied := order.Status != "cancelled" && order.Status != "completed"
-	
-	event := models.NotificationEvent{
-		Type:      "order_created",
-		RoomID:    restaurantID,
-		Timestamp: time.Now(),
-		Data: json.RawMessage(toJSON(models.OrderEventData{
-			OrderID:       order.ID,
-			OrderNumber:   order.OrderNumber,
-			TableID:       order.TableID,
-			TableNo:       order.TableNumber,
-			TableOccupied: tableOccupied,
-			Status:        order.Status,
-			SubTotal:      order.SubTotal,
-			TaxAmount:     order.TaxAmount,
-			TotalAmount:   order.Total,
-			ItemCount:     len(order.Items),
-			Items:         order.Items,
-		})),
-	}
-	hub.BroadcastToRoom(restaurantID, event)
-	log.Printf("📤 Broadcast order update: Order #%d (Table: %s, Occupied: %v) to room %s", order.OrderNumber, order.TableNumber, tableOccupied, restaurantID)
+// HubPublisher publishes events via the in-memory WebSocket hub only.
+type HubPublisher struct {
+	Hub *WebSocketHub
 }
 
-// BroadcastTableUpdate broadcasts table status changes (occupied/empty)
-func BroadcastTableUpdate(hub *WebSocketHub, restaurantID string, table *models.RestaurantTable) {
+func (p *HubPublisher) Publish(roomID string, event models.NotificationEvent) {
+	if p != nil && p.Hub != nil {
+		p.Hub.BroadcastToRoom(roomID, event)
+	}
+}
+
+func buildWSOrderItems(items []models.OrderItem) []models.WSOrderItem {
+	out := make([]models.WSOrderItem, 0, len(items))
+	for _, item := range items {
+		ws := models.WSOrderItem{
+			ID:       item.ID,
+			MenuID:   item.MenuID,
+			Quantity: item.Quantity,
+			UnitRate: item.UnitRate,
+			Total:    item.Total,
+			Status:   item.Status,
+			SubId:    item.SubId,
+			Notes:    item.Notes,
+		}
+		if item.MenuItem != nil {
+			ws.Name = item.MenuItem.Name
+			ws.IsVegetarian = item.MenuItem.IsVeg
+		}
+		out = append(out, ws)
+	}
+	return out
+}
+
+func buildOrderEventData(order *models.Order) models.OrderEventData {
+	tableOccupied := order.Status != "cancelled" && order.Status != "completed"
+	isSelfService := order.OrderType == "counter" || order.CustomerName == "Self Service" ||
+		order.CustomerName == "Takeaway" || order.CustomerName == "Counter"
+
+	return models.OrderEventData{
+		OrderID:       order.ID,
+		OrderNumber:   order.OrderNumber,
+		OrderType:     order.OrderType,
+		TicketNumber:  order.TicketNumber,
+		ServiceMode:   order.ServiceMode,
+		TableID:       order.TableID,
+		TableNo:       order.TableNumber,
+		TableOccupied: tableOccupied,
+		CustomerName:  order.CustomerName,
+		Status:        order.Status,
+		SubTotal:      order.SubTotal,
+		TaxAmount:     order.TaxAmount,
+		TotalAmount:   order.Total,
+		ItemCount:     len(order.Items),
+		Items:         buildWSOrderItems(order.Items),
+		PaymentMethod: order.PaymentMethod,
+		IsSelfService: isSelfService,
+		CreatedAt:     order.CreatedAt,
+		UpdatedAt:     order.UpdatedAt,
+	}
+}
+
+func publishEvent(restaurantID, eventType string, data interface{}) {
+	if globalPublisher == nil && globalHub == nil {
+		return
+	}
+
 	event := models.NotificationEvent{
-		Type:      "table_status_changed",
+		Type:      eventType,
 		RoomID:    restaurantID,
 		Timestamp: time.Now(),
-		Data: json.RawMessage(toJSON(models.TableEventData{
-			TableID:        table.ID,
-			TableNumber:    table.Name,
-			IsOccupied:     table.IsOccupied,
-			CurrentOrderID: table.CurrentOrderID,
-		})),
+		Version:   1,
+		Seq:       time.Now().UnixNano(),
+		Data:      json.RawMessage(toJSON(data)),
 	}
-	hub.BroadcastToRoom(restaurantID, event)
+
+	if globalPublisher != nil {
+		globalPublisher.Publish(restaurantID, event)
+	} else if globalHub != nil {
+		globalHub.BroadcastToRoom(restaurantID, event)
+	}
+}
+
+// BroadcastOrderEvent broadcasts an order event with the correct type.
+func BroadcastOrderEvent(hub *WebSocketHub, restaurantID, eventType string, order *models.Order) {
+	if hub == nil && globalPublisher == nil {
+		return
+	}
+	_ = hub // kept for call-site compatibility
+	data := buildOrderEventData(order)
+	publishEvent(restaurantID, eventType, data)
+	log.Printf("📤 Broadcast %s: Order #%d (Table: %s) to room %s", eventType, order.OrderNumber, order.TableNumber, restaurantID)
+}
+
+// BroadcastOrderUpdate is deprecated — use BroadcastOrderEvent with an explicit type.
+func BroadcastOrderUpdate(hub *WebSocketHub, restaurantID string, order *models.Order) {
+	BroadcastOrderEvent(hub, restaurantID, "order_updated", order)
+}
+
+// BroadcastOrderItemStatusEvent broadcasts a kitchen item status change with full order context.
+func BroadcastOrderItemStatusEvent(hub *WebSocketHub, restaurantID string, order *models.Order, itemID, menuID string, bulk bool) {
+	if order == nil {
+		return
+	}
+	data := buildOrderEventData(order)
+	data.ItemID = itemID
+	data.MenuID = menuID
+	data.BulkUpdate = bulk
+	publishEvent(restaurantID, "order_item_status_changed", data)
+}
+
+func BroadcastTableUpdate(hub *WebSocketHub, restaurantID string, table *models.RestaurantTable) {
+	_ = hub
+	data := models.TableEventData{
+		TableID:        table.ID,
+		TableNumber:    table.Name,
+		IsOccupied:     table.IsOccupied,
+		CurrentOrderID: table.CurrentOrderID,
+	}
+	publishEvent(restaurantID, "table_status_changed", data)
 	log.Printf("📤 Broadcast table update: Table %s (Occupied: %v) to room %s", table.Name, table.IsOccupied, restaurantID)
+}
+
+// BroadcastCheckoutEvent broadcasts checkout lock start/cancel events.
+func BroadcastCheckoutEvent(hub *WebSocketHub, restaurantID, eventType string, data models.CheckoutEventData) {
+	_ = hub
+	publishEvent(restaurantID, eventType, data)
+	log.Printf("📤 Broadcast %s: order %s by %s to room %s", eventType, data.OrderID, data.LockedByName, restaurantID)
 }
 
 // BroadcastInventoryUpdate broadcasts inventory changes
 func BroadcastInventoryUpdate(hub *WebSocketHub, restaurantID string, itemName string, quantity float64, isLow bool) {
-	event := models.NotificationEvent{
-		Type:      "inventory_updated",
-		RoomID:    restaurantID,
-		Timestamp: time.Now(),
-		Data: json.RawMessage(toJSON(models.InventoryEventData{
-			ItemName: itemName,
-			Quantity: quantity,
-			IsLow:    isLow,
-		})),
+	_ = hub
+	data := models.InventoryEventData{
+		ItemName: itemName,
+		Quantity: quantity,
+		IsLow:    isLow,
 	}
-	hub.BroadcastToRoom(restaurantID, event)
+	publishEvent(restaurantID, "inventory_updated", data)
 	log.Printf("📤 Broadcast inventory update: %s (Qty: %.2f) to room %s", itemName, quantity, restaurantID)
 }
 

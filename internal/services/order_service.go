@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
+	"time"
 
 	"restaurant-api/internal/models"
 
@@ -17,9 +20,11 @@ type OrderService struct {
 
 type CreateOrderRequest struct {
 	RestaurantID string                   `json:"restaurant_id"` // Set by handler from JWT
-	TableNumber  string                   `json:"table_number" validate:"required"`
+	TableNumber  string                   `json:"table_number"`
 	TableID      *string                  `json:"table_id"` // Link to RestaurantTable for dine-in orders
 	CustomerName string                   `json:"customer_name"`
+	OrderType    string                   `json:"order_type"`   // dine_in | counter
+	ServiceMode  string                   `json:"service_mode"` // eat_here | takeaway (counter only)
 	Items        []CreateOrderItemRequest `json:"items" validate:"required,min=1"`
 	Notes        string                   `json:"notes"`
 }
@@ -86,16 +91,51 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		}
 	}()
 
-	// Get next order number
-	var lastOrder models.Order
-	tx.Where("restaurant_id = ?", restaurantID).
-		Order("order_number DESC").
-		Limit(1).
-		First(&lastOrder)
+	// Determine order type and allocate numbers
+	orderType := inferOrderType(req)
+	todayStart := startOfLocalDay(time.Now())
 
-	orderNumber := 1
-	if lastOrder.ID != "" {
-		orderNumber = lastOrder.OrderNumber + 1
+	var orderNumber int
+	var ticketNumber int
+	tableNumber := req.TableNumber
+	var tableID *string = req.TableID
+
+	if orderType == "counter" {
+		maxTicket, err := getMaxCounterTicketToday(tx, restaurantID, todayStart)
+		if err != nil {
+			log.Printf("❌ [CreateOrder] Failed to allocate counter ticket: %v", err)
+			tx.Rollback()
+			return nil, err
+		}
+		ticketNumber = maxTicket + 1
+		orderNumber = ticketNumber
+		tableNumber = strconv.Itoa(ticketNumber)
+		tableID = nil // counter orders are not tied to restaurant tables
+	} else {
+		if strings.TrimSpace(tableNumber) == "" {
+			tx.Rollback()
+			return nil, errors.New("table_number is required for dine-in orders")
+		}
+		var lastOrder models.Order
+		tx.Where("restaurant_id = ?", restaurantID).
+			Order("order_number DESC").
+			Limit(1).
+			First(&lastOrder)
+
+		orderNumber = 1
+		if lastOrder.ID != "" {
+			orderNumber = lastOrder.OrderNumber + 1
+		}
+		ticketNumber = 0
+	}
+
+	customerName := strings.TrimSpace(req.CustomerName)
+	if orderType == "counter" && customerName == "" {
+		if req.ServiceMode == "takeaway" {
+			customerName = "Takeaway"
+		} else {
+			customerName = "Counter"
+		}
 	}
 
 	// Create order with explicit UUID generation (don't rely on BeforeCreate hook in transaction)
@@ -103,9 +143,13 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	order := &models.Order{
 		ID:              orderID,
 		RestaurantID:    restaurantID,
-		TableNumber:     req.TableNumber,
-		TableID:         req.TableID,
+		TableNumber:     tableNumber,
+		TableID:         tableID,
+		CustomerName:    customerName,
 		OrderNumber:     orderNumber,
+		OrderType:       orderType,
+		TicketNumber:    ticketNumber,
+		ServiceMode:     req.ServiceMode,
 		Status:          "pending",
 		SubTotal:        0,
 		TaxAmount:       0,
@@ -224,7 +268,17 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	}
 	log.Printf("✅ [CreateOrder] Transaction committed successfully for order #%d with ID: %s", orderNumber, order.ID)
 
-	log.Printf("✅ [CreateOrder] Order created successfully: Order #%d, ID: %s, Total: ₹%.2f", order.OrderNumber, order.ID, total)
+	// Reload with items and totals for API response and WebSocket broadcast
+	if err := s.db.Preload("Items").
+		Preload("Items.MenuItem").
+		Where("id = ? AND restaurant_id = ?", order.ID, restaurantID).
+		First(order).Error; err != nil {
+		log.Printf("❌ [CreateOrder] Failed to reload order after create: %v", err)
+		return nil, err
+	}
+
+	log.Printf("✅ [CreateOrder] Order created successfully: Order #%d, ID: %s, Total: ₹%.2f, Items: %d",
+		order.OrderNumber, order.ID, order.Total, len(order.Items))
 
 	return order, nil
 }
@@ -347,31 +401,79 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 	return &order, nil
 }
 
-// CompleteOrder marks order as completed
-func (s *OrderService) CompleteOrder(restaurantID string, orderID string) (*models.Order, error) {
+func (s *OrderService) markAllOrderItemsServed(tx *gorm.DB, orderID string) error {
+	return tx.Model(&models.OrderItem{}).
+		Where("order_id = ? AND status <> ?", orderID, "served").
+		Update("status", "served").Error
+}
+
+func (s *OrderService) reloadOrderWithItems(orderID, restaurantID string) (*models.Order, error) {
 	var order models.Order
-	if err := s.db.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+	if err := s.db.Preload("Items").
+		Preload("Items.MenuItem").
+		Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
 		First(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("order not found")
 		}
 		return nil, err
 	}
+	return &order, nil
+}
 
-	if err := s.db.Model(&order).Update("status", "completed").Error; err != nil {
+// CompleteOrder marks order as completed
+func (s *OrderService) CompleteOrder(restaurantID string, orderID string) (*models.Order, error) {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	var order models.Order
+	if err := tx.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+		First(&order).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("order not found")
+		}
 		return nil, err
 	}
 
-	log.Printf("✅ Order completed: Order #%d", order.OrderNumber)
+	if err := s.markAllOrderItemsServed(tx, orderID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
 
-	return &order, nil
+	if err := tx.Model(&order).Update("status", "completed").Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	log.Printf("✅ Order completed: Order #%d (all items marked served)", order.OrderNumber)
+
+	return s.reloadOrderWithItems(orderID, restaurantID)
 }
 
 // CompleteOrderWithPayment completes order with payment details
 func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID string, paymentMethod string, amountReceived float64, changeReturned float64) (*models.Order, error) {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
 	var order models.Order
-	if err := s.db.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+	if err := tx.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
 		First(&order).Error; err != nil {
+		tx.Rollback()
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("order not found")
 		}
@@ -380,31 +482,53 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 
 	log.Printf("🔵 [CompleteOrderWithPayment] BEFORE - Order #%d Status: %s, Total: %.2f", order.OrderNumber, order.Status, order.Total)
 
-	// Update order with payment details and mark as completed
+	isCounter := order.OrderType == "counter"
+
+	if !isCounter {
+		if err := s.markAllOrderItemsServed(tx, orderID); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	now := time.Now()
 	updates := map[string]interface{}{
-		"status":          "completed",
 		"payment_method":  paymentMethod,
 		"amount_received": amountReceived,
 		"change_returned": changeReturned,
+		"updated_at":      now,
+	}
+
+	if isCounter {
+		// Paid at counter — keep pending so kitchen can prepare items
+		updates["completed_at"] = now
+	} else {
+		updates["status"] = "completed"
+		updates["completed_at"] = now
 	}
 
 	log.Printf("🔵 [CompleteOrderWithPayment] Updating order with: %+v", updates)
 
-	if err := s.db.Model(&order).Updates(updates).Error; err != nil {
+	if err := tx.Model(&order).Updates(updates).Error; err != nil {
+		tx.Rollback()
 		log.Printf("❌ [CompleteOrderWithPayment] Update failed: %v", err)
 		return nil, err
 	}
 
-	// Reload order to get updated data
-	if err := s.db.Where("id = ?", orderID).First(&order).Error; err != nil {
-		log.Printf("❌ [CompleteOrderWithPayment] Reload failed: %v", err)
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("❌ [CompleteOrderWithPayment] Commit failed: %v", err)
+		return nil, err
+	}
+
+	reloaded, err := s.reloadOrderWithItems(orderID, restaurantID)
+	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("✅ [CompleteOrderWithPayment] AFTER - Order #%d Status: %s, PaymentMethod: %s, Received: %.2f, Change: %.2f",
-		order.OrderNumber, order.Status, order.PaymentMethod, order.AmountReceived, order.ChangeReturned)
+		reloaded.OrderNumber, reloaded.Status, reloaded.PaymentMethod, reloaded.AmountReceived, reloaded.ChangeReturned)
 
-	return &order, nil
+	return reloaded, nil
 }
 
 // CancelOrder cancels order and restores inventory
@@ -523,6 +647,256 @@ func (s *OrderService) ListOrders(restaurantID string, status string, limit int,
 	return orders, count, nil
 }
 
+// OrderSummaryItem is a lightweight line item for list/summary views.
+type OrderSummaryItem struct {
+	ID       string  `json:"id"`
+	MenuID   string  `json:"menu_id"`
+	Quantity int     `json:"quantity"`
+	UnitRate float64 `json:"unit_rate"`
+	Status   string  `json:"status"`
+	Name     string  `json:"name"`
+	IsVeg    bool    `json:"is_vegetarian"`
+}
+
+// OrderSummary is a lightweight order payload without full menu metadata.
+type OrderSummary struct {
+	ID             string             `json:"id"`
+	RestaurantID   string             `json:"restaurant_id"`
+	TableNumber    string             `json:"table_number"`
+	TableID        *string            `json:"table_id,omitempty"`
+	CustomerName   string             `json:"customer_name"`
+	OrderNumber    int                `json:"order_number"`
+	OrderType      string             `json:"order_type,omitempty"`
+	TicketNumber   int                `json:"ticket_number,omitempty"`
+	ServiceMode    string             `json:"service_mode,omitempty"`
+	Status         string             `json:"status"`
+	SubTotal       float64            `json:"sub_total"`
+	TaxAmount      float64            `json:"tax_amount"`
+	DiscountAmount float64            `json:"discount_amount"`
+	Total          float64            `json:"total"`
+	CreatedAt      time.Time          `json:"created_at"`
+	ItemCount      int                `json:"item_count"`
+	ReadyCount     int                `json:"ready_count"`
+	Items          []OrderSummaryItem `json:"items"`
+}
+
+// SalesSummary holds aggregated completed-order stats for a period.
+type SalesSummary struct {
+	TotalOrders       int64   `json:"total_orders"`
+	TotalRevenue      float64 `json:"total_revenue"`
+	AverageOrderValue float64 `json:"average_order_value"`
+	Period            string  `json:"period"`
+}
+
+// ListOrdersSummary returns orders with minimal item fields (no heavy menu preload).
+func (s *OrderService) ListOrdersSummary(restaurantID string, status string, limit int) ([]OrderSummary, int64, error) {
+	var orders []models.Order
+	var count int64
+
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	query := s.db.Where("restaurant_id = ?", restaurantID)
+	query = applyDineInOnlyFilter(query)
+	if status != "" {
+		if status == "active" {
+			query = query.Where("status IN ?", []string{"pending", "cooking"})
+		} else {
+			query = query.Where("status = ?", status)
+		}
+	}
+
+	if err := query.Model(&models.Order{}).Count(&count).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.
+		Preload("Items", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id", "order_id", "menu_id", "quantity", "unit_rate", "status", "total")
+		}).
+		Preload("Items.MenuItem", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id", "name", "is_veg")
+		}).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+
+	summaries := make([]OrderSummary, 0, len(orders))
+	for _, order := range orders {
+		itemCount := 0
+		readyCount := 0
+		items := make([]OrderSummaryItem, 0, len(order.Items))
+		for _, item := range order.Items {
+			itemCount += item.Quantity
+			if item.Status == "ready" {
+				readyCount += item.Quantity
+			}
+			name := "Unknown Item"
+			isVeg := false
+			if item.MenuItem != nil {
+				name = item.MenuItem.Name
+				isVeg = item.MenuItem.IsVeg
+			}
+			items = append(items, OrderSummaryItem{
+				ID:       item.ID,
+				MenuID:   item.MenuID,
+				Quantity: item.Quantity,
+				UnitRate: item.UnitRate,
+				Status:   item.Status,
+				Name:     name,
+				IsVeg:    isVeg,
+			})
+		}
+
+		summaries = append(summaries, OrderSummary{
+			ID:             order.ID,
+			RestaurantID:   order.RestaurantID,
+			TableNumber:    order.TableNumber,
+			TableID:        order.TableID,
+			CustomerName:   order.CustomerName,
+			OrderNumber:    order.OrderNumber,
+			OrderType:      order.OrderType,
+			TicketNumber:   order.TicketNumber,
+			ServiceMode:    order.ServiceMode,
+			Status:         order.Status,
+			SubTotal:       order.SubTotal,
+			TaxAmount:      order.TaxAmount,
+			DiscountAmount: order.DiscountAmount,
+			Total:          order.Total,
+			CreatedAt:      order.CreatedAt,
+			ItemCount:      itemCount,
+			ReadyCount:     readyCount,
+			Items:          items,
+		})
+	}
+
+	return summaries, count, nil
+}
+
+// GetSalesSummary aggregates completed orders for today or this month.
+func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*SalesSummary, error) {
+	now := time.Now()
+	var start time.Time
+	label := "today"
+	switch period {
+	case "month":
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		label = "month"
+	default:
+		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	}
+
+	var result struct {
+		TotalOrders  int64
+		TotalRevenue float64
+	}
+
+	err := s.db.Model(&models.Order{}).
+		Where("restaurant_id = ?", restaurantID).
+		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
+		Where("COALESCE(completed_at, updated_at) >= ?", start).
+		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+		Scan(&result).Error
+	if err != nil {
+		return nil, err
+	}
+
+	avg := float64(0)
+	if result.TotalOrders > 0 {
+		avg = result.TotalRevenue / float64(result.TotalOrders)
+	}
+
+	return &SalesSummary{
+		TotalOrders:       result.TotalOrders,
+		TotalRevenue:      result.TotalRevenue,
+		AverageOrderValue: avg,
+		Period:            label,
+	}, nil
+}
+
+// ListOrderHistory returns completed/paid orders within a date range for order history screens.
+func (s *OrderService) ListOrderHistory(restaurantID string, from, toEnd time.Time, orderType string, limit, offset int) ([]models.Order, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	query := s.db.Model(&models.Order{}).
+		Where("restaurant_id = ?", restaurantID).
+		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
+		Where("COALESCE(completed_at, updated_at) >= ? AND COALESCE(completed_at, updated_at) < ?", from, toEnd)
+
+	switch orderType {
+	case "counter":
+		query = query.Where(isLegacyCounterOrderClause())
+	case "dine_in":
+		query = query.Where("NOT (" + isLegacyCounterOrderClause() + ")")
+	}
+
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var orders []models.Order
+	err := query.Preload("Items").
+		Preload("Items.MenuItem").
+		Order("COALESCE(completed_at, updated_at) DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&orders).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return orders, count, nil
+}
+
+// TryCompleteCounterOrderAfterKitchen marks a paid counter order completed once every item is ready/served.
+func (s *OrderService) TryCompleteCounterOrderAfterKitchen(restaurantID, orderID string) (*models.Order, bool, error) {
+	var order models.Order
+	if err := s.db.Preload("Items").
+		Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+		First(&order).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, false, errors.New("order not found")
+		}
+		return nil, false, err
+	}
+
+	if order.OrderType != "counter" || order.Status == "completed" || order.PaymentMethod == "" {
+		return &order, false, nil
+	}
+
+	for _, item := range order.Items {
+		if item.Status != "ready" && item.Status != "served" {
+			return &order, false, nil
+		}
+	}
+
+	now := time.Now()
+	if err := s.db.Model(&order).Updates(map[string]interface{}{
+		"status":       "completed",
+		"completed_at": now,
+		"updated_at":   now,
+	}).Error; err != nil {
+		return nil, false, err
+	}
+
+	reloaded, err := s.reloadOrderWithItems(orderID, restaurantID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	log.Printf("✅ Counter order #%d auto-completed after kitchen finished all items", reloaded.OrderNumber)
+	return reloaded, true, nil
+}
+
 // UpdateOrderItemStatus updates the status of a specific order item
 func (s *OrderService) UpdateOrderItemStatus(restaurantID string, orderID string, itemID string, status string) error {
 	// First verify the order belongs to the restaurant
@@ -581,4 +955,75 @@ func (s *OrderService) UpdateOrderItemsByMenuID(restaurantID string, orderID str
 	log.Printf("✅ Updated %d order items with menu_id %s -> status %s", result.RowsAffected, menuItemID, status)
 
 	return nil
+}
+
+func startOfLocalDay(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func inferOrderType(req CreateOrderRequest) string {
+	switch req.OrderType {
+	case "counter", "dine_in":
+		return req.OrderType
+	}
+	if req.TableID != nil && strings.HasPrefix(*req.TableID, "self-service") {
+		return "counter"
+	}
+	switch req.CustomerName {
+	case "Self Service", "Takeaway", "Counter":
+		return "counter"
+	}
+	if req.TableID != nil && *req.TableID != "" {
+		return "dine_in"
+	}
+	return "dine_in"
+}
+
+func isLegacyCounterOrderClause() string {
+	return `(order_type = 'counter' OR customer_name IN ('Self Service','Takeaway','Counter') OR (table_id IS NOT NULL AND table_id LIKE 'self-service-%'))`
+}
+
+func getMaxCounterTicketToday(tx *gorm.DB, restaurantID string, todayStart time.Time) (int, error) {
+	var maxTicket int
+	err := tx.Model(&models.Order{}).
+		Where("restaurant_id = ? AND created_at >= ? AND "+isLegacyCounterOrderClause(), restaurantID, todayStart).
+		Select(`COALESCE(MAX(CASE WHEN ticket_number > 0 THEN ticket_number ELSE order_number END), 0)`).
+		Scan(&maxTicket).Error
+	return maxTicket, err
+}
+
+// GetNextCounterTicket returns the next daily counter ticket number without creating an order.
+func (s *OrderService) GetNextCounterTicket(restaurantID string) (int, error) {
+	todayStart := startOfLocalDay(time.Now())
+	maxTicket, err := getMaxCounterTicketToday(s.db, restaurantID, todayStart)
+	if err != nil {
+		return 0, err
+	}
+	return maxTicket + 1, nil
+}
+
+// ListCounterOrdersToday returns counter/takeaway orders created today.
+func (s *OrderService) ListCounterOrdersToday(restaurantID string, limit int) ([]models.Order, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	todayStart := startOfLocalDay(time.Now())
+
+	var orders []models.Order
+	err := s.db.
+		Where("restaurant_id = ? AND created_at >= ? AND "+isLegacyCounterOrderClause(), restaurantID, todayStart).
+		Preload("Items").
+		Preload("Items.MenuItem").
+		Order("ticket_number DESC, order_number DESC, created_at DESC").
+		Limit(limit).
+		Find(&orders).Error
+	return orders, err
+}
+
+func applyDineInOnlyFilter(query *gorm.DB) *gorm.DB {
+	return query.Where(
+		`(COALESCE(order_type, '') = '' OR order_type = 'dine_in')
+		AND NOT (customer_name IN ('Self Service','Takeaway','Counter') OR (table_id IS NOT NULL AND table_id LIKE 'self-service-%'))`,
+	)
 }

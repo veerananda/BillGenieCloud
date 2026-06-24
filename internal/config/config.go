@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -123,6 +124,11 @@ func getBoolEnv(key string, defaultValue bool) bool {
 }
 
 func parseDuration(value string) time.Duration {
+	if strings.HasSuffix(value, "d") {
+		if days, err := strconv.Atoi(strings.TrimSuffix(value, "d")); err == nil && days > 0 {
+			return time.Duration(days) * 24 * time.Hour
+		}
+	}
 	duration, err := time.ParseDuration(value)
 	if err != nil {
 		log.Printf("⚠️  Failed to parse duration %s, using default", value)

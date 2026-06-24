@@ -122,12 +122,14 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Staff user created successfully",
+		"staff_key": user.StaffKey,
 		"user": gin.H{
 			"id":            user.ID,
 			"name":          user.Name,
 			"email":         user.Email,
 			"phone":         user.Phone,
 			"role":          user.Role,
+			"staff_key":     user.StaffKey,
 			"restaurant_id": user.RestaurantID,
 			"is_active":     user.IsActive,
 			"created_at":    user.CreatedAt,

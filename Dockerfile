@@ -1,33 +1,28 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod files
-COPY go.mod go.sum ./
+RUN apk add --no-cache git ca-certificates
 
-# Download dependencies
+COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code
 COPY cmd/ cmd/
 COPY internal/ internal/
 
-# Build binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o restaurant-api cmd/server/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o restaurant-api ./cmd/server
 
-# Final stage
-FROM alpine:latest
+FROM alpine:3.20
 
-WORKDIR /root/
+WORKDIR /app
 
-# Copy binary from builder
+RUN apk add --no-cache ca-certificates tzdata
+
 COPY --from=builder /app/restaurant-api .
 
-# Copy .env file (optional)
-COPY .env .
+ENV SERVER_ENV=production
+ENV PORT=3000
 
-# Expose port
 EXPOSE 3000
 
-# Run application
 CMD ["./restaurant-api"]
