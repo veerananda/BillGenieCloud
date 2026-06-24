@@ -22,8 +22,9 @@ type CreateOrderRequest struct {
 	RestaurantID string                   `json:"restaurant_id"` // Set by handler from JWT
 	TableNumber  string                   `json:"table_number"`
 	TableID      *string                  `json:"table_id"` // Link to RestaurantTable for dine-in orders
-	CustomerName string                   `json:"customer_name"`
-	OrderType    string                   `json:"order_type"`   // dine_in | counter
+	CustomerName  string                   `json:"customer_name"`
+	CustomerPhone string                   `json:"customer_phone"`
+	OrderType     string                   `json:"order_type"`   // dine_in | counter
 	ServiceMode  string                   `json:"service_mode"` // eat_here | takeaway (counter only)
 	Items        []CreateOrderItemRequest `json:"items" validate:"required,min=1"`
 	Notes        string                   `json:"notes"`
@@ -146,6 +147,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		TableNumber:     tableNumber,
 		TableID:         tableID,
 		CustomerName:    customerName,
+		CustomerPhone:   strings.TrimSpace(req.CustomerPhone),
 		OrderNumber:     orderNumber,
 		OrderType:       orderType,
 		TicketNumber:    ticketNumber,

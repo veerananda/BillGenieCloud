@@ -94,6 +94,7 @@ type Order struct {
 	TableNumber    string  `json:"table_number" validate:"required"`
 	TableID        *string `json:"table_id" gorm:"index"` // Link to RestaurantTable for dine-in orders
 	CustomerName   string  `json:"customer_name"`
+	CustomerPhone  string  `json:"customer_phone,omitempty" gorm:"type:varchar(20)"`
 	OrderNumber    int     `json:"order_number" gorm:"index"`                        // Sequential order number
 	OrderType      string  `json:"order_type" gorm:"default:'dine_in';type:varchar(20);index"` // dine_in | counter
 	TicketNumber   int     `json:"ticket_number" gorm:"default:0;index"`             // Daily counter ticket (resets each day)

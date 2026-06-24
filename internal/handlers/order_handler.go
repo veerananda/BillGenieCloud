@@ -102,7 +102,8 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 			"service_mode":  order.ServiceMode,
 			"table_number":  order.TableNumber,
 			"table_id":      tableIDValue,
-			"customer_name": order.CustomerName,
+			"customer_name":  order.CustomerName,
+			"customer_phone": order.CustomerPhone,
 			"is_self_service": order.OrderType == "counter",
 			"status":        order.Status,
 			"sub_total":     order.SubTotal,
@@ -188,6 +189,7 @@ func (h *OrderHandler) ListCounterOrdersToday(c *gin.Context) {
 			"table_number":    order.TableNumber,
 			"table_id":        tableID,
 			"customer_name":   order.CustomerName,
+			"customer_phone":  order.CustomerPhone,
 			"is_self_service": order.OrderType == "counter" || order.CustomerName == "Self Service",
 			"status":          order.Status,
 			"sub_total":       order.SubTotal,
@@ -284,6 +286,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			"table_number":    order.TableNumber,
 			"table_id":        order.TableID,
 			"customer_name":   order.CustomerName,
+			"customer_phone":  order.CustomerPhone,
 			"order_number":    order.OrderNumber,
 			"ticket_number":   order.TicketNumber,
 			"order_type":      order.OrderType,
@@ -431,6 +434,7 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		TableNumber    string              `json:"table_number"`
 		TableID        *string             `json:"table_id,omitempty"`
 		CustomerName   string              `json:"customer_name"`
+		CustomerPhone  string              `json:"customer_phone,omitempty"`
 		OrderNumber    int                 `json:"order_number"`
 		Status         string              `json:"status"`
 		SubTotal       float64             `json:"sub_total"`
@@ -487,6 +491,7 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 			TableNumber:    order.TableNumber,
 			TableID:        order.TableID,
 			CustomerName:   order.CustomerName,
+			CustomerPhone:  order.CustomerPhone,
 			OrderNumber:    order.OrderNumber,
 			Status:         order.Status,
 			SubTotal:       order.SubTotal,
@@ -639,6 +644,7 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 		TableNumber     string              `json:"table_number"`
 		TableID         *string             `json:"table_id,omitempty"`
 		CustomerName    string              `json:"customer_name"`
+		CustomerPhone   string              `json:"customer_phone,omitempty"`
 		OrderNumber     int                 `json:"order_number"`
 		TicketNumber    int                 `json:"ticket_number"`
 		OrderType       string              `json:"order_type"`
@@ -697,6 +703,7 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 			TableNumber:    order.TableNumber,
 			TableID:        order.TableID,
 			CustomerName:   order.CustomerName,
+			CustomerPhone:  order.CustomerPhone,
 			OrderNumber:    order.OrderNumber,
 			TicketNumber:   order.TicketNumber,
 			OrderType:      order.OrderType,
