@@ -14,6 +14,7 @@ import (
 	"restaurant-api/internal/config"
 	"restaurant-api/internal/handlers"
 	"restaurant-api/internal/middleware"
+	"restaurant-api/internal/realtime"
 	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
@@ -73,6 +74,9 @@ func main() {
 	// Initialize WebSocket hub
 	wsHub := handlers.NewWebSocketHub()
 	handlers.SetGlobalHub(wsHub)
+	handlers.SetJWTSecret(cfg.JWTSecret)
+	eventBridge := realtime.NewEventBridge(wsHub)
+	handlers.SetEventPublisher(eventBridge)
 	go wsHub.Run()
 
 	// Setup routes
@@ -87,7 +91,7 @@ func main() {
 	handlers.SetupPublicRoutes(router, db)
 
 	// WebSocket route with authentication (token via query param for WebSocket compatibility)
-	authService := services.NewAuthService(db, "your-secret-key")
+	authService := services.NewAuthService(db, cfg.JWTSecret)
 	router.GET("/ws", func(c *gin.Context) {
 		// Get token from query parameter
 		token := c.Query("token")

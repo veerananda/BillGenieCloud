@@ -5,10 +5,11 @@ import (
 	"log"
 	"os"
 
+	"restaurant-api/internal/models"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"restaurant-api/internal/models"
 )
 
 func main() {
@@ -55,11 +56,11 @@ func main() {
 	// 3. Verify the update
 	var allTables []models.RestaurantTable
 	db.Find(&allTables)
-	
+
 	fmt.Println("\n========================================")
 	fmt.Println("✅ All tables updated! Current status:")
 	fmt.Println("========================================")
-	
+
 	occupied := 0
 	vacant := 0
 	for _, t := range allTables {

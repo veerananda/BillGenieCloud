@@ -10,9 +10,17 @@ import (
 	"gorm.io/gorm"
 )
 
+func getAuthService(db *gorm.DB) *services.AuthService {
+	secret := appJWTSecret
+	if secret == "" {
+		secret = "your-secret-key-change-this"
+	}
+	return services.NewAuthService(db, secret)
+}
+
 // SetupAuthRoutes registers authentication endpoints
 func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
+	authService := getAuthService(db)
 	authHandler := NewAuthHandler(authService)
 
 	public := router.Group("")
@@ -20,6 +28,10 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 		public.POST("/auth/register", authHandler.Register)
 		public.POST("/auth/login", authHandler.Login)
 		public.POST("/auth/refresh", authHandler.RefreshToken)
+		public.POST("/auth/forgot-password", authHandler.ForgotPassword)
+		public.POST("/auth/reset-password", authHandler.ResetPassword)
+		public.POST("/auth/verify-email", authHandler.VerifyEmail)
+		public.POST("/auth/resend-verification", authHandler.ResendVerificationEmail)
 		public.GET("/health", authHandler.HealthCheck)
 	}
 
@@ -35,18 +47,26 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 // SetupOrderRoutes registers order endpoints
 func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 	orderService := services.NewOrderService(db)
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
-	orderHandler := NewOrderHandler(orderService)
+	checkoutLock := services.NewCheckoutLockService(db)
+	authService := getAuthService(db)
+	orderHandler := NewOrderHandler(orderService, checkoutLock)
 
 	protected := router.Group("/orders")
 	protected.Use(middleware.AuthMiddleware(authService))
 	{
 		protected.POST("", orderHandler.CreateOrder)
+		protected.GET("/summary", orderHandler.ListOrdersSummary)
+		protected.GET("/sales-summary", orderHandler.GetSalesSummary)
+		protected.GET("/history", orderHandler.ListOrderHistory)
+		protected.GET("/counter/next-ticket", orderHandler.GetNextCounterTicket)
+		protected.GET("/counter/today", orderHandler.ListCounterOrdersToday)
 		protected.GET("", orderHandler.ListOrders)
 		protected.GET("/:order_id", orderHandler.GetOrder)
 		protected.PUT("/:order_id", orderHandler.UpdateOrder)
 		protected.PUT("/:order_id/complete", orderHandler.CompleteOrder)
 		protected.POST("/:order_id/complete-payment", orderHandler.CompleteOrderWithPayment)
+		protected.POST("/:order_id/checkout/start", orderHandler.StartCheckout)
+		protected.POST("/:order_id/checkout/cancel", orderHandler.CancelCheckout)
 		protected.PUT("/:order_id/cancel", orderHandler.CancelOrder)
 		protected.PUT("/:order_id/items/:item_id/status", orderHandler.UpdateOrderItemStatus)
 		protected.PUT("/:order_id/menu-items/:menu_id/status", orderHandler.UpdateOrderItemsByMenuID)
@@ -57,7 +77,7 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupInventoryRoutes registers inventory endpoints
 func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
+	authService := getAuthService(db)
 	inventoryHandler := NewInventoryHandler(db)
 
 	protected := router.Group("/inventory")
@@ -66,6 +86,7 @@ func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 	{
 		protected.GET("", inventoryHandler.GetInventory)
 		protected.GET("/alerts", inventoryHandler.GetLowStockAlert)
+		protected.GET("/:menu_item_id", inventoryHandler.GetInventoryByMenuItem)
 		protected.PUT("/:menu_item_id", inventoryHandler.UpdateInventory)
 		protected.POST("/deduct", inventoryHandler.DeductInventory)
 		protected.POST("/restock", inventoryHandler.RestockInventory)
@@ -76,7 +97,7 @@ func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupMenuRoutes registers menu endpoints
 func SetupMenuRoutes(router *gin.Engine, db *gorm.DB) {
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
+	authService := getAuthService(db)
 	menuHandler := NewMenuHandler(db)
 
 	// All menu routes require authentication since they need restaurant_id
@@ -99,7 +120,7 @@ func SetupMenuRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupRestaurantRoutes registers restaurant endpoints
 func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
+	authService := getAuthService(db)
 	restaurantHandler := NewRestaurantHandler(db)
 
 	protected := router.Group("/restaurants")
@@ -114,7 +135,7 @@ func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupTableRoutes registers table management endpoints
 func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
+	authService := getAuthService(db)
 	tableHandler := NewTableHandler(db)
 
 	// IMPORTANT: Register more specific routes BEFORE generic routes
@@ -166,7 +187,7 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupUserRoutes registers user/staff endpoints
 func SetupUserRoutes(router *gin.Engine, db *gorm.DB) {
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
+	authService := getAuthService(db)
 	userService := services.NewUserService(db)
 	userHandler := NewUserHandler(userService)
 
@@ -204,7 +225,7 @@ func SetupUserRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupIngredientRoutes registers ingredient endpoints
 func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
-	authService := services.NewAuthService(db, "your-secret-key") // TODO: Load from .env
+	authService := getAuthService(db)
 	ingredientHandler := NewIngredientHandler(db)
 
 	protected := router.Group("/ingredients")

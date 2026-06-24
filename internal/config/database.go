@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"restaurant-api/internal/migrations"
@@ -13,17 +15,32 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func InitializeDatabase(cfg *Config) *gorm.DB {
-	// Build DSN with production SSL mode
-	sslMode := "disable"
-	if cfg.Environment == "production" {
-		sslMode = "require" // Enforce SSL in production
+func buildDatabaseDSN(cfg *Config) string {
+	// Prefer DATABASE_URL when explicitly set (Fly.io, DO Managed Postgres, Upstash-style hosts)
+	if url := strings.TrimSpace(os.Getenv("DATABASE_URL")); url != "" {
+		if cfg.Environment == "production" && !strings.Contains(url, "sslmode=") {
+			sep := "?"
+			if strings.Contains(url, "?") {
+				sep = "&"
+			}
+			return url + sep + "sslmode=require"
+		}
+		return url
 	}
 
-	dsn := fmt.Sprintf(
+	sslMode := "disable"
+	if cfg.Environment == "production" {
+		sslMode = "require"
+	}
+
+	return fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort, sslMode,
 	)
+}
+
+func InitializeDatabase(cfg *Config) *gorm.DB {
+	dsn := buildDatabaseDSN(cfg)
 
 	// Connect to database
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{

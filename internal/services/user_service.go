@@ -22,12 +22,12 @@ type UserService struct {
 // Email is only required for admin during registration
 // StaffKey is generated on frontend and passed here (format: SK_XXXXXXXXXX - 13 chars total)
 type CreateUserRequest struct {
-	Name      string `json:"name" validate:"required,min=2"`
-	Email     string `json:"email" validate:"omitempty,email"`
-	Phone     string `json:"phone" validate:"required"`
-	Password  string `json:"password" validate:"required,min=6"`
-	Role      string `json:"role" validate:"required,oneof=manager staff chef"`
-	StaffKey  string `json:"staff_key" validate:"required,len=13"` // Frontend-generated key (SK_XXXXXXXXXX)
+	Name     string `json:"name" validate:"required,min=2"`
+	Email    string `json:"email" validate:"omitempty,email"`
+	Phone    string `json:"phone" validate:"required"`
+	Password string `json:"password" validate:"required,min=6"`
+	Role     string `json:"role" validate:"required,oneof=manager staff chef"`
+	StaffKey string `json:"staff_key" validate:"required,len=13"` // Frontend-generated key (SK_XXXXXXXXXX)
 }
 
 // UpdateUserRequest for updating existing staff/manager/chef
@@ -83,7 +83,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 
 	// For staff/manager/chef, if email not provided, use the staff_key as email (it's globally unique)
 	if req.Email == "" && (req.Role == "staff" || req.Role == "manager" || req.Role == "chef") {
-		req.Email = req.StaffKey  // Use staff_key as email since it's globally unique
+		req.Email = req.StaffKey // Use staff_key as email since it's globally unique
 	}
 
 	// Check if email already exists in this restaurant (only if email is provided)
@@ -444,6 +444,6 @@ func (s *UserService) RegenerateStaffKey(userID string, req RegenerateStaffKeyRe
 	if req.NewPassword != nil && *req.NewPassword != "" {
 		logMsg += " (password also updated)"
 	}
-	log.Printf(logMsg)
+	log.Printf("%s", logMsg)
 	return newStaffKey, nil
 }

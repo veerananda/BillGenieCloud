@@ -5,10 +5,11 @@ import (
 	"log"
 	"os"
 
+	"restaurant-api/internal/models"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"restaurant-api/internal/models"
 )
 
 func main() {
@@ -34,7 +35,7 @@ func main() {
 
 	fmt.Println("\n📋 Current table status:")
 	for _, table := range tables {
-		fmt.Printf("  Table %s (ID: %d): is_occupied=%v, current_order_id=%v\n", 
+		fmt.Printf("  Table %s (ID: %d): is_occupied=%v, current_order_id=%v\n",
 			table.Name, table.ID, table.IsOccupied, table.CurrentOrderID)
 	}
 
@@ -42,7 +43,7 @@ func main() {
 	var allTables []models.RestaurantTable
 	db.Find(&allTables)
 	fmt.Printf("\n📊 Total tables in database: %d\n", len(allTables))
-	
+
 	occupied := 0
 	vacant := 0
 	for _, t := range allTables {

@@ -5,10 +5,11 @@ import (
 	"log"
 	"os"
 
+	"restaurant-api/internal/models"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"restaurant-api/internal/models"
 )
 
 func main() {

@@ -95,6 +95,9 @@ type Order struct {
 	TableID        *string `json:"table_id" gorm:"index"` // Link to RestaurantTable for dine-in orders
 	CustomerName   string  `json:"customer_name"`
 	OrderNumber    int     `json:"order_number" gorm:"index"`                        // Sequential order number
+	OrderType      string  `json:"order_type" gorm:"default:'dine_in';type:varchar(20);index"` // dine_in | counter
+	TicketNumber   int     `json:"ticket_number" gorm:"default:0;index"`             // Daily counter ticket (resets each day)
+	ServiceMode    string  `json:"service_mode,omitempty" gorm:"type:varchar(20)"`   // eat_here | takeaway (counter orders)
 	Status         string  `json:"status" gorm:"default:'pending';type:varchar(50)"` // pending, confirmed, completed, cancelled
 	SubTotal       float64 `json:"sub_total" gorm:"type:numeric(10,2);default:0"`
 	TaxAmount      float64 `json:"tax_amount" gorm:"type:numeric(10,2);default:0"`
@@ -290,44 +293,68 @@ func (al *AuditLog) BeforeCreate(tx *gorm.DB) error {
 
 // NotificationEvent represents real-time WebSocket events
 type NotificationEvent struct {
-	Type      string          `json:"type"` // "order_created", "inventory_low", etc.
+	Type      string          `json:"type"`
 	RoomID    string          `json:"room_id"`
 	Data      json.RawMessage `json:"data"`
 	Timestamp time.Time       `json:"timestamp"`
+	Version   int             `json:"version"`
+	Seq       int64           `json:"seq"`
+}
+
+// WSOrderItem is the WebSocket-safe order line (includes menu name for clients).
+type WSOrderItem struct {
+	ID           string  `json:"id"`
+	MenuID       string  `json:"menu_id"`
+	Name         string  `json:"name"`
+	Quantity     int     `json:"quantity"`
+	UnitRate     float64 `json:"unit_rate"`
+	Total        float64 `json:"total"`
+	Status       string  `json:"status"`
+	SubId        string  `json:"sub_id,omitempty"`
+	Notes        string  `json:"notes,omitempty"`
+	IsVegetarian bool    `json:"is_vegetarian,omitempty"`
 }
 
 // OrderEventData for WebSocket events
 type OrderEventData struct {
-	OrderID       string              `json:"order_id"`
-	OrderNumber   int                 `json:"order_number"`
-	TableID       *string             `json:"table_id,omitempty"`
-	TableNo       string              `json:"table_no"`
-	TableOccupied bool                `json:"table_occupied"` // Track table occupation status
-	Status        string              `json:"status"`
-	SubTotal      float64             `json:"sub_total"`
-	TaxAmount     float64             `json:"tax_amount"`
-	TotalAmount   float64             `json:"total_amount"`
-	ItemCount     int                 `json:"item_count"`
-	Items         []BroadcastOrderItem `json:"items,omitempty"` // Include items with names for detailed updates
-}
-
-// BroadcastOrderItem includes item names for WebSocket broadcasts
-type BroadcastOrderItem struct {
-	ID          string  `json:"id"`
-	MenuID      string  `json:"menu_id"`
-	Name        string  `json:"name"`           // Item name from MenuItem
-	Quantity    int     `json:"quantity"`
-	UnitRate    float64 `json:"unit_rate"`
-	Status      string  `json:"status"`         // pending, cooking, ready, served
-	SubId       string  `json:"sub_id,omitempty"`
+	OrderID       string        `json:"order_id"`
+	OrderNumber   int           `json:"order_number"`
+	TableID       *string       `json:"table_id,omitempty"`
+	TableNo       string        `json:"table_no"`
+	TableOccupied bool          `json:"table_occupied"`
+	CustomerName  string        `json:"customer_name,omitempty"`
+	Status        string        `json:"status"`
+	SubTotal      float64       `json:"sub_total"`
+	TaxAmount     float64       `json:"tax_amount"`
+	TotalAmount   float64       `json:"total_amount"`
+	ItemCount     int           `json:"item_count"`
+	Items         []WSOrderItem `json:"items,omitempty"`
+	PaymentMethod string        `json:"payment_method,omitempty"`
+	IsSelfService bool          `json:"is_self_service,omitempty"`
+	OrderType     string        `json:"order_type,omitempty"`
+	TicketNumber  int           `json:"ticket_number,omitempty"`
+	ServiceMode   string        `json:"service_mode,omitempty"`
+	CreatedAt     time.Time     `json:"created_at,omitempty"`
+	UpdatedAt     time.Time     `json:"updated_at,omitempty"`
+	ItemID        string        `json:"item_id,omitempty"`
+	MenuID        string        `json:"menu_id,omitempty"`
+	BulkUpdate    bool          `json:"bulk_update,omitempty"`
 }
 
 // TableEventData for WebSocket table status updates
 type TableEventData struct {
-	TableID        string `json:"table_id"`
-	TableNumber    string `json:"table_number"`
-	IsOccupied     bool   `json:"is_occupied"`
+	TableID        string  `json:"table_id"`
+	TableNumber    string  `json:"table_number"`
+	IsOccupied     bool    `json:"is_occupied"`
 	CurrentOrderID *string `json:"current_order_id,omitempty"`
+}
+
+// CheckoutEventData for checkout lock WebSocket events
+type CheckoutEventData struct {
+	OrderID        string `json:"order_id"`
+	TableID        string `json:"table_id,omitempty"`
+	LockedByUserID string `json:"locked_by_user_id"`
+	LockedByName   string `json:"locked_by_name"`
 }
 
 // InventoryEventData for WebSocket inventory updates

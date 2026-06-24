@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -16,13 +16,15 @@ import (
 
 type OrderHandler struct {
 	orderService *services.OrderService
+	checkoutLock *services.CheckoutLockService
 	validator    *validator.Validate
 }
 
 // NewOrderHandler creates a new order handler
-func NewOrderHandler(orderService *services.OrderService) *OrderHandler {
+func NewOrderHandler(orderService *services.OrderService, checkoutLock *services.CheckoutLockService) *OrderHandler {
 	return &OrderHandler{
 		orderService: orderService,
+		checkoutLock: checkoutLock,
 		validator:    validator.New(),
 	}
 }
@@ -82,7 +84,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 
 	// Broadcast order creation event via WebSocket
 	if globalHub != nil {
-		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_created", order)
 	}
 
 	tableIDValue := ""
@@ -93,17 +95,110 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Order created successfully with inventory deducted",
 		"order": gin.H{
-			"id":           order.ID,
-			"order_number": order.OrderNumber,
-			"table_number": order.TableNumber,
-			"table_id":     tableIDValue,
-			"status":       order.Status,
-			"sub_total":    order.SubTotal,
-			"tax_amount":   order.TaxAmount,
-			"total":        order.Total,
-			"created_at":   order.CreatedAt,
+			"id":            order.ID,
+			"order_number":  order.OrderNumber,
+			"ticket_number": order.TicketNumber,
+			"order_type":    order.OrderType,
+			"service_mode":  order.ServiceMode,
+			"table_number":  order.TableNumber,
+			"table_id":      tableIDValue,
+			"customer_name": order.CustomerName,
+			"is_self_service": order.OrderType == "counter",
+			"status":        order.Status,
+			"sub_total":     order.SubTotal,
+			"tax_amount":    order.TaxAmount,
+			"total":         order.Total,
+			"created_at":    order.CreatedAt,
+			"items":         order.Items,
 		},
 	})
+}
+
+// GetNextCounterTicket returns the next daily counter ticket number (preview).
+func (h *OrderHandler) GetNextCounterTicket(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	ticket, err := h.orderService.GetNextCounterTicket(restaurantID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ticket_number": ticket})
+}
+
+// ListCounterOrdersToday returns today's counter/takeaway orders.
+func (h *OrderHandler) ListCounterOrdersToday(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	orders, err := h.orderService.ListCounterOrdersToday(restaurantID.(string), 100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	type itemResp struct {
+		ID       string  `json:"id"`
+		MenuID   string  `json:"menu_id"`
+		Name     string  `json:"name"`
+		Quantity int     `json:"quantity"`
+		UnitRate float64 `json:"unit_rate"`
+		Status   string  `json:"status"`
+	}
+
+	out := make([]gin.H, 0, len(orders))
+	for _, order := range orders {
+		items := make([]itemResp, 0, len(order.Items))
+		for _, item := range order.Items {
+			name := "Unknown Item"
+			if item.MenuItem != nil {
+				name = item.MenuItem.Name
+			}
+			items = append(items, itemResp{
+				ID:       item.ID,
+				MenuID:   item.MenuID,
+				Name:     name,
+				Quantity: item.Quantity,
+				UnitRate: item.UnitRate,
+				Status:   item.Status,
+			})
+		}
+		ticket := order.TicketNumber
+		if ticket == 0 {
+			ticket = order.OrderNumber
+		}
+		tableID := ""
+		if order.TableID != nil {
+			tableID = *order.TableID
+		}
+		out = append(out, gin.H{
+			"id":              order.ID,
+			"order_number":    order.OrderNumber,
+			"ticket_number":   ticket,
+			"order_type":      order.OrderType,
+			"service_mode":    order.ServiceMode,
+			"table_number":    order.TableNumber,
+			"table_id":        tableID,
+			"customer_name":   order.CustomerName,
+			"is_self_service": order.OrderType == "counter" || order.CustomerName == "Self Service",
+			"status":          order.Status,
+			"sub_total":       order.SubTotal,
+			"tax_amount":      order.TaxAmount,
+			"total":           order.Total,
+			"created_at":      order.CreatedAt,
+			"items":           items,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"orders": out, "total": len(out)})
 }
 
 // GetOrder retrieves a specific order
@@ -190,12 +285,18 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			"table_id":        order.TableID,
 			"customer_name":   order.CustomerName,
 			"order_number":    order.OrderNumber,
+			"ticket_number":   order.TicketNumber,
+			"order_type":      order.OrderType,
+			"service_mode":    order.ServiceMode,
+			"is_self_service": order.OrderType == "counter" || order.CustomerName == "Self Service",
 			"status":          order.Status,
 			"sub_total":       order.SubTotal,
 			"tax_amount":      order.TaxAmount,
 			"discount_amount": order.DiscountAmount,
 			"total":           order.Total,
 			"payment_method":  order.PaymentMethod,
+			"amount_received": order.AmountReceived,
+			"change_returned": order.ChangeReturned,
 			"notes":           order.Notes,
 			"created_at":      order.CreatedAt,
 			"updated_at":      order.UpdatedAt,
@@ -250,7 +351,7 @@ func (h *OrderHandler) UpdateOrder(c *gin.Context) {
 
 	// Broadcast order update event via WebSocket
 	if globalHub != nil {
-		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_updated", order)
 	}
 
 	tableIDValue := ""
@@ -409,6 +510,223 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	})
 }
 
+// ListOrdersSummary returns lightweight active orders for table tiles and dashboards.
+func (h *OrderHandler) ListOrdersSummary(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	status := c.DefaultQuery("status", "active")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+
+	summaries, total, err := h.orderService.ListOrdersSummary(restaurantID.(string), status, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"orders": summaries,
+		"total":  total,
+		"limit":  limit,
+	})
+}
+
+// GetSalesSummary returns aggregated revenue stats without loading full order history.
+func (h *OrderHandler) GetSalesSummary(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	period := c.DefaultQuery("period", "today")
+	summary, err := h.orderService.GetSalesSummary(restaurantID.(string), period)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+
+// ListOrderHistory returns completed/paid orders for a date range (order history).
+func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	loc := time.Now().Location()
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+	orderType := c.DefaultQuery("order_type", "all")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	if limit > 100 {
+		limit = 100
+	}
+
+	parseDay := func(value string) (time.Time, error) {
+		return time.ParseInLocation("2006-01-02", value, loc)
+	}
+
+	var from time.Time
+	var toEnd time.Time
+	if fromStr == "" {
+		now := time.Now().In(loc)
+		from = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	} else {
+		parsed, err := parseDay(fromStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from date; use YYYY-MM-DD"})
+			return
+		}
+		from = parsed
+	}
+
+	if toStr == "" {
+		toEnd = from.Add(24 * time.Hour)
+	} else {
+		parsed, err := parseDay(toStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to date; use YYYY-MM-DD"})
+			return
+		}
+		toEnd = parsed.Add(24 * time.Hour)
+	}
+
+	if !toEnd.After(from) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "to must be on or after from"})
+		return
+	}
+
+	switch orderType {
+	case "all", "dine_in", "counter":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "order_type must be all, dine_in, or counter"})
+		return
+	}
+
+	orders, total, err := h.orderService.ListOrderHistory(restaurantID.(string), from, toEnd, orderType, limit, offset)
+	if err != nil {
+		log.Printf("❌ Order history retrieval failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	type OrderItemResponse struct {
+		ID        string                 `json:"id"`
+		OrderID   string                 `json:"order_id"`
+		MenuID    string                 `json:"menu_id"`
+		Quantity  int                    `json:"quantity"`
+		UnitRate  float64                `json:"unit_rate"`
+		Total     float64                `json:"total"`
+		Status    string                 `json:"status"`
+		SubId     string                 `json:"sub_id,omitempty"`
+		Notes     string                 `json:"notes"`
+		CreatedAt time.Time              `json:"created_at"`
+		MenuItem  map[string]interface{} `json:"menu_item,omitempty"`
+	}
+
+	type OrderResponse struct {
+		ID              string              `json:"id"`
+		RestaurantID    string              `json:"restaurant_id"`
+		TableNumber     string              `json:"table_number"`
+		TableID         *string             `json:"table_id,omitempty"`
+		CustomerName    string              `json:"customer_name"`
+		OrderNumber     int                 `json:"order_number"`
+		TicketNumber    int                 `json:"ticket_number"`
+		OrderType       string              `json:"order_type"`
+		ServiceMode     string              `json:"service_mode,omitempty"`
+		Status          string              `json:"status"`
+		SubTotal        float64             `json:"sub_total"`
+		TaxAmount       float64             `json:"tax_amount"`
+		DiscountAmount  float64             `json:"discount_amount"`
+		Total           float64             `json:"total"`
+		PaymentMethod   string              `json:"payment_method"`
+		AmountReceived  float64             `json:"amount_received,omitempty"`
+		ChangeReturned  float64             `json:"change_returned,omitempty"`
+		Notes           string              `json:"notes"`
+		CreatedAt       time.Time           `json:"created_at"`
+		UpdatedAt       time.Time           `json:"updated_at"`
+		CompletedAt     *time.Time          `json:"completed_at,omitempty"`
+		Items           []OrderItemResponse `json:"items"`
+	}
+
+	ordersResponse := make([]OrderResponse, 0, len(orders))
+	for _, order := range orders {
+		items := make([]OrderItemResponse, 0, len(order.Items))
+		for _, item := range order.Items {
+			itemResp := OrderItemResponse{
+				ID:        item.ID,
+				OrderID:   item.OrderID,
+				MenuID:    item.MenuID,
+				Quantity:  item.Quantity,
+				UnitRate:  item.UnitRate,
+				Total:     item.Total,
+				Status:    item.Status,
+				SubId:     item.SubId,
+				Notes:     item.Notes,
+				CreatedAt: item.CreatedAt,
+			}
+			if item.MenuItem != nil {
+				itemResp.MenuItem = map[string]interface{}{
+					"id":            item.MenuItem.ID,
+					"name":          item.MenuItem.Name,
+					"description":   item.MenuItem.Description,
+					"price":         item.MenuItem.Price,
+					"cost_price":    item.MenuItem.CostPrice,
+					"is_veg":        item.MenuItem.IsVeg,
+					"is_vegetarian": item.MenuItem.IsVeg,
+					"is_available":  item.MenuItem.IsAvailable,
+					"category":      item.MenuItem.Category,
+					"restaurant_id": item.MenuItem.RestaurantID,
+				}
+			}
+			items = append(items, itemResp)
+		}
+
+		ordersResponse = append(ordersResponse, OrderResponse{
+			ID:             order.ID,
+			RestaurantID:   order.RestaurantID,
+			TableNumber:    order.TableNumber,
+			TableID:        order.TableID,
+			CustomerName:   order.CustomerName,
+			OrderNumber:    order.OrderNumber,
+			TicketNumber:   order.TicketNumber,
+			OrderType:      order.OrderType,
+			ServiceMode:    order.ServiceMode,
+			Status:         order.Status,
+			SubTotal:       order.SubTotal,
+			TaxAmount:      order.TaxAmount,
+			DiscountAmount: order.DiscountAmount,
+			Total:          order.Total,
+			PaymentMethod:  order.PaymentMethod,
+			AmountReceived: order.AmountReceived,
+			ChangeReturned: order.ChangeReturned,
+			Notes:          order.Notes,
+			CreatedAt:      order.CreatedAt,
+			UpdatedAt:      order.UpdatedAt,
+			CompletedAt:    order.CompletedAt,
+			Items:          items,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"orders": ordersResponse,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+		"from":   from.Format("2006-01-02"),
+		"to":     toEnd.Add(-24 * time.Hour).Format("2006-01-02"),
+	})
+}
+
 // CompleteOrder marks an order as completed
 // @Summary Complete order
 // @Description Mark order as completed/served
@@ -438,8 +756,8 @@ func (h *OrderHandler) CompleteOrder(c *gin.Context) {
 
 	// Broadcast order completion via WebSocket
 	if globalHub != nil {
-		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
-		
+		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_completed", order)
+
 		// If this is a dine-in order, also broadcast that the table is now vacant
 		if order.TableID != nil && *order.TableID != "" {
 			log.Printf("📍 Order #%d is dine-in, broadcasting table %s as vacant", order.OrderNumber, order.TableNumber)
@@ -534,12 +852,20 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 
 	log.Printf("✅ [Handler] Order #%d completed with %s payment. Response:", order.OrderNumber, input.PaymentMethod)
 
-	// Broadcast order completion via WebSocket
+	if h.checkoutLock != nil {
+		h.checkoutLock.ForceRelease(orderID)
+	}
+
+	// Broadcast payment / completion via WebSocket
 	if globalHub != nil {
-		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
-		
-		// If this is a dine-in order, also broadcast that the table is now vacant
-		if order.TableID != nil && *order.TableID != "" {
+		eventType := "order_completed"
+		if order.OrderType == "counter" {
+			eventType = "order_updated"
+		}
+		BroadcastOrderEvent(globalHub, restaurantID.(string), eventType, order)
+
+		// Dine-in only — table becomes vacant when order is fully completed
+		if order.OrderType != "counter" && order.TableID != nil && *order.TableID != "" {
 			log.Printf("📍 Order #%d is dine-in, broadcasting table %s as vacant", order.OrderNumber, order.TableNumber)
 			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{
 				ID:             *order.TableID,
@@ -563,6 +889,102 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 			"completed_at":    order.CompletedAt,
 		},
 	})
+}
+
+// StartCheckout acquires a checkout lock for an order (one device at a time).
+func (h *OrderHandler) StartCheckout(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	orderID := c.Param("order_id")
+	order, err := h.orderService.GetOrderByID(restaurantID.(string), orderID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if order.Status == "completed" || order.Status == "cancelled" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "order is no longer active"})
+		return
+	}
+
+	if h.checkoutLock == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "checkout started"})
+		return
+	}
+
+	lock, err := h.checkoutLock.Acquire(orderID, restaurantID.(string), userID.(string))
+	if err != nil {
+		if errors.Is(err, services.ErrCheckoutInProgress) {
+			lockedByName := "another staff member"
+			lockedByUserID := ""
+			if lock != nil {
+				lockedByName = lock.UserName
+				lockedByUserID = lock.UserID
+			}
+			c.JSON(http.StatusConflict, gin.H{
+				"error":             "checkout already in progress on another device",
+				"locked_by_name":    lockedByName,
+				"locked_by_user_id": lockedByUserID,
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	tableID := ""
+	if order.TableID != nil {
+		tableID = *order.TableID
+	}
+	if globalHub != nil {
+		BroadcastCheckoutEvent(globalHub, restaurantID.(string), "checkout_started", models.CheckoutEventData{
+			OrderID:        orderID,
+			TableID:        tableID,
+			LockedByUserID: lock.UserID,
+			LockedByName:   lock.UserName,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "checkout started",
+		"locked_by_name": lock.UserName,
+	})
+}
+
+// CancelCheckout releases a checkout lock when staff leaves checkout without paying.
+func (h *OrderHandler) CancelCheckout(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	orderID := c.Param("order_id")
+	if h.checkoutLock != nil {
+		h.checkoutLock.Release(orderID, userID.(string))
+	}
+
+	if globalHub != nil {
+		BroadcastCheckoutEvent(globalHub, restaurantID.(string), "checkout_cancelled", models.CheckoutEventData{
+			OrderID:        orderID,
+			LockedByUserID: userID.(string),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "checkout cancelled"})
 }
 
 // CancelOrder cancels an order and restores inventory
@@ -595,7 +1017,7 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	// Fetch cancelled order and broadcast the cancellation
 	order, err := h.orderService.GetOrderByID(restaurantID.(string), orderID)
 	if err == nil && globalHub != nil {
-		BroadcastOrderUpdate(globalHub, restaurantID.(string), order)
+		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_cancelled", order)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -669,35 +1091,12 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	if err != nil {
 		log.Printf("⚠️  Could not fetch updated order for broadcast: %v", err)
 	} else if globalHub != nil {
-		log.Printf("📡 [BROADCAST TRIGGER] Broadcasting order update for order #%d", updatedOrder.OrderNumber)
-		log.Printf("   🔍 Fetched order has %d items loaded", len(updatedOrder.Items))
-		for i, item := range updatedOrder.Items {
-			log.Printf("      [%d] Item ID=%s, MenuID=%s, Status=%s, MenuItem=%v", i, item.ID, item.MenuID, item.Status, item.MenuItem != nil)
+		if completedOrder, didComplete, completeErr := h.orderService.TryCompleteCounterOrderAfterKitchen(restaurantID.(string), orderID); completeErr == nil && didComplete {
+			BroadcastOrderEvent(globalHub, restaurantID.(string), "order_completed", completedOrder)
+		} else {
+			BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, itemID, "", false)
 		}
-		// Broadcast full order status change with complete order details
-		BroadcastOrderUpdate(globalHub, restaurantID.(string), updatedOrder)
-		
-		// Check if ALL items are served - if so, broadcast table as unoccupied
-		allServed := true
-		for _, item := range updatedOrder.Items {
-			if item.Status != "served" && item.Status != "cancelled" {
-				allServed = false
-				break
-			}
-		}
-		
-		if allServed && updatedOrder.TableID != nil {
-			log.Printf("📍 All items served for order #%d on table %s, marking table as unoccupied", updatedOrder.OrderNumber, updatedOrder.TableNumber)
-			// Broadcast table status change (unoccupied)
-			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{
-				ID:             *updatedOrder.TableID,
-				Name:           updatedOrder.TableNumber,
-				IsOccupied:     false,
-				CurrentOrderID: nil,
-			})
-		}
-	} else {
-		log.Printf("❌ [BROADCAST FAILED] globalHub is nil!")
+		// Table stays occupied until order is completed/paid — do not auto-vacate when all items served
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -763,33 +1162,15 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 
 	log.Printf("✅ Order items with menu_id %s updated to status: %s", menuItemID, input.Status)
 
-	// Fetch the full updated order for complete broadcast (same as UpdateOrderItemStatus)
-	updatedOrder, err := h.orderService.GetOrderByID(restaurantID.(string), orderID)
-	if err != nil {
-		log.Printf("⚠️  Could not fetch updated order for broadcast: %v", err)
-	} else if globalHub != nil {
-		log.Printf("📡 [BROADCAST TRIGGER] Broadcasting order update for order #%d via UpdateOrderItemsByMenuID", updatedOrder.OrderNumber)
-		// Use the full broadcast method to include all items and details
-		BroadcastOrderUpdate(globalHub, restaurantID.(string), updatedOrder)
-		
-		// Check if ALL items are served - if so, broadcast table as unoccupied
-		allServed := true
-		for _, item := range updatedOrder.Items {
-			if item.Status != "served" && item.Status != "cancelled" {
-				allServed = false
-				break
+	// Broadcast with full order context
+	if globalHub != nil {
+		updatedOrder, fetchErr := h.orderService.GetOrderByID(restaurantID.(string), orderID)
+		if fetchErr == nil {
+			if completedOrder, didComplete, completeErr := h.orderService.TryCompleteCounterOrderAfterKitchen(restaurantID.(string), orderID); completeErr == nil && didComplete {
+				BroadcastOrderEvent(globalHub, restaurantID.(string), "order_completed", completedOrder)
+			} else {
+				BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, "", menuItemID, true)
 			}
-		}
-		
-		if allServed && updatedOrder.TableID != nil {
-			log.Printf("📍 All items served for order #%d on table %s, marking table as unoccupied", updatedOrder.OrderNumber, updatedOrder.TableNumber)
-			// Broadcast table status change (unoccupied)
-			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{
-				ID:             *updatedOrder.TableID,
-				Name:           updatedOrder.TableNumber,
-				IsOccupied:     false,
-				CurrentOrderID: nil,
-			})
 		}
 	}
 

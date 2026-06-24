@@ -89,6 +89,60 @@ func (h *InventoryHandler) GetInventory(c *gin.Context) {
 	})
 }
 
+// GetInventoryByMenuItem retrieves inventory for a single menu item
+// @Summary Get inventory by menu item
+// @Description Get inventory level for one menu item
+// @Security ApiKeyAuth
+// @Produce json
+// @Param menu_item_id path string true "Menu item ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /inventory/:menu_item_id [get]
+func (h *InventoryHandler) GetInventoryByMenuItem(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	menuItemID := c.Param("menu_item_id")
+	if menuItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "menu_item_id is required"})
+		return
+	}
+
+	var inventory models.Inventory
+	if err := h.db.Where("restaurant_id = ? AND menu_item_id = ?", restaurantID, menuItemID).
+		Preload("MenuItem").
+		First(&inventory).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "inventory not found for menu item"})
+			return
+		}
+		log.Printf("❌ Inventory retrieval failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, inventory)
+}
+
+func (h *InventoryHandler) broadcastInventoryChange(restaurantID string, inventory *models.Inventory) {
+	if globalHub == nil {
+		return
+	}
+	itemName := inventory.MenuItemID
+	if inventory.MenuItem != nil {
+		itemName = inventory.MenuItem.Name
+	} else {
+		var menuItem models.MenuItem
+		if err := h.db.Select("name").First(&menuItem, "id = ?", inventory.MenuItemID).Error; err == nil {
+			itemName = menuItem.Name
+		}
+	}
+	isLow := inventory.Quantity < inventory.MinLevel
+	BroadcastInventoryUpdate(globalHub, restaurantID, itemName, inventory.Quantity, isLow)
+}
+
 // UpdateInventory updates stock level
 // @Summary Update inventory
 // @Description Update inventory quantity for a menu item
@@ -163,6 +217,12 @@ func (h *InventoryHandler) UpdateInventory(c *gin.Context) {
 	}
 
 	log.Printf("✅ Inventory updated: Menu Item %s, Quantity: %.2f", menuItemID, req.Quantity)
+
+	if err := h.db.Where("restaurant_id = ? AND menu_item_id = ?", restaurantID, menuItemID).
+		Preload("MenuItem").
+		First(&inventory).Error; err == nil {
+		h.broadcastInventoryChange(restaurantID.(string), &inventory)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Inventory updated successfully",
