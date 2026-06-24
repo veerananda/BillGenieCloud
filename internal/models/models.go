@@ -108,6 +108,8 @@ type Order struct {
 	// Payment completion details
 	AmountReceived  float64    `json:"amount_received,omitempty" gorm:"type:numeric(10,2)"`
 	ChangeReturned  float64    `json:"change_returned,omitempty" gorm:"type:numeric(10,2)"`
+	TrackingToken     string     `json:"tracking_token,omitempty" gorm:"type:varchar(64);index"`
+	TrackingExpiresAt *time.Time `json:"tracking_expires_at,omitempty"`
 	Notes           string     `json:"notes" gorm:"type:text"`
 	CreatedByUserID string     `json:"created_by_user_id"`
 	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime;index"`

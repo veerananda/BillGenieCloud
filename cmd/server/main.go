@@ -79,6 +79,9 @@ func main() {
 	handlers.SetEventPublisher(eventBridge)
 	go wsHub.Run()
 
+	trackHub := services.NewOrderTrackingHub()
+	handlers.SetOrderTrackingHub(trackHub)
+
 	// Setup routes
 	handlers.SetupAuthRoutes(router, db)
 	handlers.SetupOrderRoutes(router, db)
@@ -89,6 +92,7 @@ func main() {
 	handlers.SetupUserRoutes(router, db)
 	handlers.SetupIngredientRoutes(router, db)
 	handlers.SetupPublicRoutes(router, db)
+	handlers.SetupTrackRoutes(router, db)
 
 	// WebSocket route with authentication (token via query param for WebSocket compatibility)
 	authService := services.NewAuthService(db, cfg.JWTSecret)
@@ -134,7 +138,7 @@ func main() {
 		Addr:         addr,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 0, // SSE tracking streams must not time out mid-connection
 		IdleTimeout:  60 * time.Second,
 	}
 
