@@ -26,7 +26,7 @@ type CreateOrderRequest struct {
 	CustomerPhone string                   `json:"customer_phone"`
 	OrderType     string                   `json:"order_type"`   // dine_in | counter
 	ServiceMode  string                   `json:"service_mode"` // eat_here | takeaway (counter only)
-	Items        []CreateOrderItemRequest `json:"items" validate:"required,min=1"`
+	Items        []CreateOrderItemRequest `json:"items" validate:"omitempty,dive"`
 	Notes        string                   `json:"notes"`
 }
 
@@ -68,7 +68,34 @@ func (s *OrderService) GetDB() *gorm.DB {
 }
 
 // CreateOrder creates a new order and deducts inventory
+// ValidateCreateOrderRequest enforces item rules after struct validation.
+func ValidateCreateOrderRequest(req CreateOrderRequest) error {
+	orderType := inferOrderType(req)
+	if len(req.Items) == 0 {
+		if orderType == "counter" {
+			return errors.New("at least one item is required for counter orders")
+		}
+		if req.TableID == nil || strings.TrimSpace(*req.TableID) == "" {
+			return errors.New("table_id is required for dine-in orders without items")
+		}
+		return nil
+	}
+	for _, item := range req.Items {
+		if strings.TrimSpace(item.MenuItemID) == "" {
+			return errors.New("menu_item_id is required for each item")
+		}
+		if item.Quantity < 1 {
+			return errors.New("item quantity must be at least 1")
+		}
+	}
+	return nil
+}
+
 func (s *OrderService) CreateOrder(restaurantID string, userID string, req CreateOrderRequest) (*models.Order, error) {
+	if err := ValidateCreateOrderRequest(req); err != nil {
+		return nil, err
+	}
+
 	// Validate items exist (but don't require inventory to be set up)
 	for _, item := range req.Items {
 		var menuItem models.MenuItem
@@ -582,6 +609,20 @@ func (s *OrderService) CancelOrder(restaurantID string, orderID string) error {
 	if err := tx.Model(&order).Update("status", "cancelled").Error; err != nil {
 		tx.Rollback()
 		return err
+	}
+
+	// Release dine-in table when order is cancelled
+	if order.TableID != nil && strings.TrimSpace(*order.TableID) != "" {
+		if err := tx.Model(&models.RestaurantTable{}).
+			Where("id = ? AND restaurant_id = ?", *order.TableID, restaurantID).
+			Updates(map[string]interface{}{
+				"is_occupied":      false,
+				"current_order_id": nil,
+			}).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+		log.Printf("✅ Table released after order cancel: %s", *order.TableID)
 	}
 
 	if err := tx.Commit().Error; err != nil {
