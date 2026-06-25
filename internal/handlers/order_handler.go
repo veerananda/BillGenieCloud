@@ -71,6 +71,11 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := services.ValidateCreateOrderRequest(req); err != nil {
+		log.Printf("❌ Order validation error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	// Create order
 	order, err := h.orderService.CreateOrder(restaurantID.(string), userID.(string), req)
@@ -1015,6 +1020,15 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	order, err := h.orderService.GetOrderByID(restaurantID.(string), orderID)
 	if err == nil && globalHub != nil {
 		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_cancelled", order)
+
+		if order.TableID != nil && *order.TableID != "" {
+			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{
+				ID:             *order.TableID,
+				Name:           order.TableNumber,
+				IsOccupied:     false,
+				CurrentOrderID: nil,
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
