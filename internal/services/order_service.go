@@ -94,7 +94,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 
 	// Determine order type and allocate numbers
 	orderType := inferOrderType(req)
-	todayStart := startOfLocalDay(time.Now())
+	todayStart := StartOfRestaurantDay(time.Now())
 
 	var orderNumber int
 	var ticketNumber int
@@ -788,7 +788,7 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 
 // GetSalesSummary aggregates completed orders for today or this month.
 func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*SalesSummary, error) {
-	now := time.Now()
+	now := time.Now().In(RestaurantLocation())
 	var start time.Time
 	label := "today"
 	switch period {
@@ -807,7 +807,7 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 	err := s.db.Model(&models.Order{}).
 		Where("restaurant_id = ?", restaurantID).
 		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
-		Where("COALESCE(completed_at, updated_at) >= ?", start).
+		Where(historyActivityAtSQL+" >= ?", start).
 		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
 		Scan(&result).Error
 	if err != nil {
@@ -839,7 +839,7 @@ func (s *OrderService) ListOrderHistory(restaurantID string, from, toEnd time.Ti
 	query := s.db.Model(&models.Order{}).
 		Where("restaurant_id = ?", restaurantID).
 		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
-		Where("COALESCE(completed_at, updated_at) >= ? AND COALESCE(completed_at, updated_at) < ?", from, toEnd)
+		Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", from, toEnd)
 
 	switch orderType {
 	case "counter":
@@ -856,7 +856,7 @@ func (s *OrderService) ListOrderHistory(restaurantID string, from, toEnd time.Ti
 	var orders []models.Order
 	err := query.Preload("Items").
 		Preload("Items.MenuItem").
-		Order("COALESCE(completed_at, updated_at) DESC").
+		Order("COALESCE(completed_at, created_at) DESC").
 		Limit(limit).
 		Offset(offset).
 		Find(&orders).Error
@@ -967,11 +967,6 @@ func (s *OrderService) UpdateOrderItemsByMenuID(restaurantID string, orderID str
 	return nil
 }
 
-func startOfLocalDay(t time.Time) time.Time {
-	y, m, d := t.Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
-}
-
 func inferOrderType(req CreateOrderRequest) string {
 	switch req.OrderType {
 	case "counter", "dine_in":
@@ -1005,7 +1000,7 @@ func getMaxCounterTicketToday(tx *gorm.DB, restaurantID string, todayStart time.
 
 // GetNextCounterTicket returns the next daily counter ticket number without creating an order.
 func (s *OrderService) GetNextCounterTicket(restaurantID string) (int, error) {
-	todayStart := startOfLocalDay(time.Now())
+	todayStart := StartOfRestaurantDay(time.Now())
 	maxTicket, err := getMaxCounterTicketToday(s.db, restaurantID, todayStart)
 	if err != nil {
 		return 0, err
@@ -1018,7 +1013,7 @@ func (s *OrderService) ListCounterOrdersToday(restaurantID string, limit int) ([
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	todayStart := startOfLocalDay(time.Now())
+	todayStart := StartOfRestaurantDay(time.Now())
 
 	var orders []models.Order
 	err := s.db.
