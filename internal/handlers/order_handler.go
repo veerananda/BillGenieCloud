@@ -565,7 +565,6 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 		return
 	}
 
-	loc := time.Now().Location()
 	fromStr := c.Query("from")
 	toStr := c.Query("to")
 	orderType := c.DefaultQuery("order_type", "all")
@@ -576,37 +575,9 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 		limit = 100
 	}
 
-	parseDay := func(value string) (time.Time, error) {
-		return time.ParseInLocation("2006-01-02", value, loc)
-	}
-
-	var from time.Time
-	var toEnd time.Time
-	if fromStr == "" {
-		now := time.Now().In(loc)
-		from = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	} else {
-		parsed, err := parseDay(fromStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from date; use YYYY-MM-DD"})
-			return
-		}
-		from = parsed
-	}
-
-	if toStr == "" {
-		toEnd = from.Add(24 * time.Hour)
-	} else {
-		parsed, err := parseDay(toStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to date; use YYYY-MM-DD"})
-			return
-		}
-		toEnd = parsed.Add(24 * time.Hour)
-	}
-
-	if !toEnd.After(from) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "to must be on or after from"})
+	from, toEnd, err := services.ParseHistoryDateRange(fromStr, toStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
