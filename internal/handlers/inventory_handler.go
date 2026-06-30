@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -30,6 +31,19 @@ func NewInventoryHandler(db *gorm.DB) *InventoryHandler {
 	return &InventoryHandler{db: db}
 }
 
+func (h *InventoryHandler) requireInventoryPlan(c *gin.Context) (string, bool) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return "", false
+	}
+	if err := services.EnforceInventoryAccess(h.db, restaurantID.(string)); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return "", false
+	}
+	return restaurantID.(string), true
+}
+
 // GetInventory retrieves inventory levels
 // @Summary Get inventory
 // @Description Get all inventory items for restaurant
@@ -41,9 +55,8 @@ func NewInventoryHandler(db *gorm.DB) *InventoryHandler {
 // @Success 200 {object} map[string]interface{}
 // @Router /inventory [get]
 func (h *InventoryHandler) GetInventory(c *gin.Context) {
-	restaurantID, exists := c.Get("restaurant_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+	restaurantID, ok := h.requireInventoryPlan(c)
+	if !ok {
 		return
 	}
 

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var numericStaffKeyPattern = regexp.MustCompile(`^\d{6}$`)
+
 type UserService struct {
 	db *gorm.DB
 }
@@ -20,23 +24,25 @@ type UserService struct {
 // CreateUserRequest for creating new staff/manager/chef
 // Note: Email is optional for staff/manager/chef (they use staff_key + password)
 // Email is only required for admin during registration
-// StaffKey is generated on frontend and passed here (format: SK_XXXXXXXXXX - 13 chars total)
+// StaffKey is a 6-digit login key (generated on frontend or by the server).
 type CreateUserRequest struct {
 	Name     string `json:"name" validate:"required,min=2"`
 	Email    string `json:"email" validate:"omitempty,email"`
-	Phone    string `json:"phone" validate:"required"`
-	Password string `json:"password" validate:"required,min=6"`
-	Role     string `json:"role" validate:"required,oneof=manager staff chef"`
-	StaffKey string `json:"staff_key" validate:"required,len=13"` // Frontend-generated key (SK_XXXXXXXXXX)
+	Phone    string `json:"phone"`
+	Password string `json:"password" validate:"omitempty,min=6"`
+	Role            string `json:"role" validate:"required,oneof=manager staff chef"`
+	StaffKey        string `json:"staff_key"`
+	CanCancelOrders bool   `json:"can_cancel_orders"`
 }
 
 // UpdateUserRequest for updating existing staff/manager/chef
 type UpdateUserRequest struct {
-	Name     string `json:"name" validate:"omitempty,min=2"`
-	Phone    string `json:"phone"`
-	Password string `json:"password" validate:"omitempty,min=6"` // Optional: only update if provided
-	Role     string `json:"role" validate:"omitempty,oneof=manager staff chef"`
-	IsActive *bool  `json:"is_active"`
+	Name            string `json:"name" validate:"omitempty,min=2"`
+	Phone           string `json:"phone"`
+	Password        string `json:"password" validate:"omitempty,min=6"` // Optional: only update if provided
+	Role            string `json:"role" validate:"omitempty,oneof=manager staff chef"`
+	IsActive        *bool  `json:"is_active"`
+	CanCancelOrders *bool  `json:"can_cancel_orders"`
 }
 
 // NewUserService creates a new user service
@@ -53,8 +59,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		return nil, errors.New("invalid role. must be 'manager', 'staff', or 'chef'")
 	}
 
-	// Check account limits: 1 admin, 1 manager, 2 staff, 1 chef (max 5 total)
-	// Only count ACTIVE users to allow recreation after deletion
+	// Enforce subscription limits for the requested role.
 	var userCounts struct {
 		AdminCount   int64
 		ManagerCount int64
@@ -71,19 +76,24 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		restaurantID, userCounts.AdminCount, userCounts.ManagerCount, userCounts.StaffCount, userCounts.ChefCount)
 
 	// Enforce limits
-	if req.Role == "manager" && userCounts.ManagerCount >= 1 {
-		return nil, errors.New("account limit reached: only 1 manager account is allowed per restaurant")
+	if err := EnforceCreateUser(s.db, restaurantID, req.Role); err != nil {
+		return nil, err
 	}
-	if req.Role == "staff" && userCounts.StaffCount >= 2 {
-		return nil, errors.New("account limit reached: only 2 staff accounts are allowed per restaurant")
-	}
-	if req.Role == "chef" && userCounts.ChefCount >= 1 {
-		return nil, errors.New("account limit reached: only 1 chef account is allowed per restaurant")
+
+	staffKey := strings.TrimSpace(req.StaffKey)
+	if staffKey == "" {
+		generated, genErr := generateUniqueNumericStaffKey(s.db)
+		if genErr != nil {
+			return nil, genErr
+		}
+		staffKey = generated
+	} else if !numericStaffKeyPattern.MatchString(staffKey) {
+		return nil, errors.New("staff key must be a 6-digit number")
 	}
 
 	// For staff/manager/chef, if email not provided, use the staff_key as email (it's globally unique)
-	if req.Email == "" && (req.Role == "staff" || req.Role == "manager" || req.Role == "chef") {
-		req.Email = req.StaffKey // Use staff_key as email since it's globally unique
+	if req.Email == "" {
+		req.Email = staffKey
 	}
 
 	// Check if email already exists in this restaurant (only if email is provided)
@@ -96,33 +106,41 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		}
 	}
 
-	// Check if staff key already exists (globally unique)
-	if req.StaffKey != "" {
-		var existingUser models.User
-		if err := s.db.Where("staff_key = ?", req.StaffKey).First(&existingUser).Error; err == nil {
-			return nil, errors.New("staff key already in use, please regenerate a new key")
-		} else if err != gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("database error: %w", err)
-		}
+	var existingKeyUser models.User
+	if err := s.db.Where("staff_key = ?", staffKey).First(&existingKeyUser).Error; err == nil {
+		return nil, errors.New("staff key already in use, please regenerate a new key")
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, fmt.Errorf("database error: %w", err)
+	}
+
+	password := strings.TrimSpace(req.Password)
+	if password == "" {
+		password = staffKey
 	}
 
 	// Hash password
-	hashedPassword, err := hashPassword(req.Password)
+	hashedPassword, err := hashPassword(password)
 	if err != nil {
 		return nil, fmt.Errorf("password hashing failed: %w", err)
 	}
 
 	// Create new user
+	canCancelOrders := false
+	if req.Role == "staff" && req.CanCancelOrders {
+		canCancelOrders = true
+	}
+
 	user := &models.User{
-		ID:           uuid.New().String(),
-		RestaurantID: restaurantID,
-		Name:         req.Name,
-		Email:        req.Email,
-		Phone:        req.Phone,
-		PasswordHash: hashedPassword,
-		Role:         req.Role,
-		StaffKey:     req.StaffKey, // Save the frontend-generated staff key
-		IsActive:     true,
+		ID:              uuid.New().String(),
+		RestaurantID:    restaurantID,
+		Name:            req.Name,
+		Email:           req.Email,
+		Phone:           req.Phone,
+		PasswordHash:    hashedPassword,
+		Role:            req.Role,
+		StaffKey:        staffKey,
+		IsActive:        true,
+		CanCancelOrders: canCancelOrders,
 	}
 
 	// Save to database
@@ -207,6 +225,8 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		return nil, errors.New("user does not belong to this restaurant")
 	}
 
+	isAdmin := user.Role == "admin"
+
 	// Update fields
 	updates := map[string]interface{}{}
 
@@ -214,12 +234,33 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		updates["name"] = req.Name
 	}
 
-	if req.Phone != "" {
+	if req.Phone != "" || isAdmin {
 		updates["phone"] = req.Phone
 	}
 
-	if req.Role != "" && (req.Role == "manager" || req.Role == "staff") {
-		updates["role"] = req.Role
+	if !isAdmin && req.Role != "" {
+		if req.Role != "manager" && req.Role != "staff" && req.Role != "chef" {
+			return nil, errors.New("invalid role")
+		}
+		if req.Role != user.Role {
+			if err := EnforceCreateUser(s.db, restaurantID, req.Role); err != nil {
+				return nil, err
+			}
+			updates["role"] = req.Role
+			if req.Role != "staff" {
+				updates["can_cancel_orders"] = false
+			}
+		}
+	}
+
+	if req.CanCancelOrders != nil {
+		effectiveRole := user.Role
+		if !isAdmin && req.Role != "" {
+			effectiveRole = req.Role
+		}
+		if effectiveRole == "staff" {
+			updates["can_cancel_orders"] = *req.CanCancelOrders
+		}
 	}
 
 	if req.IsActive != nil {
@@ -260,6 +301,21 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 	return user, nil
 }
 
+// UserCanCancelOrders reports whether a user may cancel dine-in table orders.
+func UserCanCancelOrders(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	switch user.Role {
+	case "admin", "manager":
+		return true
+	case "staff":
+		return user.CanCancelOrders
+	default:
+		return false
+	}
+}
+
 // DeleteUser soft-deletes a user by setting is_active to false
 func (s *UserService) DeleteUser(userID string, restaurantID string) error {
 	// Fetch user
@@ -273,16 +329,8 @@ func (s *UserService) DeleteUser(userID string, restaurantID string) error {
 		return errors.New("user does not belong to this restaurant")
 	}
 
-	// Prevent deletion of last admin
 	if user.Role == "admin" {
-		var adminCount int64
-		if err := s.db.Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "admin", true).Count(&adminCount).Error; err != nil {
-			return fmt.Errorf("failed to check admin count: %w", err)
-		}
-
-		if adminCount <= 1 {
-			return errors.New("cannot delete the only admin user. assign admin role to someone else first")
-		}
+		return errors.New("admin account cannot be deleted")
 	}
 
 	// Hard delete with cleanup: Begin transaction
@@ -401,23 +449,9 @@ func (s *UserService) RegenerateStaffKey(userID string, req RegenerateStaffKeyRe
 		return "", errors.New("staff key can only be regenerated for manager/staff/chef users")
 	}
 
-	var newStaffKey string
-	for i := 0; i < 10; i++ {
-		candidate := "SK_" + strings.ToUpper(strings.ReplaceAll(uuid.New().String()[:10], "-", ""))
-
-		var count int64
-		if err := s.db.Model(&models.User{}).Where("staff_key = ?", candidate).Count(&count).Error; err != nil {
-			return "", fmt.Errorf("failed to validate staff key uniqueness: %w", err)
-		}
-
-		if count == 0 {
-			newStaffKey = candidate
-			break
-		}
-	}
-
-	if newStaffKey == "" {
-		return "", errors.New("failed to generate unique staff key")
+	newStaffKey, err := generateUniqueNumericStaffKey(s.db)
+	if err != nil {
+		return "", err
 	}
 
 	// Prepare update map
@@ -427,14 +461,16 @@ func (s *UserService) RegenerateStaffKey(userID string, req RegenerateStaffKeyRe
 		"updated_at":       time.Now(),
 	}
 
-	// If new password provided, hash and update it
+	// Default password to the new key; override when admin sets a new password.
+	passwordToSet := newStaffKey
 	if req.NewPassword != nil && *req.NewPassword != "" {
-		hashedPassword, err := hashPassword(*req.NewPassword)
-		if err != nil {
-			return "", fmt.Errorf("password hashing failed: %w", err)
-		}
-		updateMap["password_hash"] = hashedPassword
+		passwordToSet = *req.NewPassword
 	}
+	hashedPassword, err := hashPassword(passwordToSet)
+	if err != nil {
+		return "", fmt.Errorf("password hashing failed: %w", err)
+	}
+	updateMap["password_hash"] = hashedPassword
 
 	if err := s.db.Model(user).Updates(updateMap).Error; err != nil {
 		return "", fmt.Errorf("failed to regenerate staff key: %w", err)
@@ -446,4 +482,18 @@ func (s *UserService) RegenerateStaffKey(userID string, req RegenerateStaffKeyRe
 	}
 	log.Printf("%s", logMsg)
 	return newStaffKey, nil
+}
+
+func generateUniqueNumericStaffKey(db *gorm.DB) (string, error) {
+	for i := 0; i < 30; i++ {
+		candidate := fmt.Sprintf("%06d", 100000+rand.Intn(900000))
+		var count int64
+		if err := db.Model(&models.User{}).Where("staff_key = ?", candidate).Count(&count).Error; err != nil {
+			return "", fmt.Errorf("failed to validate staff key uniqueness: %w", err)
+		}
+		if count == 0 {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("failed to generate unique staff key")
 }

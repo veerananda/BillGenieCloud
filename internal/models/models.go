@@ -18,6 +18,7 @@ type User struct {
 	PasswordHash   string    `json:"-" gorm:"not null"`
 	Role           string    `json:"role" gorm:"not null;type:varchar(50)"` // "admin", "manager", "staff"
 	IsActive       bool      `json:"is_active" gorm:"default:true"`
+	CanCancelOrders bool     `json:"can_cancel_orders" gorm:"default:false"`
 	StaffKey       string    `json:"staff_key" gorm:"unique;index"` // Globally unique per-staff key (not null enforced in migration)
 	KeyGeneratedAt time.Time `json:"key_generated_at" gorm:"autoCreateTime:milli"`
 	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
@@ -55,9 +56,13 @@ type Restaurant struct {
 	TotalTables     int             `json:"total_tables" gorm:"default:10"`
 	TotalStaff      int             `json:"total_staff" gorm:"default:5"`
 	SubscriptionEnd time.Time       `json:"subscription_end"`
+	SubscriptionPlan string         `json:"subscription_plan" gorm:"type:varchar(32);default:basic"`
+	SubscriptionMonthlyPrice int    `json:"subscription_monthly_price" gorm:"default:799"`
+	SubscriptionConfig json.RawMessage `json:"subscription_config" gorm:"type:jsonb"`
 	IsActive        bool            `json:"is_active" gorm:"default:true"`
 	IsSelfService   bool            `json:"is_self_service" gorm:"default:false"`   // True for self-service, False for dine-in
 	IsEmailVerified bool            `json:"is_email_verified" gorm:"default:false"` // Email verification status
+	CounterServiceModes string      `json:"counter_service_modes" gorm:"type:varchar(20);default:both"` // both | eat_here | takeaway
 	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"`             // Customizable settings
 	// Restaurant Profile fields
 	ContactNumber string    `json:"contact_number"`
@@ -316,6 +321,7 @@ type WSOrderItem struct {
 	SubId        string  `json:"sub_id,omitempty"`
 	Notes        string  `json:"notes,omitempty"`
 	IsVegetarian bool    `json:"is_vegetarian,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
 }
 
 // OrderEventData for WebSocket events

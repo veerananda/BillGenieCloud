@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net/smtp"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+)
+
+var (
+	loginStaffKeyPattern = regexp.MustCompile(`^\d{6}$`)
+	loginAdminKeyPattern = regexp.MustCompile(`^100\d{5}$`)
 )
 
 type AuthService struct {
@@ -36,7 +42,9 @@ type AuthResponse struct {
 	TokenType    string `json:"token_type"`
 	RestaurantID string `json:"restaurant_id"`
 	UserID       string `json:"user_id"`
-	Role         string `json:"role"`
+	Role            string `json:"role"`
+	Name            string `json:"name"`
+	CanCancelOrders bool   `json:"can_cancel_orders"`
 }
 
 type RegisterRequest struct {
@@ -45,13 +53,15 @@ type RegisterRequest struct {
 	Email          string `json:"email" validate:"required,email"`
 	Phone          string `json:"phone" validate:"required"`
 	Password       string `json:"password" validate:"required,min=6"`
+	LoginID        string `json:"login_id" validate:"required"`
 	Address        string `json:"address"`
 	City           string `json:"city"`
 	Cuisine        string `json:"cuisine"`
+	Subscription   *SubscriptionSelection `json:"subscription"`
 }
 
 type LoginRequest struct {
-	Identifier string `json:"identifier" validate:"required"` // Email (admin) or Staff Key (staff)
+	Identifier string `json:"identifier" validate:"required"` // 8-digit admin login number or staff key
 	Password   string `json:"password" validate:"required"`
 }
 
@@ -93,6 +103,24 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 	}
 
 	// Create restaurant with 30-day free trial
+	subSelection := DefaultSubscriptionSelection()
+	if req.Subscription != nil {
+		validated, err := ValidateSubscriptionSelection(*req.Subscription)
+		if err != nil {
+			return nil, nil, err
+		}
+		subSelection = validated
+	}
+	quote := CalculateSubscriptionQuote(subSelection)
+	subConfig, err := SubscriptionConfigJSON(subSelection, quote)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	counterModes := "eat_here"
+	isSelfService := false
+	ApplyOperationModeToRestaurant(&isSelfService, &counterModes, subSelection.OperationMode)
+
 	restaurant := &models.Restaurant{
 		ID:              uuid.New().String(),
 		RestaurantCode:  restaurantCode,
@@ -104,15 +132,31 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		City:            req.City,
 		Cuisine:         req.Cuisine,
 		IsActive:        true,
+		IsSelfService:   isSelfService,
+		CounterServiceModes: counterModes,
 		SubscriptionEnd: time.Now().AddDate(0, 0, 30), // 30-day free trial
+		SubscriptionPlan: "basic",
+		SubscriptionMonthlyPrice: quote.MonthlySubtotal,
+		SubscriptionConfig: subConfig,
 	}
 
 	if err := s.db.Create(restaurant).Error; err != nil {
 		return nil, nil, err
 	}
 
-	// Create admin user with auto-generated staff key
-	staffKey := generateStaffKey()
+	// Validate and reserve admin login number (stored as staff_key)
+	loginID := strings.TrimSpace(req.LoginID)
+	if !loginAdminKeyPattern.MatchString(loginID) {
+		return nil, nil, errors.New("login number must be an 8-digit number starting with 100")
+	}
+	var existingLogin models.User
+	if err := s.db.Where("staff_key = ?", loginID).First(&existingLogin).Error; err == nil {
+		return nil, nil, errors.New("login number already in use — please regenerate and try again")
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, nil, err
+	}
+
+	// Create admin user with client-chosen login number
 	user := &models.User{
 		ID:           uuid.New().String(),
 		RestaurantID: restaurant.ID,
@@ -122,18 +166,13 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		PasswordHash: hashedPassword,
 		Role:         "admin",
 		IsActive:     true,
-		StaffKey:     staffKey,
+		StaffKey:     loginID,
 	}
 
 	if err := s.db.Create(user).Error; err != nil {
 		// Rollback restaurant creation if user creation fails
 		s.db.Delete(restaurant)
 		return nil, nil, err
-	}
-
-	// Send verification email
-	if _, err := s.SendVerificationEmail(restaurant.ID, req.Email); err != nil {
-		fmt.Printf("⚠️  Warning: Failed to send verification email: %v\n", err)
 	}
 
 	return restaurant, user, nil
@@ -220,27 +259,27 @@ func (s *AuthService) ResendVerificationEmail(restaurantID, email string) (strin
 	return s.SendVerificationEmail(restaurantID, email)
 }
 
-// Login authenticates user and returns tokens
-// Accepts either email (admin) or staff_key (staff) as identifier
+// Login authenticates user and returns tokens.
+// Accepts 8-digit admin login number (100xxxxx), 6-digit staff key, or legacy SK_ key.
 func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	var user models.User
 	var err error
 
-	// Determine if identifier is email or staff key
-	if strings.Contains(req.Identifier, "@") {
-		// Email-based login (admin)
-		err = s.db.Where("email = ?", req.Identifier).First(&user).Error
+	identifier := strings.TrimSpace(req.Identifier)
+
+	switch {
+	case loginAdminKeyPattern.MatchString(identifier):
+		err = s.db.Where("staff_key = ?", identifier).First(&user).Error
 		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("invalid email or password")
+			return nil, errors.New("invalid login number or password")
 		}
-	} else if strings.HasPrefix(req.Identifier, "SK_") {
-		// Staff key-based login (staff/manager/chef)
-		err = s.db.Where("staff_key = ?", req.Identifier).First(&user).Error
+	case strings.HasPrefix(identifier, "SK_") || loginStaffKeyPattern.MatchString(identifier):
+		err = s.db.Where("staff_key = ?", identifier).First(&user).Error
 		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("invalid staff key or password")
+			return nil, errors.New("invalid login number or password")
 		}
-	} else {
-		return nil, errors.New("invalid identifier format. Please enter email or staff key")
+	default:
+		return nil, errors.New("invalid login number format. Use your 8-digit admin number or 6-digit staff key")
 	}
 
 	if err != nil && err != gorm.ErrRecordNotFound {
@@ -293,13 +332,15 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	}
 
 	return &AuthResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    3600, // 1 hour for access token
-		TokenType:    "Bearer",
-		RestaurantID: user.RestaurantID,
-		UserID:       user.ID,
-		Role:         user.Role,
+		AccessToken:     accessToken,
+		RefreshToken:    refreshToken,
+		ExpiresIn:       3600, // 1 hour for access token
+		TokenType:       "Bearer",
+		RestaurantID:    user.RestaurantID,
+		UserID:          user.ID,
+		Role:            user.Role,
+		Name:            user.Name,
+		CanCancelOrders: user.CanCancelOrders,
 	}, nil
 }
 
@@ -389,14 +430,28 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 	}
 
 	return &AuthResponse{
-		AccessToken:  newAccessToken,
-		RefreshToken: refreshTokenStr,
-		ExpiresIn:    3600, // 1 hour
-		TokenType:    "Bearer",
-		RestaurantID: user.RestaurantID,
-		UserID:       user.ID,
-		Role:         user.Role,
+		AccessToken:     newAccessToken,
+		RefreshToken:    refreshTokenStr,
+		ExpiresIn:       3600, // 1 hour
+		TokenType:       "Bearer",
+		RestaurantID:    user.RestaurantID,
+		UserID:          user.ID,
+		Role:            user.Role,
+		Name:            user.Name,
+		CanCancelOrders: user.CanCancelOrders,
 	}, nil
+}
+
+// GetUserByID loads a user record for profile display.
+func (s *AuthService) GetUserByID(userID string) (*models.User, error) {
+	var user models.User
+	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("user not found")
+		}
+		return nil, err
+	}
+	return &user, nil
 }
 
 // ValidateToken validates and parses JWT token
@@ -470,6 +525,16 @@ func generateRestaurantCode(restaurantName string) string {
 	return code
 }
 
+func normalizePhone(phone string) string {
+	var digits strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	return digits.String()
+}
+
 // generateStaffKey creates a globally unique staff key (e.g., SK_8F4K9P2Q1R)
 func generateStaffKey() string {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -482,31 +547,48 @@ func generateStaffKey() string {
 	return key
 }
 
-// ForgotPassword generates a password reset token and returns reset link
-// Note: Only admin users can reset password via email
-// Staff users should ask admin to regenerate their staff key instead
+// ForgotPassword generates a password reset token and emails the reset link.
+// Lookup is by registered email or phone (admin accounts only).
 func (s *AuthService) ForgotPassword(identifier string) (string, error) {
-	// Find user by email or staff key
-	var user models.User
-
-	if strings.Contains(identifier, "@") {
-		// Email login (admin)
-		if err := s.db.Where("email = ?", identifier).First(&user).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return "", errors.New("user not found")
-			}
-			return "", err
-		}
-	} else if strings.HasPrefix(identifier, "SK_") {
-		// Staff key login (staff) - not allowed to reset password via email
-		return "", errors.New("staff members cannot reset password via email. Please ask your admin to regenerate your staff key")
-	} else {
-		return "", errors.New("invalid identifier format")
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return "", errors.New("email or phone number is required")
 	}
 
-	// Check if user is admin (only admins can reset password)
+	// Login numbers cannot be used for password recovery
+	if loginAdminKeyPattern.MatchString(identifier) ||
+		loginStaffKeyPattern.MatchString(identifier) ||
+		strings.HasPrefix(identifier, "SK_") {
+		return "", errors.New("use your registered email or phone number to reset your password")
+	}
+
+	var user models.User
+	var err error
+
+	if strings.Contains(identifier, "@") {
+		err = s.db.Where("email = ?", identifier).First(&user).Error
+	} else {
+		normalized := normalizePhone(identifier)
+		if len(normalized) < 10 {
+			return "", errors.New("please enter a valid email or phone number")
+		}
+		err = s.db.Where(
+			"regexp_replace(phone, '[^0-9]', '', 'g') = ? OR regexp_replace(phone, '[^0-9]', '', 'g') LIKE ?",
+			normalized,
+			"%"+normalized,
+		).First(&user).Error
+	}
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", errors.New("no account found with that email or phone number")
+		}
+		return "", err
+	}
+
+	// Only admins can self-reset; staff should ask their admin
 	if user.Role != "admin" {
-		return "", errors.New("only admin users can reset password via email. Staff members should ask their admin to regenerate their staff key")
+		return "", errors.New("staff members cannot reset password here. Please ask your admin to reset your password")
 	}
 
 	// Generate reset token (32-character random string)

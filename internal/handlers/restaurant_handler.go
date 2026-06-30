@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -31,6 +33,25 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 	}
 
 	// Return profile data
+	counterModes := restaurant.CounterServiceModes
+	if counterModes == "" {
+		counterModes = "both"
+	}
+
+	limits, _ := services.LoadSubscriptionLimits(h.db, &restaurant)
+	usage, _ := services.LoadSubscriptionUsage(h.db, restaurant.ID)
+	selection := services.DefaultSubscriptionSelection()
+	if len(restaurant.SubscriptionConfig) > 0 {
+		var stored struct {
+			Selection services.SubscriptionSelection `json:"selection"`
+		}
+		if err := json.Unmarshal(restaurant.SubscriptionConfig, &stored); err == nil {
+			if validated, vErr := services.ValidateSubscriptionSelection(stored.Selection); vErr == nil {
+				selection = validated
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"id":               restaurant.ID,
 		"name":             restaurant.Name,
@@ -41,8 +62,15 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"upi_qr_code":      restaurant.UPIQRCode,
 		"city":             restaurant.City,
 		"cuisine":          restaurant.Cuisine,
-		"is_self_service":  restaurant.IsSelfService,
-		"subscription_end": restaurant.SubscriptionEnd,
+		"is_self_service":       restaurant.IsSelfService,
+		"counter_service_modes": counterModes,
+		"subscription_end":      restaurant.SubscriptionEnd,
+		"subscription_plan":     restaurant.SubscriptionPlan,
+		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
+		"subscription_config":        restaurant.SubscriptionConfig,
+		"subscription_selection":     selection,
+		"subscription_limits":        limits,
+		"subscription_usage":         usage,
 	})
 }
 
@@ -55,11 +83,12 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	}
 
 	var input struct {
-		Name          string `json:"name"`
-		Address       string `json:"address"`
-		ContactNumber string `json:"contact_number"`
-		UPIQRCode     string `json:"upi_qr_code"`
-		IsSelfService *bool  `json:"is_self_service"`
+		Name                string `json:"name"`
+		Address             string `json:"address"`
+		ContactNumber       string `json:"contact_number"`
+		UPIQRCode           string `json:"upi_qr_code"`
+		IsSelfService       *bool  `json:"is_self_service"`
+		CounterServiceModes string `json:"counter_service_modes"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -88,6 +117,15 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	}
 	if input.IsSelfService != nil {
 		restaurant.IsSelfService = *input.IsSelfService
+	}
+	if input.CounterServiceModes != "" {
+		switch input.CounterServiceModes {
+		case "both", "eat_here", "takeaway":
+			restaurant.CounterServiceModes = input.CounterServiceModes
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "counter_service_modes must be both, eat_here, or takeaway"})
+			return
+		}
 	}
 
 	if err := h.db.Save(&restaurant).Error; err != nil {
