@@ -49,7 +49,7 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 	orderService := services.NewOrderService(db)
 	checkoutLock := services.NewCheckoutLockService(db)
 	authService := getAuthService(db)
-	orderHandler := NewOrderHandler(orderService, checkoutLock)
+	orderHandler := NewOrderHandler(orderService, checkoutLock, authService)
 
 	protected := router.Group("/orders")
 	protected.Use(middleware.AuthMiddleware(authService))

@@ -86,13 +86,15 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"restaurant_code": restaurant.RestaurantCode,
 		"user_id":         user.ID,
 		"role":            user.Role,
-		"message":         fmt.Sprintf("Restaurant registered successfully! Your login code is: %s", restaurant.RestaurantCode),
+		"login_id":        user.StaffKey,
+		"staff_key":       user.StaffKey,
+		"message":         fmt.Sprintf("Restaurant registered successfully! Your login number is: %s", user.StaffKey),
 	})
 }
 
 // Login handles user login
 // @Summary User login
-// @Description Login with email and password to get JWT token
+// @Description Login with login number and password to get JWT token
 // @Accept json
 // @Produce json
 // @Param request body services.LoginRequest true "Login credentials"
@@ -147,13 +149,22 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	restaurantID, _ := c.Get("restaurant_id")
 	role, _ := c.Get("role")
 
+	user, err := h.authService.GetUserByID(userID.(string))
+	if err != nil {
+		log.Printf("❌ Profile lookup failed: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
 	log.Printf("✅ Profile retrieved for user: %s", userID)
 
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":       userID,
-		"restaurant_id": restaurantID,
-		"role":          role,
-		"message":       "Profile retrieved successfully",
+		"user_id":           userID,
+		"restaurant_id":     restaurantID,
+		"role":              role,
+		"name":              user.Name,
+		"can_cancel_orders": user.CanCancelOrders,
+		"message":           "Profile retrieved successfully",
 	})
 }
 
@@ -209,7 +220,7 @@ func (h *AuthHandler) HealthCheck(c *gin.Context) {
 // @Description Generate a password reset token and return reset link
 // @Accept json
 // @Produce json
-// @Param request body map[string]string true "User identifier (email or staff key)"
+// @Param request body map[string]string true "Registered email or phone number"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Router /auth/forgot-password [post]

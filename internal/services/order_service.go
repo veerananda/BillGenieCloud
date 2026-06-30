@@ -129,13 +129,13 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	var tableID *string = req.TableID
 
 	if orderType == "counter" {
-		maxTicket, err := getMaxCounterTicketToday(tx, restaurantID, todayStart)
+		var err error
+		ticketNumber, err = allocateCounterTicket(tx, restaurantID, todayStart)
 		if err != nil {
 			log.Printf("❌ [CreateOrder] Failed to allocate counter ticket: %v", err)
 			tx.Rollback()
 			return nil, err
 		}
-		ticketNumber = maxTicket + 1
 		orderNumber = ticketNumber
 		tableNumber = strconv.Itoa(ticketNumber)
 		tableID = nil // counter orders are not tied to restaurant tables
@@ -219,6 +219,8 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 
 	// Create order items (inventory deduction is now optional)
 	subTotal := 0.0
+	batchSubID := uuid.New().String()
+	log.Printf("🔵 [CreateOrder] KOT batch sub_id: %s", batchSubID)
 	log.Printf("🔵 [CreateOrder] Processing %d items for order #%d", len(req.Items), orderNumber)
 	for i, itemReq := range req.Items {
 		var menuItem models.MenuItem
@@ -239,6 +241,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 			Total:    menuItem.Price * float64(itemReq.Quantity),
 			Status:   "pending",
 			Notes:    itemReq.Notes,
+			SubId:    batchSubID,
 		}
 
 		log.Printf("🔵 [CreateOrder] Item %d: Creating OrderItem - ID: %s, MenuID: %s, Qty: %d, Total: ₹%.2f", i+1, itemID, menuItem.ID, itemReq.Quantity, orderItem.Total)
@@ -352,8 +355,10 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 
 	log.Printf("🔵 [UpdateOrder] Found existing order #%d with %d items", order.OrderNumber, len(order.Items))
 
-	// Add new items to the order
+	// Add new items to the order (one KOT batch per update)
 	var totalAdded float64 = 0
+	batchSubID := uuid.New().String()
+	log.Printf("🔵 [UpdateOrder] KOT batch sub_id: %s", batchSubID)
 	for _, itemReq := range req.Items {
 		var menuItem models.MenuItem
 		if err := tx.Where("restaurant_id = ? AND id = ?", restaurantID, itemReq.MenuItemID).
@@ -376,6 +381,7 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 			Total:    menuItem.Price * float64(itemReq.Quantity),
 			Status:   "pending",
 			Notes:    itemReq.Notes,
+			SubId:    batchSubID,
 		}
 
 		if err := tx.Create(&orderItem).Error; err != nil {
@@ -1039,7 +1045,22 @@ func getMaxCounterTicketToday(tx *gorm.DB, restaurantID string, todayStart time.
 	return maxTicket, err
 }
 
-// GetNextCounterTicket returns the next daily counter ticket number without creating an order.
+// allocateCounterTicket assigns the next daily counter ticket inside the caller's transaction.
+// pg_advisory_xact_lock serializes allocation per restaurant per business day so concurrent
+// counter devices cannot receive the same ticket number.
+func allocateCounterTicket(tx *gorm.DB, restaurantID string, todayStart time.Time) (int, error) {
+	lockKey := restaurantID + ":" + todayStart.Format("2006-01-02")
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error; err != nil {
+		return 0, fmt.Errorf("counter ticket lock: %w", err)
+	}
+	maxTicket, err := getMaxCounterTicketToday(tx, restaurantID, todayStart)
+	if err != nil {
+		return 0, err
+	}
+	return maxTicket + 1, nil
+}
+
+// GetNextCounterTicket returns a preview of the next daily counter ticket (not reserved).
 func (s *OrderService) GetNextCounterTicket(restaurantID string) (int, error) {
 	todayStart := StartOfRestaurantDay(time.Now())
 	maxTicket, err := getMaxCounterTicketToday(s.db, restaurantID, todayStart)

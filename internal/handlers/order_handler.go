@@ -17,14 +17,16 @@ import (
 type OrderHandler struct {
 	orderService *services.OrderService
 	checkoutLock *services.CheckoutLockService
+	authService  *services.AuthService
 	validator    *validator.Validate
 }
 
 // NewOrderHandler creates a new order handler
-func NewOrderHandler(orderService *services.OrderService, checkoutLock *services.CheckoutLockService) *OrderHandler {
+func NewOrderHandler(orderService *services.OrderService, checkoutLock *services.CheckoutLockService, authService *services.AuthService) *OrderHandler {
 	return &OrderHandler{
 		orderService: orderService,
 		checkoutLock: checkoutLock,
+		authService:  authService,
 		validator:    validator.New(),
 	}
 }
@@ -77,6 +79,21 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
+	var restaurant models.Restaurant
+	if err := h.orderService.GetDB().Where("id = ?", restaurantID.(string)).First(&restaurant).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load restaurant"})
+		return
+	}
+	limits, err := services.LoadSubscriptionLimits(h.orderService.GetDB(), &restaurant)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load subscription"})
+		return
+	}
+	if err := services.ValidateOrderCreate(limits, req); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Create order
 	order, err := h.orderService.CreateOrder(restaurantID.(string), userID.(string), req)
 	if err != nil {
@@ -120,7 +137,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	})
 }
 
-// GetNextCounterTicket returns the next daily counter ticket number (preview).
+// GetNextCounterTicket returns a preview of the next daily counter ticket (not reserved).
 func (h *OrderHandler) GetNextCounterTicket(c *gin.Context) {
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
@@ -586,6 +603,18 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 		return
 	}
 
+	var restaurant models.Restaurant
+	if err := h.orderService.GetDB().Where("id = ?", restaurantID.(string)).First(&restaurant).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load restaurant"})
+		return
+	}
+	limits, err := services.LoadSubscriptionLimits(h.orderService.GetDB(), &restaurant)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load subscription"})
+		return
+	}
+	from = services.ClampHistoryFrom(limits, from)
+
 	switch orderType {
 	case "all", "dine_in", "counter":
 	default:
@@ -999,15 +1028,31 @@ func (h *OrderHandler) CancelCheckout(c *gin.Context) {
 // @Failure 404 {object} map[string]interface{}
 // @Router /orders/:order_id/cancel [put]
 func (h *OrderHandler) CancelOrder(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
 		return
 	}
 
+	user, err := h.authService.GetUserByID(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+	if !services.UserCanCancelOrders(user) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you do not have permission to cancel orders"})
+		return
+	}
+
 	orderID := c.Param("order_id")
 
-	err := h.orderService.CancelOrder(restaurantID.(string), orderID)
+	err = h.orderService.CancelOrder(restaurantID.(string), orderID)
 	if err != nil {
 		log.Printf("❌ Order cancellation failed: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -1088,6 +1133,11 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 		return
 	}
 
+	if err := services.EnforceKitchenUpdate(h.orderService.GetDB(), restaurantID.(string), orderID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
 	err := h.orderService.UpdateOrderItemStatus(restaurantID.(string), orderID, itemID, input.Status)
 	if err != nil {
 		log.Printf("❌ Order item status update failed: %v", err)
@@ -1163,6 +1213,11 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 	}
 	if !isValid {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status. Must be: pending, cooking, ready, or served"})
+		return
+	}
+
+	if err := services.EnforceKitchenUpdate(h.orderService.GetDB(), restaurantID.(string), orderID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 

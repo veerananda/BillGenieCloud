@@ -301,6 +301,7 @@ func buildWSOrderItems(items []models.OrderItem) []models.WSOrderItem {
 			Status:   item.Status,
 			SubId:    item.SubId,
 			Notes:    item.Notes,
+			CreatedAt: item.CreatedAt,
 		}
 		if item.MenuItem != nil {
 			ws.Name = item.MenuItem.Name

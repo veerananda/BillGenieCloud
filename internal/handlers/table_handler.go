@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/services"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -53,6 +54,11 @@ func (h *TableHandler) CreateTable(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := services.EnforceCreateTable(h.db, restaurantID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -109,6 +115,11 @@ func (h *TableHandler) CreateBulkTables(c *gin.Context) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
+		}
+
+		if err := services.EnforceCreateTable(h.db, restaurantID); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
 		}
 
 		// Check if table already exists
