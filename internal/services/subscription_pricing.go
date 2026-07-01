@@ -15,10 +15,9 @@ const (
 	PriceExtraStaffINR            = 99
 	PriceExtraManagerINR          = 149
 	PriceDualServiceINR           = 199
-	PriceHistoryExtendedINR       = 249
-	PriceInventoryINR             = 349
-	PriceAggregatorIntegrationINR = 499
-	PriceKitchenDineInINR         = 299
+	PriceHistoryExtendedINR = 249
+	PriceInventoryINR       = 349
+	PriceKitchenDineInINR   = 299
 	PriceKitchenCounterINR        = 199
 	TableStaffBundlePriceINR      = 179
 	TableStaffBundleSize          = 5
@@ -39,10 +38,9 @@ type SubscriptionSelection struct {
 	MaxTables             int    `json:"max_tables"`      // dine-in table capacity (0 for counter-only)
 	ExtraStaff            int    `json:"extra_staff"`
 	ExtraManagers         int    `json:"extra_managers"`
-	HistoryExtended       bool   `json:"history_extended"`
-	Inventory             bool   `json:"inventory"`
-	AggregatorIntegration bool   `json:"aggregator_integration"`
-	KitchenDineIn         bool   `json:"kitchen_dine_in"`
+	HistoryExtended bool `json:"history_extended"`
+	Inventory       bool `json:"inventory"`
+	KitchenDineIn   bool `json:"kitchen_dine_in"`
 	KitchenCounter        bool   `json:"kitchen_counter"`
 }
 
@@ -214,12 +212,6 @@ func CalculateSubscriptionQuote(sel SubscriptionSelection) SubscriptionQuote {
 			ID: "inventory", Label: "Inventory & stock updates", Amount: PriceInventoryINR,
 		})
 		monthly += PriceInventoryINR
-	}
-	if sel.AggregatorIntegration {
-		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "aggregator_integration", Label: "Zomato / Swiggy integration", Amount: PriceAggregatorIntegrationINR,
-		})
-		monthly += PriceAggregatorIntegrationINR
 	}
 	if sel.KitchenDineIn {
 		lineItems = append(lineItems, SubscriptionLineItem{

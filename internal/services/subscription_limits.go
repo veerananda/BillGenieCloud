@@ -26,10 +26,9 @@ type SubscriptionLimits struct {
 	MaxStaffAndChefs      int    `json:"max_staff_and_chefs"`
 	HistoryDays           int    `json:"history_days"`
 	KitchenDineIn         bool   `json:"kitchen_dine_in"`
-	KitchenCounter        bool   `json:"kitchen_counter"`
-	Inventory             bool   `json:"inventory"`
-	AggregatorIntegration bool   `json:"aggregator_integration"`
-	DineInEnabled         bool   `json:"dine_in_enabled"`
+	KitchenCounter bool `json:"kitchen_counter"`
+	Inventory      bool `json:"inventory"`
+	DineInEnabled  bool `json:"dine_in_enabled"`
 	CounterEnabled        bool   `json:"counter_enabled"`
 	MonthlyPrice          int    `json:"monthly_price"`
 }
@@ -74,11 +73,10 @@ func LoadSubscriptionLimits(db *gorm.DB, restaurant *models.Restaurant) (Subscri
 		MaxManagers:           BundledManagersFromTables(maxTables) + sel.ExtraManagers,
 		MaxStaffAndChefs:      BundledStaffFromTables(maxTables) + sel.ExtraStaff,
 		HistoryDays:           IncludedHistoryDaysINR,
-		KitchenDineIn:         sel.KitchenDineIn,
-		KitchenCounter:        sel.KitchenCounter,
-		Inventory:             sel.Inventory,
-		AggregatorIntegration: sel.AggregatorIntegration,
-		MonthlyPrice:          restaurant.SubscriptionMonthlyPrice,
+		KitchenDineIn:  sel.KitchenDineIn,
+		KitchenCounter: sel.KitchenCounter,
+		Inventory:      sel.Inventory,
+		MonthlyPrice:   restaurant.SubscriptionMonthlyPrice,
 	}
 	if sel.HistoryExtended {
 		limits.HistoryDays = ExtendedHistoryDays
@@ -115,10 +113,9 @@ func legacySubscriptionLimits(restaurant *models.Restaurant) SubscriptionLimits 
 		MaxStaffAndChefs:      legacyMaxStaffChefs,
 		HistoryDays:           ExtendedHistoryDays,
 		KitchenDineIn:         true,
-		KitchenCounter:        true,
-		Inventory:             true,
-		AggregatorIntegration: false,
-		DineInEnabled:         true,
+		KitchenCounter: true,
+		Inventory:      true,
+		DineInEnabled:  true,
 		CounterEnabled:        true,
 		MonthlyPrice:          restaurant.SubscriptionMonthlyPrice,
 	}
