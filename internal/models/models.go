@@ -66,7 +66,8 @@ type Restaurant struct {
 	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"`             // Customizable settings
 	// Restaurant Profile fields
 	ContactNumber string    `json:"contact_number"`
-	UPIQRCode     string    `json:"upi_qr_code" gorm:"type:text"` // Base64 encoded QR code
+	UPIID         string    `json:"upi_id" gorm:"type:varchar(100)"` // UPI VPA for dynamic payment links
+	UPIQRCode     string    `json:"upi_qr_code" gorm:"type:text"`    // Base64 encoded static QR (optional fallback)
 	CreatedAt     time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt     time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 

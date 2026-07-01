@@ -143,6 +143,12 @@ func MigrateDatabase(db *gorm.DB) {
 	} else {
 		log.Println("✅ FixUserEmailUniqueness migration completed")
 	}
+
+	if err := migrations.AddUpiID(db); err != nil {
+		log.Printf("⚠️  Migration AddUpiID skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ AddUpiID migration completed")
+	}
 }
 
 func CloseDatabase(db *gorm.DB) {
