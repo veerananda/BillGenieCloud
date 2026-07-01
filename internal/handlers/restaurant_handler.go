@@ -3,12 +3,16 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"restaurant-api/internal/models"
 	"restaurant-api/internal/services"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+var upiIDPattern = regexp.MustCompile(`^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$`)
 
 type RestaurantHandler struct {
 	db *gorm.DB
@@ -59,6 +63,7 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"phone":            restaurant.Phone,
 		"contact_number":   restaurant.ContactNumber,
 		"email":            restaurant.Email,
+		"upi_id":           restaurant.UPIID,
 		"upi_qr_code":      restaurant.UPIQRCode,
 		"city":             restaurant.City,
 		"cuisine":          restaurant.Cuisine,
@@ -83,12 +88,13 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	}
 
 	var input struct {
-		Name                string `json:"name"`
-		Address             string `json:"address"`
-		ContactNumber       string `json:"contact_number"`
-		UPIQRCode           string `json:"upi_qr_code"`
-		IsSelfService       *bool  `json:"is_self_service"`
-		CounterServiceModes string `json:"counter_service_modes"`
+		Name                string  `json:"name"`
+		Address             string  `json:"address"`
+		ContactNumber       string  `json:"contact_number"`
+		UPIID               *string `json:"upi_id"`
+		UPIQRCode           string  `json:"upi_qr_code"`
+		IsSelfService       *bool   `json:"is_self_service"`
+		CounterServiceModes string  `json:"counter_service_modes"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -111,6 +117,14 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	}
 	if input.ContactNumber != "" {
 		restaurant.ContactNumber = input.ContactNumber
+	}
+	if input.UPIID != nil {
+		upiID := strings.TrimSpace(*input.UPIID)
+		if upiID != "" && !upiIDPattern.MatchString(upiID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "upi_id must be a valid UPI address (e.g. name@bank)"})
+			return
+		}
+		restaurant.UPIID = upiID
 	}
 	if input.UPIQRCode != "" {
 		restaurant.UPIQRCode = input.UPIQRCode
