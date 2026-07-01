@@ -95,7 +95,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	}
 
 	// Create order
-	order, err := h.orderService.CreateOrder(restaurantID.(string), userID.(string), req)
+	order, updatedIngredients, err := h.orderService.CreateOrder(restaurantID.(string), userID.(string), req)
 	if err != nil {
 		log.Printf("❌ Order creation failed: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -107,6 +107,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	// Broadcast order creation event via WebSocket
 	if globalHub != nil {
 		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_created", order)
+		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), updatedIngredients)
 	}
 
 	tableIDValue := ""
@@ -365,7 +366,7 @@ func (h *OrderHandler) UpdateOrder(c *gin.Context) {
 	req.RestaurantID = restaurantID.(string)
 
 	// Update order via service
-	order, err := h.orderService.UpdateOrder(restaurantID.(string), orderID, req)
+	order, updatedIngredients, err := h.orderService.UpdateOrder(restaurantID.(string), orderID, req)
 	if err != nil {
 		log.Printf("❌ Order update failed: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -377,6 +378,7 @@ func (h *OrderHandler) UpdateOrder(c *gin.Context) {
 	// Broadcast order update event via WebSocket
 	if globalHub != nil {
 		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_updated", order)
+		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), updatedIngredients)
 	}
 
 	tableIDValue := ""
@@ -1052,7 +1054,7 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 
 	orderID := c.Param("order_id")
 
-	err = h.orderService.CancelOrder(restaurantID.(string), orderID)
+	restoredIngredients, err := h.orderService.CancelOrder(restaurantID.(string), orderID)
 	if err != nil {
 		log.Printf("❌ Order cancellation failed: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -1065,6 +1067,7 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	order, err := h.orderService.GetOrderByID(restaurantID.(string), orderID)
 	if err == nil && globalHub != nil {
 		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_cancelled", order)
+		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), restoredIngredients)
 
 		if order.TableID != nil && *order.TableID != "" {
 			BroadcastTableUpdate(globalHub, restaurantID.(string), &models.RestaurantTable{

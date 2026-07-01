@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -27,6 +28,10 @@ type UpdateIngredientRequest struct {
 	Unit         string  `json:"unit"`
 	CurrentStock float64 `json:"current_stock"`
 	FullStock    float64 `json:"full_stock"`
+}
+
+type RestockIngredientRequest struct {
+	Quantity float64 `json:"quantity" binding:"required,gt=0"`
 }
 
 // NewIngredientHandler creates a new ingredient handler
@@ -104,6 +109,10 @@ func (h *IngredientHandler) CreateIngredient(c *gin.Context) {
 
 	log.Printf("✅ Ingredient created: %s (ID: %s)", ingredient.Name, ingredient.ID)
 
+	if globalHub != nil {
+		BroadcastIngredientInventoryUpdate(globalHub, restaurantID.(string), *ingredient)
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message":    "Ingredient created successfully",
 		"ingredient": ingredient,
@@ -163,7 +172,15 @@ func (h *IngredientHandler) UpdateIngredient(c *gin.Context) {
 		return
 	}
 
+	if err := syncRecipeDenormalizedNames(h.db, restaurantID.(string), ingredient.ID, ingredient.Name, ingredient.Unit); err != nil {
+		log.Printf("⚠️ Failed to sync recipe names after ingredient update: %v", err)
+	}
+
 	log.Printf("✅ Ingredient updated: %s (ID: %s)", ingredient.Name, ingredient.ID)
+
+	if globalHub != nil {
+		BroadcastIngredientInventoryUpdate(globalHub, restaurantID.(string), ingredient)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Ingredient updated successfully",
@@ -188,6 +205,13 @@ func (h *IngredientHandler) DeleteIngredient(c *gin.Context) {
 
 	ingredientID := c.Param("ingredient_id")
 
+	if err := h.db.Where("restaurant_id = ? AND ingredient_id = ?", restaurantID, ingredientID).
+		Delete(&models.MenuItemIngredient{}).Error; err != nil {
+		log.Printf("❌ Failed to remove recipe lines for ingredient: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	result := h.db.Where("id = ? AND restaurant_id = ?", ingredientID, restaurantID).
 		Delete(&models.Ingredient{})
 
@@ -207,5 +231,103 @@ func (h *IngredientHandler) DeleteIngredient(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Ingredient deleted successfully",
 		"ingredient_id": ingredientID,
+	})
+}
+
+// SyncFromRecipes ensures inventory ingredient rows exist for all recipe ingredients (no duplicates).
+func (h *IngredientHandler) SyncFromRecipes(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	if err := syncIngredientsFromRecipes(h.db, restaurantID.(string)); err != nil {
+		log.Printf("❌ Sync from recipes failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var ingredients []models.Ingredient
+	if err := h.db.Where("restaurant_id = ?", restaurantID).
+		Order("name ASC").
+		Find(&ingredients).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Ingredients synced from recipes",
+		"ingredients": ingredients,
+		"total":       len(ingredients),
+	})
+}
+
+func userCanRestockFromContext(c *gin.Context, db *gorm.DB) bool {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		return false
+	}
+	var user models.User
+	if err := db.Where("id = ?", userID.(string)).First(&user).Error; err != nil {
+		return false
+	}
+	return services.UserCanRestockInventory(&user)
+}
+
+// RestockIngredient adds quantity to current_stock (refill).
+func (h *IngredientHandler) RestockIngredient(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	if !userCanRestockFromContext(c, h.db) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you do not have permission to restock inventory"})
+		return
+	}
+
+	ingredientID := c.Param("ingredient_id")
+	var req RestockIngredientRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var ingredient models.Ingredient
+	if err := h.db.Where("id = ? AND restaurant_id = ?", ingredientID, restaurantID).
+		First(&ingredient).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ingredient not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.db.Model(&ingredient).
+		Update("current_stock", gorm.Expr("current_stock + ?", req.Quantity)).Error; err != nil {
+		log.Printf("❌ Ingredient restock failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.db.Where("id = ?", ingredientID).First(&ingredient).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("✅ Ingredient restocked: %s +%.3f %s (now %.3f)",
+		ingredient.Name, req.Quantity, ingredient.Unit, ingredient.CurrentStock)
+
+	if globalHub != nil {
+		BroadcastIngredientInventoryUpdate(globalHub, restaurantID.(string), ingredient)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Stock added successfully",
+		"ingredient": ingredient,
+		"added":      req.Quantity,
 	})
 }
