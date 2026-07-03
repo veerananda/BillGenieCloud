@@ -112,6 +112,16 @@ func main() {
 			return
 		}
 
+		isValid, err := authService.ValidateUserSession(claims.UserID, token)
+		if err != nil || !isValid {
+			msg := "session invalidated. Another device has logged in with your account"
+			if err != nil {
+				msg = err.Error()
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": msg})
+			return
+		}
+
 		// Set context values for WebSocket handler
 		c.Set("user_id", claims.UserID)
 		c.Set("restaurant_id", claims.RestaurantID)

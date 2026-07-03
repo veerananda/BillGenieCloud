@@ -297,6 +297,11 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 		return nil, errors.New("invalid password")
 	}
 
+	// Single active session per user (all roles): revoke previous sessions and refresh tokens.
+	if err := s.RevokeAllSessionsForUser(user.ID); err != nil {
+		return nil, fmt.Errorf("failed to revoke previous sessions: %w", err)
+	}
+
 	// Generate tokens
 	accessToken, err := s.GenerateAccessToken(&user)
 	if err != nil {
@@ -308,28 +313,8 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 		return nil, err
 	}
 
-	// Create session record (invalidate previous sessions for this user)
-	// Only allow 1 active session per user (for staff/chef accounts)
-	// Admin accounts can have multiple sessions
-	if user.Role != "admin" {
-		// Deactivate all previous sessions for this user
-		if err := s.db.Model(&models.UserSession{}).Where("user_id = ? AND is_active = true", user.ID).Update("is_active", false).Error; err != nil {
-			fmt.Printf("⚠️  Warning: Failed to deactivate previous sessions: %v\n", err)
-		}
-	}
-
-	// Create new session
-	session := &models.UserSession{
-		ID:           uuid.New().String(),
-		UserID:       user.ID,
-		RestaurantID: user.RestaurantID,
-		AccessToken:  accessToken,
-		IsActive:     true,
-	}
-
-	if err := s.db.Create(session).Error; err != nil {
-		fmt.Printf("⚠️  Warning: Failed to create session record: %v\n", err)
-		// Continue anyway - session tracking is non-critical
+	if err := s.CreateUserSession(&user, accessToken); err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
 	return &AuthResponse{
@@ -425,10 +410,25 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 		return nil, errors.New("user not found")
 	}
 
+	var activeSession models.UserSession
+	if err := s.db.Where("user_id = ? AND is_active = true", user.ID).First(&activeSession).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("session invalidated. Another device has logged in with your account")
+		}
+		return nil, err
+	}
+
 	// Generate new access token
 	newAccessToken, err := s.GenerateAccessToken(&user)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := s.db.Model(&activeSession).Updates(map[string]interface{}{
+		"access_token":  newAccessToken,
+		"last_activity": time.Now(),
+	}).Error; err != nil {
+		return nil, fmt.Errorf("failed to update session: %w", err)
 	}
 
 	return &AuthResponse{
@@ -475,14 +475,13 @@ func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 	return claims, nil
 }
 
-// ValidateUserSession checks if a user has an active session
-// Used to enforce single concurrent login for staff/chef accounts
+// ValidateUserSession checks if a user has an active session matching the access token.
 func (s *AuthService) ValidateUserSession(userID string, accessToken string) (bool, error) {
 	var session models.UserSession
 
 	if err := s.db.Where("user_id = ? AND access_token = ? AND is_active = true", userID, accessToken).First(&session).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return false, errors.New("session not found or expired. Please login again")
+			return false, errors.New("session invalidated. Another device has logged in with your account")
 		}
 		return false, err
 	}
@@ -490,7 +489,49 @@ func (s *AuthService) ValidateUserSession(userID string, accessToken string) (bo
 	return true, nil
 }
 
-// DeactivateUserSession logs out a user by deactivating their session
+// RevokeAllSessionsForUser deactivates sessions and invalidates refresh tokens for a user.
+func (s *AuthService) RevokeAllSessionsForUser(userID string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.UserSession{}).
+			Where("user_id = ? AND is_active = true", userID).
+			Update("is_active", false).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&models.RefreshToken{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// CreateUserSession records a new active session for the user.
+func (s *AuthService) CreateUserSession(user *models.User, accessToken string) error {
+	session := &models.UserSession{
+		ID:           uuid.New().String(),
+		UserID:       user.ID,
+		RestaurantID: user.RestaurantID,
+		AccessToken:  accessToken,
+		IsActive:     true,
+	}
+	return s.db.Create(session).Error
+}
+
+// LogoutUser deactivates the current session and refresh tokens for the user.
+func (s *AuthService) LogoutUser(userID string, accessToken string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.UserSession{}).
+			Where("user_id = ? AND access_token = ? AND is_active = true", userID, accessToken).
+			Update("is_active", false).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&models.RefreshToken{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// DeactivateUserSession logs out a user by deactivating all active sessions
 func (s *AuthService) DeactivateUserSession(userID string) error {
 	if err := s.db.Model(&models.UserSession{}).Where("user_id = ? AND is_active = true", userID).Update("is_active", false).Error; err != nil {
 		return fmt.Errorf("failed to logout: %w", err)
