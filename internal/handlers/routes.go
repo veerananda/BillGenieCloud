@@ -82,7 +82,7 @@ func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/inventory")
 	protected.Use(middleware.AuthMiddleware(authService))
-	protected.Use(middleware.RoleMiddleware("admin", "manager")) // Only admin and manager can manage inventory
+	protected.Use(middleware.RoleMiddleware("admin")) // Admin only — ingredient stock (menu-item level)
 	{
 		protected.GET("", inventoryHandler.GetInventory)
 		protected.GET("/alerts", inventoryHandler.GetLowStockAlert)
@@ -99,6 +99,7 @@ func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 func SetupMenuRoutes(router *gin.Engine, db *gorm.DB) {
 	authService := getAuthService(db)
 	menuHandler := NewMenuHandler(db)
+	recipeHandler := NewMenuItemIngredientHandler(db)
 
 	// All menu routes require authentication since they need restaurant_id
 	protected := router.Group("/menu")
@@ -113,9 +114,25 @@ func SetupMenuRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.PUT("/:menu_item_id", middleware.RoleMiddleware("admin", "manager"), menuHandler.UpdateMenuItem)
 		protected.DELETE("/:menu_item_id", middleware.RoleMiddleware("admin", "manager"), menuHandler.DeleteMenuItem)
 		protected.PUT("/:menu_item_id/toggle", middleware.RoleMiddleware("admin", "manager"), menuHandler.ToggleAvailability)
+		protected.PUT("/:menu_item_id/ingredients", middleware.RoleMiddleware("admin"), recipeHandler.SetMenuItemIngredients)
 	}
 
 	log.Println("✅ Menu routes registered")
+}
+
+// SetupMenuItemIngredientRoutes registers recipe (BOM) read endpoints
+func SetupMenuItemIngredientRoutes(router *gin.Engine, db *gorm.DB) {
+	authService := getAuthService(db)
+	recipeHandler := NewMenuItemIngredientHandler(db)
+
+	protected := router.Group("/menu-item-ingredients")
+	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(middleware.RoleMiddleware("admin"))
+	{
+		protected.GET("", recipeHandler.ListMenuItemIngredients)
+	}
+
+	log.Println("✅ Menu item ingredient routes registered (admin only)")
 }
 
 // SetupRestaurantRoutes registers restaurant endpoints
@@ -230,15 +247,24 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/ingredients")
 	protected.Use(middleware.AuthMiddleware(authService))
-	protected.Use(middleware.RoleMiddleware("admin", "manager")) // Only admin and manager can manage ingredients
 	{
-		protected.GET("", ingredientHandler.ListIngredients)
-		protected.POST("", ingredientHandler.CreateIngredient)
-		protected.PUT("/:ingredient_id", ingredientHandler.UpdateIngredient)
-		protected.DELETE("/:ingredient_id", ingredientHandler.DeleteIngredient)
+		read := protected.Group("")
+		read.Use(middleware.RoleMiddleware("admin", "manager", "chef", "staff"))
+		read.GET("", ingredientHandler.ListIngredients)
+
+		restock := protected.Group("")
+		restock.Use(middleware.RoleMiddleware("admin", "manager", "chef", "staff"))
+		restock.POST("/:ingredient_id/restock", ingredientHandler.RestockIngredient)
+
+		write := protected.Group("")
+		write.Use(middleware.RoleMiddleware("admin"))
+		write.POST("/sync-from-recipes", ingredientHandler.SyncFromRecipes)
+		write.POST("", ingredientHandler.CreateIngredient)
+		write.PUT("/:ingredient_id", ingredientHandler.UpdateIngredient)
+		write.DELETE("/:ingredient_id", ingredientHandler.DeleteIngredient)
 	}
 
-	log.Println("✅ Ingredient routes registered (admin/manager only)")
+	log.Println("✅ Ingredient routes registered (read: admin/manager/chef, write: admin)")
 }
 
 // SetupPublicRoutes registers public endpoints (no authentication required)

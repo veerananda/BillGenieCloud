@@ -132,8 +132,9 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 			"staff_key":         user.StaffKey,
 			"restaurant_id":     user.RestaurantID,
 			"is_active":         user.IsActive,
-			"can_cancel_orders": user.CanCancelOrders,
-			"created_at":        user.CreatedAt,
+			"can_cancel_orders":      user.CanCancelOrders,
+			"can_restock_inventory": user.CanRestockInventory,
+			"created_at":             user.CreatedAt,
 		},
 	})
 
@@ -181,8 +182,9 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 			"role":          user.Role,
 			"restaurant_id": user.RestaurantID,
 			"is_active":         user.IsActive,
-			"can_cancel_orders": user.CanCancelOrders,
-			"created_at":        user.CreatedAt,
+			"can_cancel_orders":      user.CanCancelOrders,
+			"can_restock_inventory": user.CanRestockInventory,
+			"created_at":             user.CreatedAt,
 			"updated_at":        user.UpdatedAt,
 		},
 	})
@@ -250,9 +252,10 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 			"phone":         user.Phone,
 			"role":          user.Role,
 			"restaurant_id": user.RestaurantID,
-			"is_active":         user.IsActive,
-			"can_cancel_orders": user.CanCancelOrders,
-			"updated_at":        user.UpdatedAt,
+			"is_active":              user.IsActive,
+			"can_cancel_orders":      user.CanCancelOrders,
+			"can_restock_inventory": user.CanRestockInventory,
+			"updated_at":             user.UpdatedAt,
 		},
 	})
 

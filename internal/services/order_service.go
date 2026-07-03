@@ -91,9 +91,9 @@ func ValidateCreateOrderRequest(req CreateOrderRequest) error {
 	return nil
 }
 
-func (s *OrderService) CreateOrder(restaurantID string, userID string, req CreateOrderRequest) (*models.Order, error) {
+func (s *OrderService) CreateOrder(restaurantID string, userID string, req CreateOrderRequest) (*models.Order, []models.Ingredient, error) {
 	if err := ValidateCreateOrderRequest(req); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Validate items exist (but don't require inventory to be set up)
@@ -102,9 +102,9 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		if err := s.db.Where("restaurant_id = ? AND id = ?", restaurantID, item.MenuItemID).
 			First(&menuItem).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				return nil, errors.New("menu item not found")
+				return nil, nil, errors.New("menu item not found")
 			}
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -134,7 +134,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		if err != nil {
 			log.Printf("❌ [CreateOrder] Failed to allocate counter ticket: %v", err)
 			tx.Rollback()
-			return nil, err
+			return nil, nil, err
 		}
 		orderNumber = ticketNumber
 		tableNumber = strconv.Itoa(ticketNumber)
@@ -142,7 +142,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	} else {
 		if strings.TrimSpace(tableNumber) == "" {
 			tx.Rollback()
-			return nil, errors.New("table_number is required for dine-in orders")
+			return nil, nil, errors.New("table_number is required for dine-in orders")
 		}
 		var lastOrder models.Order
 		tx.Where("restaurant_id = ?", restaurantID).
@@ -202,7 +202,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	if createResult.Error != nil {
 		log.Printf("❌ [CreateOrder] Failed to create order: %v", createResult.Error)
 		tx.Rollback()
-		return nil, createResult.Error
+		return nil, nil, createResult.Error
 	}
 
 	log.Printf("✅ [CreateOrder] Order created with ID: %s (RowsAffected: %d)", order.ID, createResult.RowsAffected)
@@ -213,7 +213,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		log.Printf("⚠️  [CreateOrder] WARNING: Order not found in transaction immediately after Create! Error: %v", err)
 		log.Printf("⚠️  [CreateOrder] This suggests Create() might not have actually saved the order")
 		tx.Rollback()
-		return nil, fmt.Errorf("order creation verification failed: %v", err)
+		return nil, nil, fmt.Errorf("order creation verification failed: %v", err)
 	}
 	log.Printf("✅ [CreateOrder] Order verified in transaction: ID=%s, Status=%s", verifyOrder.ID, verifyOrder.Status)
 
@@ -227,7 +227,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		if err := tx.Where("id = ?", itemReq.MenuItemID).First(&menuItem).Error; err != nil {
 			log.Printf("❌ [CreateOrder] Item %d: Menu item not found for ID: %s, error: %v", i+1, itemReq.MenuItemID, err)
 			tx.Rollback()
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Create order item with explicit UUID generation
@@ -248,7 +248,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		if err := tx.Create(orderItem).Error; err != nil {
 			log.Printf("❌ [CreateOrder] Item %d: Failed to create order item: %v", i+1, err)
 			tx.Rollback()
-			return nil, err
+			return nil, nil, err
 		}
 		log.Printf("✅ [CreateOrder] Item %d: Created with ID: %s", i+1, orderItem.ID)
 
@@ -266,7 +266,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 					Update("quantity", gorm.Expr("quantity - ?", itemReq.Quantity)).Error; err != nil {
 					log.Printf("❌ [CreateOrder] Item %d: Failed to deduct inventory: %v", i+1, err)
 					tx.Rollback()
-					return nil, err
+					return nil, nil, err
 				}
 				log.Printf("✅ [CreateOrder] Inventory deducted: %s - %d units from stock", menuItem.Name, itemReq.Quantity)
 			}
@@ -289,14 +289,25 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	}).Error; err != nil {
 		log.Printf("❌ [CreateOrder] Failed to update order totals: %v", err)
 		tx.Rollback()
-		return nil, err
+		return nil, nil, err
+	}
+
+	var updatedIngredients []models.Ingredient
+	if len(req.Items) > 0 {
+		var deductErr error
+		updatedIngredients, deductErr = DeductIngredientsForMenuItems(tx, restaurantID, menuItemQuantitiesFromCreateItems(req.Items))
+		if deductErr != nil {
+			log.Printf("❌ [CreateOrder] Ingredient stock deduction failed: %v", deductErr)
+			tx.Rollback()
+			return nil, nil, deductErr
+		}
 	}
 
 	// Commit transaction
 	log.Printf("🔵 [CreateOrder] Committing transaction for order #%d", orderNumber)
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("❌ [CreateOrder] Transaction commit failed: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 	log.Printf("✅ [CreateOrder] Transaction committed successfully for order #%d with ID: %s", orderNumber, order.ID)
 
@@ -306,26 +317,26 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		Where("id = ? AND restaurant_id = ?", order.ID, restaurantID).
 		First(order).Error; err != nil {
 		log.Printf("❌ [CreateOrder] Failed to reload order after create: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	log.Printf("✅ [CreateOrder] Order created successfully: Order #%d, ID: %s, Total: ₹%.2f, Items: %d",
 		order.OrderNumber, order.ID, order.Total, len(order.Items))
 
-	return order, nil
+	return order, updatedIngredients, nil
 }
 
 // UpdateOrder adds items to an existing order
-func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req CreateOrderRequest) (*models.Order, error) {
+func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req CreateOrderRequest) (*models.Order, []models.Ingredient, error) {
 	// Validate items exist
 	for _, item := range req.Items {
 		var menuItem models.MenuItem
 		if err := s.db.Where("restaurant_id = ? AND id = ?", restaurantID, item.MenuItemID).
 			First(&menuItem).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				return nil, errors.New("menu item not found")
+				return nil, nil, errors.New("menu item not found")
 			}
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -348,9 +359,9 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 		First(&order).Error; err != nil {
 		tx.Rollback()
 		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("order not found")
+			return nil, nil, errors.New("order not found")
 		}
-		return nil, err
+		return nil, nil, err
 	}
 
 	log.Printf("🔵 [UpdateOrder] Found existing order #%d with %d items", order.OrderNumber, len(order.Items))
@@ -365,9 +376,9 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 			First(&menuItem).Error; err != nil {
 			tx.Rollback()
 			if err == gorm.ErrRecordNotFound {
-				return nil, errors.New("menu item not found")
+				return nil, nil, errors.New("menu item not found")
 			}
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Create order item
@@ -387,7 +398,7 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 		if err := tx.Create(&orderItem).Error; err != nil {
 			tx.Rollback()
 			log.Printf("❌ [UpdateOrder] Failed to create order item: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 
 		totalAdded += orderItem.Total
@@ -399,7 +410,7 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 			Update("quantity", gorm.Expr("quantity - ?", itemReq.Quantity)).Error; err != nil {
 			tx.Rollback()
 			log.Printf("❌ [UpdateOrder] Inventory deduction failed: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -413,13 +424,24 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 	}).Error; err != nil {
 		tx.Rollback()
 		log.Printf("❌ [UpdateOrder] Failed to update order totals: %v", err)
-		return nil, err
+		return nil, nil, err
+	}
+
+	var updatedIngredients []models.Ingredient
+	if len(req.Items) > 0 {
+		var deductErr error
+		updatedIngredients, deductErr = DeductIngredientsForMenuItems(tx, restaurantID, menuItemQuantitiesFromCreateItems(req.Items))
+		if deductErr != nil {
+			log.Printf("❌ [UpdateOrder] Ingredient stock deduction failed: %v", deductErr)
+			tx.Rollback()
+			return nil, nil, deductErr
+		}
 	}
 
 	log.Printf("🔵 [UpdateOrder] Committing transaction for order #%d", order.OrderNumber)
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("❌ [UpdateOrder] Transaction commit failed: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Reload order with new items
@@ -428,12 +450,12 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 		Preload("Items.MenuItem").
 		First(&order).Error; err != nil {
 		log.Printf("❌ [UpdateOrder] Failed to reload order: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	log.Printf("✅ [UpdateOrder] Order updated successfully: Order #%d, New Total: ₹%.2f", order.OrderNumber, order.Total)
 
-	return &order, nil
+	return &order, updatedIngredients, nil
 }
 
 func (s *OrderService) markAllOrderItemsServed(tx *gorm.DB, orderID string) error {
@@ -575,7 +597,7 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 }
 
 // CancelOrder cancels order and restores inventory
-func (s *OrderService) CancelOrder(restaurantID string, orderID string) error {
+func (s *OrderService) CancelOrder(restaurantID string, orderID string) ([]models.Ingredient, error) {
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -589,16 +611,16 @@ func (s *OrderService) CancelOrder(restaurantID string, orderID string) error {
 		First(&order).Error; err != nil {
 		tx.Rollback()
 		if err == gorm.ErrRecordNotFound {
-			return errors.New("order not found")
+			return nil, errors.New("order not found")
 		}
-		return err
+		return nil, err
 	}
 
 	// Restore inventory for all items
 	var items []models.OrderItem
 	if err := tx.Where("order_id = ?", orderID).Find(&items).Error; err != nil {
 		tx.Rollback()
-		return err
+		return nil, err
 	}
 
 	for _, item := range items {
@@ -606,15 +628,26 @@ func (s *OrderService) CancelOrder(restaurantID string, orderID string) error {
 			Where("restaurant_id = ? AND menu_item_id = ?", restaurantID, item.MenuID).
 			Update("quantity", gorm.Expr("quantity + ?", item.Quantity)).Error; err != nil {
 			tx.Rollback()
-			return err
+			return nil, err
 		}
 		log.Printf("✅ Inventory restored: %s - %d units to stock", item.MenuID, item.Quantity)
+	}
+
+	var restoredIngredients []models.Ingredient
+	if len(items) > 0 {
+		var restoreErr error
+		restoredIngredients, restoreErr = RestoreIngredientsForMenuItems(tx, restaurantID, menuItemQuantitiesFromOrderItems(items))
+		if restoreErr != nil {
+			log.Printf("❌ [CancelOrder] Ingredient stock restore failed: %v", restoreErr)
+			tx.Rollback()
+			return nil, restoreErr
+		}
 	}
 
 	// Update order status
 	if err := tx.Model(&order).Update("status", "cancelled").Error; err != nil {
 		tx.Rollback()
-		return err
+		return nil, err
 	}
 
 	// Release dine-in table when order is cancelled
@@ -626,18 +659,18 @@ func (s *OrderService) CancelOrder(restaurantID string, orderID string) error {
 				"current_order_id": nil,
 			}).Error; err != nil {
 			tx.Rollback()
-			return err
+			return nil, err
 		}
 		log.Printf("✅ Table released after order cancel: %s", *order.TableID)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		return err
+		return nil, err
 	}
 
 	log.Printf("✅ Order cancelled: Order #%d, Inventory restored", order.OrderNumber)
 
-	return nil
+	return restoredIngredients, nil
 }
 
 // GetOrderByID retrieves order with items
