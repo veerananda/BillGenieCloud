@@ -361,6 +361,19 @@ func publishEvent(restaurantID, eventType string, data interface{}) {
 	}
 }
 
+// BroadcastSessionRevoked notifies connected clients that a user signed in elsewhere.
+func BroadcastSessionRevoked(restaurantID, userID string) {
+	if restaurantID == "" || userID == "" {
+		return
+	}
+	data := map[string]string{
+		"user_id": userID,
+		"reason":  "logged_in_elsewhere",
+	}
+	publishEvent(restaurantID, "session_revoked", data)
+	log.Printf("📤 Broadcast session_revoked for user %s in room %s", userID, restaurantID)
+}
+
 // BroadcastOrderEvent broadcasts an order event with the correct type.
 func BroadcastOrderEvent(hub *WebSocketHub, restaurantID, eventType string, order *models.Order) {
 	if hub == nil && globalPublisher == nil {

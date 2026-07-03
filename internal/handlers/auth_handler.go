@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"restaurant-api/internal/services"
 
@@ -75,6 +76,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	if err := h.authService.CreateUserSession(user, accessToken); err != nil {
+		log.Printf("❌ Session creation error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
+	}
+
 	log.Printf("✅ JWT tokens generated for user: %s", user.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -128,7 +135,28 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	log.Printf("✅ User logged in successfully")
 
+	BroadcastSessionRevoked(authResponse.RestaurantID, authResponse.UserID)
+
 	c.JSON(http.StatusOK, authResponse)
+}
+
+// Logout deactivates the current session.
+func (h *AuthHandler) Logout(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	authHeader := c.GetHeader("Authorization")
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid authorization header"})
+		return
+	}
+
+	if err := h.authService.LogoutUser(userID.(string), parts[1]); err != nil {
+		log.Printf("❌ Logout failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "logout failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "logged out"})
 }
 
 // GetProfile retrieves current user profile
