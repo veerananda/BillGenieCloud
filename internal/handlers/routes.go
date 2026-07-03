@@ -39,6 +39,7 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 	protected.Use(middleware.AuthMiddleware(authService))
 	{
 		protected.GET("/auth/profile", authHandler.GetProfile)
+		protected.POST("/auth/logout", authHandler.Logout)
 	}
 
 	log.Println("✅ Auth routes registered")

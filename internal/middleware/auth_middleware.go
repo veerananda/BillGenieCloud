@@ -45,22 +45,19 @@ func AuthMiddleware(authService *services.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		// Validate user session (enforce single concurrent login for staff/chef)
-		// Note: Skip session validation for admin users (they can have multiple sessions)
-		if claims.Role != "admin" {
-			isValid, err := authService.ValidateUserSession(claims.UserID, token)
-			if err != nil {
-				log.Printf("⚠️  Session validation failed: %v", err)
-				c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-				c.Abort()
-				return
-			}
-			if !isValid {
-				log.Printf("❌ User %s attempted to use invalidated session", claims.UserID)
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "session invalidated. Another device has logged in with your account"})
-				c.Abort()
-				return
-			}
+		// Enforce single active session per user (all roles).
+		isValid, err := authService.ValidateUserSession(claims.UserID, token)
+		if err != nil {
+			log.Printf("⚠️  Session validation failed: %v", err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			c.Abort()
+			return
+		}
+		if !isValid {
+			log.Printf("❌ User %s attempted to use invalidated session", claims.UserID)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "session invalidated. Another device has logged in with your account"})
+			c.Abort()
+			return
 		}
 
 		// Store user info in context
