@@ -163,8 +163,9 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 		"restaurant_id":     restaurantID,
 		"role":              role,
 		"name":              user.Name,
-		"can_cancel_orders": user.CanCancelOrders,
-		"message":           "Profile retrieved successfully",
+		"can_cancel_orders":      user.CanCancelOrders,
+		"can_restock_inventory": user.CanRestockInventory,
+		"message":                "Profile retrieved successfully",
 	})
 }
 

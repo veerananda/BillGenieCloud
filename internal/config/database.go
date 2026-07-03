@@ -107,6 +107,7 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.MenuItem{},
 		&models.Inventory{},
 		&models.Ingredient{},
+		&models.MenuItemIngredient{},
 		&models.Transaction{},
 		&models.AuditLog{},
 		&models.RestaurantTable{},
@@ -148,6 +149,18 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Printf("⚠️  Migration AddUpiID skipped or failed (may already be applied): %v", err)
 	} else {
 		log.Println("✅ AddUpiID migration completed")
+	}
+
+	if err := migrations.AddMenuItemIngredientID(db); err != nil {
+		log.Printf("⚠️  Migration AddMenuItemIngredientID skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ AddMenuItemIngredientID migration completed")
+	}
+
+	if err := migrations.AddCanRestockInventory(db); err != nil {
+		log.Printf("⚠️  Migration AddCanRestockInventory skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ AddCanRestockInventory migration completed")
 	}
 }
 

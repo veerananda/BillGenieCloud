@@ -18,8 +18,9 @@ type User struct {
 	PasswordHash   string    `json:"-" gorm:"not null"`
 	Role           string    `json:"role" gorm:"not null;type:varchar(50)"` // "admin", "manager", "staff"
 	IsActive       bool      `json:"is_active" gorm:"default:true"`
-	CanCancelOrders bool     `json:"can_cancel_orders" gorm:"default:false"`
-	StaffKey       string    `json:"staff_key" gorm:"unique;index"` // Globally unique per-staff key (not null enforced in migration)
+	CanCancelOrders      bool      `json:"can_cancel_orders" gorm:"default:false"`
+	CanRestockInventory  bool      `json:"can_restock_inventory" gorm:"default:false"`
+	StaffKey             string    `json:"staff_key" gorm:"unique;index"` // Globally unique per-staff key (not null enforced in migration)
 	KeyGeneratedAt time.Time `json:"key_generated_at" gorm:"autoCreateTime:milli"`
 	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt      time.Time `json:"updated_at" gorm:"autoUpdateTime"`
@@ -369,11 +370,15 @@ type CheckoutEventData struct {
 
 // InventoryEventData for WebSocket inventory updates
 type InventoryEventData struct {
-	MenuItemID string  `json:"menu_item_id"`
-	ItemName   string  `json:"item_name"`
-	Quantity   float64 `json:"quantity"`
-	IsLow      bool    `json:"is_low"`
-	MinLevel   float64 `json:"min_level"`
+	Kind         string  `json:"kind"` // "menu_item" | "ingredient"
+	MenuItemID   string  `json:"menu_item_id,omitempty"`
+	IngredientID string  `json:"ingredient_id,omitempty"`
+	ItemName     string  `json:"item_name"`
+	Unit         string  `json:"unit,omitempty"`
+	Quantity     float64 `json:"quantity"`
+	FullStock    float64 `json:"full_stock,omitempty"`
+	IsLow        bool    `json:"is_low"`
+	MinLevel     float64 `json:"min_level,omitempty"`
 }
 
 // Ingredient represents a raw ingredient used in menu items
@@ -400,6 +405,30 @@ func (Ingredient) TableName() string {
 func (i *Ingredient) BeforeCreate(tx *gorm.DB) error {
 	if i.ID == "" {
 		i.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// MenuItemIngredient links a menu item to raw ingredients used in its recipe (BOM).
+type MenuItemIngredient struct {
+	ID           string    `gorm:"primaryKey" json:"id"`
+	RestaurantID string    `json:"restaurant_id" gorm:"index" validate:"required"`
+	MenuItemID   string    `json:"menu_item_id" gorm:"index" validate:"required"`
+	IngredientID string    `json:"ingredient_id" gorm:"index"`
+	Name         string    `json:"name" gorm:"not null"`
+	Unit         string    `json:"unit" gorm:"type:varchar(50)"`
+	QuantityUsed float64   `json:"quantity_used" gorm:"type:numeric(10,3);default:0"`
+	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+func (MenuItemIngredient) TableName() string {
+	return "menu_item_ingredients"
+}
+
+func (m *MenuItemIngredient) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == "" {
+		m.ID = uuid.New().String()
 	}
 	return nil
 }

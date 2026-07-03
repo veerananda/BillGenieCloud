@@ -408,16 +408,48 @@ func BroadcastCheckoutEvent(hub *WebSocketHub, restaurantID, eventType string, d
 	log.Printf("📤 Broadcast %s: order %s by %s to room %s", eventType, data.OrderID, data.LockedByName, restaurantID)
 }
 
-// BroadcastInventoryUpdate broadcasts inventory changes
+// BroadcastInventoryUpdate broadcasts menu-item inventory changes
 func BroadcastInventoryUpdate(hub *WebSocketHub, restaurantID string, itemName string, quantity float64, isLow bool) {
 	_ = hub
 	data := models.InventoryEventData{
+		Kind:     "menu_item",
 		ItemName: itemName,
 		Quantity: quantity,
 		IsLow:    isLow,
 	}
 	publishEvent(restaurantID, "inventory_updated", data)
 	log.Printf("📤 Broadcast inventory update: %s (Qty: %.2f) to room %s", itemName, quantity, restaurantID)
+}
+
+func ingredientIsLowStock(currentStock, fullStock float64) bool {
+	if fullStock <= 0 {
+		return false
+	}
+	return (currentStock/fullStock)*100 <= 15
+}
+
+// BroadcastIngredientInventoryUpdate broadcasts raw ingredient stock changes.
+func BroadcastIngredientInventoryUpdate(hub *WebSocketHub, restaurantID string, ingredient models.Ingredient) {
+	_ = hub
+	data := models.InventoryEventData{
+		Kind:         "ingredient",
+		IngredientID: ingredient.ID,
+		ItemName:     ingredient.Name,
+		Unit:         ingredient.Unit,
+		Quantity:     ingredient.CurrentStock,
+		FullStock:    ingredient.FullStock,
+		IsLow:        ingredientIsLowStock(ingredient.CurrentStock, ingredient.FullStock),
+	}
+	publishEvent(restaurantID, "inventory_updated", data)
+	log.Printf("📤 Broadcast ingredient inventory: %s (stock: %.2f %s) to room %s",
+		ingredient.Name, ingredient.CurrentStock, ingredient.Unit, restaurantID)
+}
+
+// BroadcastIngredientInventoryUpdates broadcasts multiple ingredient rows.
+func BroadcastIngredientInventoryUpdates(hub *WebSocketHub, restaurantID string, ingredients []models.Ingredient) {
+	for _, ingredient := range ingredients {
+		BroadcastIngredientInventoryUpdate(hub, restaurantID, ingredient)
+	}
 }
 
 // Helper to convert struct to JSON
