@@ -14,6 +14,7 @@ import (
 	"restaurant-api/internal/config"
 	"restaurant-api/internal/handlers"
 	"restaurant-api/internal/middleware"
+	"restaurant-api/internal/models"
 	"restaurant-api/internal/realtime"
 	"restaurant-api/internal/services"
 
@@ -94,6 +95,7 @@ func main() {
 	handlers.SetupIngredientRoutes(router, db)
 	handlers.SetupPublicRoutes(router, db)
 	handlers.SetupTrackRoutes(router, db)
+	handlers.SetupSubscriptionRoutes(router, db)
 
 	// WebSocket route with authentication (token via query param for WebSocket compatibility)
 	authService := services.NewAuthService(db, cfg.JWTSecret)
@@ -119,6 +121,19 @@ func main() {
 				msg = err.Error()
 			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": msg})
+			return
+		}
+
+		var restaurant models.Restaurant
+		if err := db.Where("id = ?", claims.RestaurantID).First(&restaurant).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check subscription status"})
+			return
+		}
+		if time.Now().After(restaurant.SubscriptionEnd) {
+			c.JSON(http.StatusPaymentRequired, gin.H{
+				"error":   "subscription_expired",
+				"message": "Your subscription has expired. Please renew to continue.",
+			})
 			return
 		}
 

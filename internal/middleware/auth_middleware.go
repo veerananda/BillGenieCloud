@@ -160,13 +160,21 @@ func LoggingMiddleware() gin.HandlerFunc {
 	}
 }
 
-// SubscriptionMiddleware checks if restaurant subscription is active
-// Allows 30-day free trial, then requires active subscription
+// SubscriptionMiddleware checks if restaurant subscription is active.
+// Skips auth/public routes, subscription payment endpoints, and profile read for paywall UI.
 func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Skip subscription check for public endpoints and auth endpoints
 		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/auth/") || strings.HasPrefix(path, "/public/") || path == "/health" {
+		if strings.HasPrefix(path, "/auth/") ||
+			strings.HasPrefix(path, "/public/") ||
+			strings.HasPrefix(path, "/subscription/") ||
+			path == "/health" {
+			c.Next()
+			return
+		}
+
+		// Allow reading restaurant profile when expired (Home paywall needs plan details).
+		if c.Request.Method == http.MethodGet && path == "/restaurants/profile" {
 			c.Next()
 			return
 		}
