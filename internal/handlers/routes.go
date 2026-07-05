@@ -18,6 +18,10 @@ func getAuthService(db *gorm.DB) *services.AuthService {
 	return services.NewAuthService(db, secret)
 }
 
+func withSubscription(db *gorm.DB) gin.HandlerFunc {
+	return middleware.SubscriptionMiddleware(db)
+}
+
 // SetupAuthRoutes registers authentication endpoints
 func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 	authService := getAuthService(db)
@@ -54,6 +58,7 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/orders")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	{
 		protected.POST("", orderHandler.CreateOrder)
 		protected.GET("/summary", orderHandler.ListOrdersSummary)
@@ -83,6 +88,7 @@ func SetupInventoryRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/inventory")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	protected.Use(middleware.RoleMiddleware("admin")) // Admin only — ingredient stock (menu-item level)
 	{
 		protected.GET("", inventoryHandler.GetInventory)
@@ -105,6 +111,7 @@ func SetupMenuRoutes(router *gin.Engine, db *gorm.DB) {
 	// All menu routes require authentication since they need restaurant_id
 	protected := router.Group("/menu")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	{
 		// Read operations - all authenticated users
 		protected.GET("", menuHandler.GetMenuItems)
@@ -128,6 +135,7 @@ func SetupMenuItemIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/menu-item-ingredients")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	protected.Use(middleware.RoleMiddleware("admin"))
 	{
 		protected.GET("", recipeHandler.ListMenuItemIngredients)
@@ -143,6 +151,7 @@ func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/restaurants")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	{
 		protected.GET("/profile", restaurantHandler.GetRestaurantProfile)
 		protected.PUT("/profile", restaurantHandler.UpdateRestaurantProfile)
@@ -162,6 +171,7 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	// Create multiple tables - Register with explicit path
 	tablesBulk := router.Group("/tables")
 	tablesBulk.Use(middleware.AuthMiddleware(authService))
+	tablesBulk.Use(withSubscription(db))
 	tablesBulk.Use(middleware.RoleMiddleware("admin", "manager"))
 	{
 		tablesBulk.POST("/bulk", tableHandler.CreateBulkTables)
@@ -170,6 +180,7 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	// All other /tables routes
 	protected := router.Group("/tables")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	{
 		// Get all tables (auth only)
 		protected.GET("", tableHandler.GetTables)
@@ -178,6 +189,7 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	// Occupy/Vacant operations - auth only (any staff can manage table status)
 	tableStatus := router.Group("/tables")
 	tableStatus.Use(middleware.AuthMiddleware(authService))
+	tableStatus.Use(withSubscription(db))
 	{
 		tableStatus.PUT("/:id/occupy", tableHandler.SetTableOccupied)
 		tableStatus.PUT("/:id/vacant", tableHandler.SetTableVacant)
@@ -186,6 +198,7 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	// Create single table and modify operations
 	tablesOps := router.Group("/tables")
 	tablesOps.Use(middleware.AuthMiddleware(authService))
+	tablesOps.Use(withSubscription(db))
 	tablesOps.Use(middleware.RoleMiddleware("admin", "manager"))
 	{
 		tablesOps.POST("", tableHandler.CreateTable)
@@ -211,6 +224,7 @@ func SetupUserRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/users")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	protected.Use(middleware.RoleMiddleware("admin"))
 	{
 		// List all staff users for the restaurant
@@ -248,6 +262,7 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 
 	protected := router.Group("/ingredients")
 	protected.Use(middleware.AuthMiddleware(authService))
+	protected.Use(withSubscription(db))
 	{
 		read := protected.Group("")
 		read.Use(middleware.RoleMiddleware("admin", "manager", "chef", "staff"))
@@ -283,4 +298,26 @@ func SetupPublicRoutes(router *gin.Engine, db *gorm.DB) {
 	}
 
 	log.Println("✅ Public routes registered")
+}
+
+// SetupSubscriptionRoutes registers subscription renewal/payment endpoints.
+func SetupSubscriptionRoutes(router *gin.Engine, db *gorm.DB) {
+	authService := getAuthService(db)
+	subscriptionHandler := NewSubscriptionHandler(db)
+
+	public := router.Group("/subscription")
+	{
+		public.POST("/signup-quote", subscriptionHandler.QuoteSignupPlan)
+	}
+
+	protected := router.Group("/subscription")
+	protected.Use(middleware.AuthMiddleware(authService))
+	{
+		protected.GET("/renewal-quote", subscriptionHandler.GetRenewalQuote)
+		protected.POST("/renewal-quote", subscriptionHandler.GetRenewalQuote)
+		protected.POST("/create-order", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.CreateRenewalOrder)
+		protected.POST("/verify-payment", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.VerifyRenewalPayment)
+	}
+
+	log.Println("✅ Subscription routes registered")
 }

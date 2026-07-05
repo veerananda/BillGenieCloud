@@ -160,13 +160,21 @@ func LoggingMiddleware() gin.HandlerFunc {
 	}
 }
 
-// SubscriptionMiddleware checks if restaurant subscription is active
-// Allows 30-day free trial, then requires active subscription
+// SubscriptionMiddleware checks if restaurant subscription is active.
+// Skips auth/public routes, subscription payment endpoints, and profile read for paywall UI.
 func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Skip subscription check for public endpoints and auth endpoints
 		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/auth/") || strings.HasPrefix(path, "/public/") || path == "/health" {
+		if strings.HasPrefix(path, "/auth/") ||
+			strings.HasPrefix(path, "/public/") ||
+			strings.HasPrefix(path, "/subscription/") ||
+			path == "/health" {
+			c.Next()
+			return
+		}
+
+		// Allow reading restaurant profile when expired (Home paywall needs plan details).
+		if c.Request.Method == http.MethodGet && path == "/restaurants/profile" {
 			c.Next()
 			return
 		}
@@ -187,16 +195,29 @@ func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Check if subscription has expired
-		if time.Now().After(restaurant.SubscriptionEnd) {
+		// Check if subscription has expired or payment is pending
+		if services.IsSubscriptionAccessBlocked(&restaurant) {
+			cfg := services.ParseStoredSubscriptionConfig(&restaurant)
 			daysExpired := int(time.Since(restaurant.SubscriptionEnd).Hours() / 24)
-			log.Printf("⚠️ Subscription expired for restaurant %s (%d days ago)", restaurantID, daysExpired)
+			if daysExpired < 0 {
+				daysExpired = 0
+			}
+			log.Printf("⚠️ Subscription blocked for restaurant %s (phase=%s, %d days past end)", restaurantID, cfg.Phase, daysExpired)
+
+			message := "Your subscription has expired. Please renew to continue using BillGenie."
+			if cfg.Phase == services.SubscriptionPhasePendingPayment {
+				message = "Complete payment to activate your BillGenie subscription."
+			} else if cfg.Phase == services.SubscriptionPhaseTrial {
+				message = "Your 15-day free trial has ended. Choose a plan and pay to continue."
+			}
 
 			c.JSON(http.StatusPaymentRequired, gin.H{
-				"error":            "subscription_expired",
-				"message":          "Your 30-day free trial has ended. Please subscribe to continue using BillGenie.",
-				"subscription_end": restaurant.SubscriptionEnd,
-				"days_expired":     daysExpired,
+				"error":                   "subscription_expired",
+				"message":                 message,
+				"subscription_end":        restaurant.SubscriptionEnd,
+				"subscription_phase":      cfg.Phase,
+				"requires_plan_selection": services.NeedsPlanSelection(&restaurant),
+				"days_expired":            daysExpired,
 			})
 			c.Abort()
 			return

@@ -49,6 +49,7 @@ type AuthResponse struct {
 }
 
 type RegisterRequest struct {
+	StartMode      string `json:"start_mode" validate:"required,oneof=trial paid"`
 	RestaurantName string `json:"restaurant_name" validate:"required"`
 	OwnerName      string `json:"owner_name" validate:"required"`
 	Email          string `json:"email" validate:"required,email"`
@@ -103,46 +104,82 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		restaurantCode = generateRestaurantCode(req.RestaurantName)
 	}
 
-	// Create restaurant with 30-day free trial
-	subSelection := DefaultSubscriptionSelection()
-	if req.Subscription != nil {
+	startMode := strings.ToLower(strings.TrimSpace(req.StartMode))
+	if startMode != "trial" && startMode != "paid" {
+		return nil, nil, errors.New("start_mode must be trial or paid")
+	}
+
+	trialService := NewTrialEligibilityService(s.db)
+	if startMode == "trial" {
+		if err := trialService.EnsureTrialAvailable(req.Email, req.Phone); err != nil {
+			return nil, nil, err
+		}
+	} else if req.Subscription == nil {
+		return nil, nil, errors.New("subscription plan is required for paid registration")
+	}
+
+	// Create restaurant with trial or pending paid subscription
+	var (
+		subSelection SubscriptionSelection
+		phase        string
+		subscriptionEnd time.Time
+		hasEverPaid  bool
+	)
+
+	if startMode == "trial" {
+		subSelection = FixedTrialSelection()
+		phase = SubscriptionPhaseTrial
+		subscriptionEnd = time.Now().AddDate(0, 0, TrialDurationDays)
+		hasEverPaid = false
+	} else {
 		validated, err := ValidateSubscriptionSelection(*req.Subscription)
 		if err != nil {
 			return nil, nil, err
 		}
 		subSelection = validated
+		phase = SubscriptionPhasePendingPayment
+		subscriptionEnd = time.Now()
+		hasEverPaid = false
 	}
+
 	quote := CalculateSubscriptionQuote(subSelection)
-	subConfig, err := SubscriptionConfigJSON(subSelection, quote)
+	subConfig, err := BuildSubscriptionConfigJSON(phase, startMode, subSelection, quote, hasEverPaid)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	counterModes := "eat_here"
+	counterModes := "both"
 	isSelfService := false
 	ApplyOperationModeToRestaurant(&isSelfService, &counterModes, subSelection.OperationMode)
 
 	restaurant := &models.Restaurant{
-		ID:              uuid.New().String(),
-		RestaurantCode:  restaurantCode,
-		Name:            req.RestaurantName,
-		OwnerName:       req.OwnerName,
-		Email:           req.Email,
-		Phone:           req.Phone,
-		Address:         req.Address,
-		City:            req.City,
-		Cuisine:         req.Cuisine,
-		IsActive:        true,
-		IsSelfService:   isSelfService,
-		CounterServiceModes: counterModes,
-		SubscriptionEnd: time.Now().AddDate(0, 0, 30), // 30-day free trial
-		SubscriptionPlan: "basic",
+		ID:                       uuid.New().String(),
+		RestaurantCode:           restaurantCode,
+		Name:                     req.RestaurantName,
+		OwnerName:                req.OwnerName,
+		Email:                    req.Email,
+		Phone:                    req.Phone,
+		Address:                  req.Address,
+		City:                     req.City,
+		Cuisine:                  req.Cuisine,
+		IsActive:                 true,
+		IsSelfService:            isSelfService,
+		CounterServiceModes:      counterModes,
+		SubscriptionEnd:          subscriptionEnd,
+		SubscriptionPlan:         "basic",
 		SubscriptionMonthlyPrice: quote.MonthlySubtotal,
-		SubscriptionConfig: subConfig,
+		SubscriptionConfig:       subConfig,
 	}
 
 	if err := s.db.Create(restaurant).Error; err != nil {
 		return nil, nil, err
+	}
+
+	if startMode == "trial" {
+		if err := trialService.RecordTrialGrant(restaurant.ID, req.Email, req.Phone, subscriptionEnd); err != nil {
+			s.db.Delete(restaurant)
+			return nil, nil, fmt.Errorf("failed to record trial eligibility: %w", err)
+		}
 	}
 
 	// Validate and reserve admin login number (stored as staff_key)
