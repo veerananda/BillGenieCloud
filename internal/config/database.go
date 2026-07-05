@@ -116,6 +116,7 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.PasswordReset{},
 		&models.EmailVerification{},
 		&models.SubscriptionRenewal{},
+		&models.TrialEligibility{},
 	)
 
 	if err != nil {

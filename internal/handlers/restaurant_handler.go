@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"regexp"
 	"restaurant-api/internal/models"
@@ -44,17 +43,8 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 
 	limits, _ := services.LoadSubscriptionLimits(h.db, &restaurant)
 	usage, _ := services.LoadSubscriptionUsage(h.db, restaurant.ID)
-	selection := services.DefaultSubscriptionSelection()
-	if len(restaurant.SubscriptionConfig) > 0 {
-		var stored struct {
-			Selection services.SubscriptionSelection `json:"selection"`
-		}
-		if err := json.Unmarshal(restaurant.SubscriptionConfig, &stored); err == nil {
-			if validated, vErr := services.ValidateSubscriptionSelection(stored.Selection); vErr == nil {
-				selection = validated
-			}
-		}
-	}
+	cfg := services.ParseStoredSubscriptionConfig(&restaurant)
+	selection := cfg.Selection
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":               restaurant.ID,
@@ -72,6 +62,8 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"subscription_end":      restaurant.SubscriptionEnd,
 		"subscription_plan":     restaurant.SubscriptionPlan,
 		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
+		"subscription_phase":       cfg.Phase,
+		"requires_plan_selection":  services.NeedsPlanSelection(&restaurant),
 		"subscription_config":        restaurant.SubscriptionConfig,
 		"subscription_selection":     selection,
 		"subscription_limits":        limits,

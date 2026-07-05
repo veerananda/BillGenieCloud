@@ -580,8 +580,9 @@ type SubscriptionRenewal struct {
 	AmountPaise     int        `json:"amount_paise" gorm:"not null"`
 	BillingCycle    string     `json:"billing_cycle" gorm:"type:varchar(16);not null"` // monthly | annual
 	Status          string     `json:"status" gorm:"type:varchar(32);default:'pending'"` // pending | completed | failed
-	PaymentID       string     `json:"payment_id"`
-	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	PaymentID       string          `json:"payment_id"`
+	PendingSelection json.RawMessage `json:"pending_selection,omitempty" gorm:"type:jsonb"`
+	CreatedAt       time.Time       `json:"created_at" gorm:"autoCreateTime"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
@@ -596,4 +597,19 @@ func (sr *SubscriptionRenewal) BeforeCreate(tx *gorm.DB) error {
 		sr.ID = uuid.New().String()
 	}
 	return nil
+}
+
+// TrialEligibility tracks one-time free trial grants per email/phone.
+type TrialEligibility struct {
+	ID              string     `gorm:"primaryKey" json:"id"`
+	EmailNormalized string     `json:"email_normalized" gorm:"uniqueIndex;not null"`
+	PhoneNormalized string     `json:"phone_normalized" gorm:"uniqueIndex;not null"`
+	RestaurantID    string     `json:"restaurant_id" gorm:"index;not null"`
+	GrantedAt       time.Time  `json:"granted_at" gorm:"autoCreateTime"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	ConvertedAt     *time.Time `json:"converted_at,omitempty"`
+}
+
+func (TrialEligibility) TableName() string {
+	return "trial_eligibilities"
 }

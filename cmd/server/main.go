@@ -129,7 +129,7 @@ func main() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check subscription status"})
 			return
 		}
-		if time.Now().After(restaurant.SubscriptionEnd) {
+		if services.IsSubscriptionAccessBlocked(&restaurant) {
 			c.JSON(http.StatusPaymentRequired, gin.H{
 				"error":   "subscription_expired",
 				"message": "Your subscription has expired. Please renew to continue.",

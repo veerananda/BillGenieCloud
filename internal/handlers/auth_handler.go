@@ -85,17 +85,19 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	log.Printf("✅ JWT tokens generated for user: %s", user.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"access_token":    accessToken,
-		"refresh_token":   refreshToken,
-		"expires_in":      3600,
-		"token_type":      "Bearer",
-		"restaurant_id":   restaurant.ID,
-		"restaurant_code": restaurant.RestaurantCode,
-		"user_id":         user.ID,
-		"role":            user.Role,
-		"login_id":        user.StaffKey,
-		"staff_key":       user.StaffKey,
-		"message":         fmt.Sprintf("Restaurant registered successfully! Your login number is: %s", user.StaffKey),
+		"access_token":        accessToken,
+		"refresh_token":       refreshToken,
+		"expires_in":          3600,
+		"token_type":          "Bearer",
+		"restaurant_id":       restaurant.ID,
+		"restaurant_code":     restaurant.RestaurantCode,
+		"user_id":             user.ID,
+		"role":                user.Role,
+		"login_id":            user.StaffKey,
+		"staff_key":           user.StaffKey,
+		"subscription_phase":  services.ParseStoredSubscriptionConfig(restaurant).Phase,
+		"requires_payment":    services.ParseStoredSubscriptionConfig(restaurant).Phase == services.SubscriptionPhasePendingPayment,
+		"message":             fmt.Sprintf("Restaurant registered successfully! Your login number is: %s", user.StaffKey),
 	})
 }
 

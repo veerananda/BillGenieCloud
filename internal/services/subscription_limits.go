@@ -1,7 +1,6 @@
 package services
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -24,6 +23,7 @@ type SubscriptionLimits struct {
 	MaxTables             int    `json:"max_tables"`
 	MaxManagers           int    `json:"max_managers"`
 	MaxStaffAndChefs      int    `json:"max_staff_and_chefs"`
+	MaxChefs              int    `json:"max_chefs,omitempty"`
 	HistoryDays           int    `json:"history_days"`
 	KitchenDineIn         bool   `json:"kitchen_dine_in"`
 	KitchenCounter bool `json:"kitchen_counter"`
@@ -40,11 +40,6 @@ type SubscriptionUsage struct {
 	Admins         int64 `json:"admins"`
 }
 
-type storedSubscriptionConfig struct {
-	Selection SubscriptionSelection `json:"selection"`
-	Quote     SubscriptionQuote     `json:"quote"`
-}
-
 func LoadSubscriptionLimits(db *gorm.DB, restaurant *models.Restaurant) (SubscriptionLimits, error) {
 	if restaurant == nil {
 		return SubscriptionLimits{}, errors.New("restaurant is required")
@@ -53,15 +48,14 @@ func LoadSubscriptionLimits(db *gorm.DB, restaurant *models.Restaurant) (Subscri
 		return legacySubscriptionLimits(restaurant), nil
 	}
 
-	var stored storedSubscriptionConfig
-	if err := json.Unmarshal(restaurant.SubscriptionConfig, &stored); err != nil {
-		return legacySubscriptionLimits(restaurant), nil
+	stored := ParseStoredSubscriptionConfig(restaurant)
+	if stored.Phase == SubscriptionPhaseTrial && time.Now().Before(restaurant.SubscriptionEnd) {
+		limits := TrialSubscriptionLimits()
+		limits.MonthlyPrice = restaurant.SubscriptionMonthlyPrice
+		return limits, nil
 	}
 
-	sel, err := ValidateSubscriptionSelection(stored.Selection)
-	if err != nil {
-		return legacySubscriptionLimits(restaurant), nil
-	}
+	sel := stored.Selection
 
 	maxTables := 0
 	if sel.OperationMode != "counter" {
@@ -153,12 +147,8 @@ func GetRestaurantSubscriptionBundle(db *gorm.DB, restaurantID string) (Subscrip
 	}
 	selection := DefaultSubscriptionSelection()
 	if len(restaurant.SubscriptionConfig) > 0 {
-		var stored storedSubscriptionConfig
-		if err := json.Unmarshal(restaurant.SubscriptionConfig, &stored); err == nil {
-			if validated, vErr := ValidateSubscriptionSelection(stored.Selection); vErr == nil {
-				selection = validated
-			}
-		}
+		stored := ParseStoredSubscriptionConfig(&restaurant)
+		selection = stored.Selection
 	}
 	return limits, usage, selection, nil
 }
@@ -210,6 +200,13 @@ func EnforceCreateUser(db *gorm.DB, restaurantID string, role string) error {
 	case "chef":
 		if !limits.KitchenDineIn && !limits.KitchenCounter {
 			return errors.New("chef accounts require a kitchen add-on on your plan")
+		}
+		if limits.MaxChefs > 0 {
+			var chefCount int64
+			db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "chef", true).Count(&chefCount)
+			if int(chefCount) >= limits.MaxChefs {
+				return fmt.Errorf("chef limit reached (%d/%d) on your plan", chefCount, limits.MaxChefs)
+			}
 		}
 		if int(staffChefs) >= limits.MaxStaffAndChefs {
 			return fmt.Errorf("staff limit reached (%d/%d) — increase table capacity or add staff seats in your subscription", staffChefs, limits.MaxStaffAndChefs)

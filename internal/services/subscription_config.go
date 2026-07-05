@@ -1,0 +1,112 @@
+package services
+
+import (
+	"encoding/json"
+	"time"
+
+	"restaurant-api/internal/models"
+)
+
+const (
+	SubscriptionPhaseTrial           = "trial"
+	SubscriptionPhasePendingPayment  = "pending_payment"
+	SubscriptionPhaseActive          = "active"
+	TrialDurationDays                = 15
+)
+
+// Fixed trial bundle — keep in sync with BillGenieApp-new/src/config/subscriptionPricing.ts
+func FixedTrialSelection() SubscriptionSelection {
+	return SubscriptionSelection{
+		BillingCycle:    "monthly",
+		OperationMode:   "both",
+		MaxTables:       IncludedTablesBasic,
+		ExtraStaff:      0,
+		ExtraManagers:   0,
+		HistoryExtended: false,
+		Inventory:       false,
+		KitchenDineIn:   true,
+		KitchenCounter:  true,
+	}
+}
+
+func TrialSubscriptionLimits() SubscriptionLimits {
+	return SubscriptionLimits{
+		OperationMode:    "both",
+		MaxTables:        IncludedTablesBasic,
+		MaxManagers:      1,
+		MaxStaffAndChefs: 3,
+		MaxChefs:         1,
+		HistoryDays:      IncludedHistoryDaysINR,
+		KitchenDineIn:    true,
+		KitchenCounter:   true,
+		Inventory:        false,
+		DineInEnabled:    true,
+		CounterEnabled:   true,
+	}
+}
+
+type StoredSubscriptionConfig struct {
+	Phase         string                `json:"phase"`
+	Selection     SubscriptionSelection `json:"selection"`
+	Quote         SubscriptionQuote     `json:"quote"`
+	HasEverPaid   bool                  `json:"has_ever_paid"`
+	StartMode     string                `json:"start_mode,omitempty"`
+}
+
+func ParseStoredSubscriptionConfig(restaurant *models.Restaurant) StoredSubscriptionConfig {
+	cfg := StoredSubscriptionConfig{
+		Phase:       SubscriptionPhaseTrial,
+		Selection:   DefaultSubscriptionSelection(),
+		HasEverPaid: false,
+	}
+	if restaurant == nil || len(restaurant.SubscriptionConfig) == 0 {
+		return cfg
+	}
+	if err := json.Unmarshal(restaurant.SubscriptionConfig, &cfg); err != nil {
+		return cfg
+	}
+	if validated, err := ValidateSubscriptionSelection(cfg.Selection); err == nil {
+		cfg.Selection = validated
+	}
+	if cfg.Phase == "" {
+		cfg.Phase = SubscriptionPhaseTrial
+	}
+	return cfg
+}
+
+func BuildSubscriptionConfigJSON(phase string, startMode string, sel SubscriptionSelection, quote SubscriptionQuote, hasEverPaid bool) (json.RawMessage, error) {
+	payload := StoredSubscriptionConfig{
+		Phase:       phase,
+		StartMode:   startMode,
+		Selection:   sel,
+		Quote:       quote,
+		HasEverPaid: hasEverPaid,
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(bytes), nil
+}
+
+func IsSubscriptionAccessBlocked(restaurant *models.Restaurant) bool {
+	if restaurant == nil {
+		return true
+	}
+	cfg := ParseStoredSubscriptionConfig(restaurant)
+	if cfg.Phase == SubscriptionPhasePendingPayment {
+		return true
+	}
+	return time.Now().After(restaurant.SubscriptionEnd)
+}
+
+func NeedsPlanSelection(restaurant *models.Restaurant) bool {
+	cfg := ParseStoredSubscriptionConfig(restaurant)
+	if cfg.HasEverPaid {
+		return false
+	}
+	if cfg.Phase == SubscriptionPhasePendingPayment {
+		return false
+	}
+	return cfg.Phase == SubscriptionPhaseTrial && time.Now().After(restaurant.SubscriptionEnd)
+}
