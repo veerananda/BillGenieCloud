@@ -305,10 +305,16 @@ func SetupSubscriptionRoutes(router *gin.Engine, db *gorm.DB) {
 	authService := getAuthService(db)
 	subscriptionHandler := NewSubscriptionHandler(db)
 
+	public := router.Group("/subscription")
+	{
+		public.POST("/signup-quote", subscriptionHandler.QuoteSignupPlan)
+	}
+
 	protected := router.Group("/subscription")
 	protected.Use(middleware.AuthMiddleware(authService))
 	{
 		protected.GET("/renewal-quote", subscriptionHandler.GetRenewalQuote)
+		protected.POST("/renewal-quote", subscriptionHandler.GetRenewalQuote)
 		protected.POST("/create-order", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.CreateRenewalOrder)
 		protected.POST("/verify-payment", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.VerifyRenewalPayment)
 	}

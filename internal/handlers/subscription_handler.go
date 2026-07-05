@@ -19,10 +19,20 @@ func NewSubscriptionHandler(db *gorm.DB) *SubscriptionHandler {
 	}
 }
 
-// GetRenewalQuote returns the renewal amount for the restaurant's current plan.
+type subscriptionSelectionBody struct {
+	Selection services.SubscriptionSelection `json:"selection"`
+}
+
+// GetRenewalQuote returns the renewal amount for the restaurant's current or selected plan.
 func (h *SubscriptionHandler) GetRenewalQuote(c *gin.Context) {
 	restaurantID, _ := c.Get("restaurant_id")
-	quote, err := h.renewalService.GetRenewalQuote(restaurantID.(string))
+	var body subscriptionSelectionBody
+	_ = c.ShouldBindJSON(&body)
+	var override *services.SubscriptionSelection
+	if body.Selection.OperationMode != "" {
+		override = &body.Selection
+	}
+	quote, err := h.renewalService.GetRenewalQuote(restaurantID.(string), override)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load renewal quote"})
 		return
@@ -30,10 +40,31 @@ func (h *SubscriptionHandler) GetRenewalQuote(c *gin.Context) {
 	c.JSON(http.StatusOK, quote)
 }
 
-// CreateRenewalOrder creates a Razorpay order for subscription renewal.
+// QuoteSignupPlan returns pricing for a plan before registration (public).
+func (h *SubscriptionHandler) QuoteSignupPlan(c *gin.Context) {
+	var body subscriptionSelectionBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	quote, err := h.renewalService.QuoteForSelection(body.Selection)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, quote)
+}
+
+// CreateRenewalOrder creates a Razorpay order for subscription renewal or activation.
 func (h *SubscriptionHandler) CreateRenewalOrder(c *gin.Context) {
 	restaurantID, _ := c.Get("restaurant_id")
-	result, err := h.renewalService.CreateRenewalOrder(restaurantID.(string))
+	var body subscriptionSelectionBody
+	_ = c.ShouldBindJSON(&body)
+	var override *services.SubscriptionSelection
+	if body.Selection.OperationMode != "" {
+		override = &body.Selection
+	}
+	result, err := h.renewalService.CreateRenewalOrder(restaurantID.(string), override)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
