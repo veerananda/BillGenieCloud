@@ -571,3 +571,29 @@ func (ev *EmailVerification) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+// SubscriptionRenewal tracks subscription payment orders (Razorpay).
+type SubscriptionRenewal struct {
+	ID              string     `gorm:"primaryKey" json:"id"`
+	RestaurantID    string     `json:"restaurant_id" gorm:"index;not null"`
+	RazorpayOrderID string     `json:"razorpay_order_id" gorm:"uniqueIndex;not null"`
+	AmountPaise     int        `json:"amount_paise" gorm:"not null"`
+	BillingCycle    string     `json:"billing_cycle" gorm:"type:varchar(16);not null"` // monthly | annual
+	Status          string     `json:"status" gorm:"type:varchar(32);default:'pending'"` // pending | completed | failed
+	PaymentID       string     `json:"payment_id"`
+	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+}
+
+func (SubscriptionRenewal) TableName() string {
+	return "subscription_renewals"
+}
+
+func (sr *SubscriptionRenewal) BeforeCreate(tx *gorm.DB) error {
+	if sr.ID == "" {
+		sr.ID = uuid.New().String()
+	}
+	return nil
+}
