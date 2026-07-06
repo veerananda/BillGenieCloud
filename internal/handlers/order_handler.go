@@ -323,6 +323,8 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			"payment_method":  order.PaymentMethod,
 			"amount_received": order.AmountReceived,
 			"change_returned": order.ChangeReturned,
+			"cash_amount":     order.CashAmount,
+			"upi_amount":      order.UpiAmount,
 			"notes":           order.Notes,
 			"created_at":      order.CreatedAt,
 			"updated_at":      order.UpdatedAt,
@@ -664,6 +666,8 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 		PaymentMethod   string              `json:"payment_method"`
 		AmountReceived  float64             `json:"amount_received,omitempty"`
 		ChangeReturned  float64             `json:"change_returned,omitempty"`
+		CashAmount      float64             `json:"cash_amount,omitempty"`
+		UpiAmount       float64             `json:"upi_amount,omitempty"`
 		Notes           string              `json:"notes"`
 		CreatedAt       time.Time           `json:"created_at"`
 		UpdatedAt       time.Time           `json:"updated_at"`
@@ -723,6 +727,8 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 			PaymentMethod:  order.PaymentMethod,
 			AmountReceived: order.AmountReceived,
 			ChangeReturned: order.ChangeReturned,
+			CashAmount:     order.CashAmount,
+			UpiAmount:      order.UpiAmount,
 			Notes:          order.Notes,
 			CreatedAt:      order.CreatedAt,
 			UpdatedAt:      order.UpdatedAt,
@@ -821,9 +827,11 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 	orderID := c.Param("order_id")
 
 	var input struct {
-		PaymentMethod  string  `json:"payment_method" binding:"required"` // "cash" or "upi"
+		PaymentMethod  string  `json:"payment_method" binding:"required"` // cash | upi | split
 		AmountReceived float64 `json:"amount_received,omitempty"`
 		ChangeReturned float64 `json:"change_returned,omitempty"`
+		CashAmount     float64 `json:"cash_amount,omitempty"`
+		UpiAmount      float64 `json:"upi_amount,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -834,9 +842,9 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 	log.Printf("   Payment Data: Method=%s, Received=%.2f, Change=%.2f", input.PaymentMethod, input.AmountReceived, input.ChangeReturned)
 
 	// Validate payment method
-	if input.PaymentMethod != "cash" && input.PaymentMethod != "upi" {
+	if input.PaymentMethod != "cash" && input.PaymentMethod != "upi" && input.PaymentMethod != "split" {
 		log.Printf("❌ [Handler] Invalid payment method: %s", input.PaymentMethod)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "payment_method must be 'cash' or 'upi'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "payment_method must be 'cash', 'upi', or 'split'"})
 		return
 	}
 
@@ -847,15 +855,26 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 		return
 	}
 
+	if input.PaymentMethod == "split" {
+		if input.CashAmount <= 0 || input.UpiAmount <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cash_amount and upi_amount are required for split payments"})
+			return
+		}
+	}
+
 	log.Printf("   → Calling service.CompleteOrderWithPayment...")
 
 	// Complete the order with payment details
 	order, err := h.orderService.CompleteOrderWithPayment(
 		restaurantID.(string),
 		orderID,
-		input.PaymentMethod,
-		input.AmountReceived,
-		input.ChangeReturned,
+		services.OrderPaymentDetails{
+			PaymentMethod:  input.PaymentMethod,
+			AmountReceived: input.AmountReceived,
+			ChangeReturned: input.ChangeReturned,
+			CashAmount:     input.CashAmount,
+			UpiAmount:      input.UpiAmount,
+		},
 	)
 
 	if err != nil {
@@ -904,6 +923,8 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 			"payment_method":  order.PaymentMethod,
 			"amount_received": order.AmountReceived,
 			"change_returned": order.ChangeReturned,
+			"cash_amount":     order.CashAmount,
+			"upi_amount":      order.UpiAmount,
 			"completed_at":    order.CompletedAt,
 		},
 	}
