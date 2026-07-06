@@ -517,8 +517,22 @@ func (s *OrderService) CompleteOrder(restaurantID string, orderID string) (*mode
 	return s.reloadOrderWithItems(orderID, restaurantID)
 }
 
+// OrderPaymentDetails captures cash/UPI/split payment completion.
+type OrderPaymentDetails struct {
+	PaymentMethod  string
+	AmountReceived float64
+	ChangeReturned float64
+	CashAmount     float64
+	UpiAmount      float64
+}
+
 // CompleteOrderWithPayment completes order with payment details
-func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID string, paymentMethod string, amountReceived float64, changeReturned float64) (*models.Order, error) {
+func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID string, payment OrderPaymentDetails) (*models.Order, error) {
+	paymentMethod := payment.PaymentMethod
+	amountReceived := payment.AmountReceived
+	changeReturned := payment.ChangeReturned
+	cashAmount := payment.CashAmount
+	upiAmount := payment.UpiAmount
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -539,6 +553,18 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 
 	log.Printf("🔵 [CompleteOrderWithPayment] BEFORE - Order #%d Status: %s, Total: %.2f", order.OrderNumber, order.Status, order.Total)
 
+	if paymentMethod == "split" {
+		if cashAmount <= 0 || upiAmount <= 0 {
+			tx.Rollback()
+			return nil, errors.New("split payment requires cash_amount and upi_amount greater than zero")
+		}
+		totalPaid := cashAmount + upiAmount
+		if totalPaid < order.Total-0.02 || totalPaid > order.Total+0.02 {
+			tx.Rollback()
+			return nil, fmt.Errorf("cash and upi amounts must equal order total (%.2f)", order.Total)
+		}
+	}
+
 	isCounter := order.OrderType == "counter"
 
 	if !isCounter {
@@ -553,6 +579,8 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 		"payment_method":  paymentMethod,
 		"amount_received": amountReceived,
 		"change_returned": changeReturned,
+		"cash_amount":     cashAmount,
+		"upi_amount":      upiAmount,
 		"updated_at":      now,
 	}
 
