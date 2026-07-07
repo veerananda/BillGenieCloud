@@ -195,6 +195,15 @@ func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
+		if !restaurant.IsActive {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "restaurant_suspended",
+				"message": "This restaurant account has been suspended. Contact BillGenie support.",
+			})
+			c.Abort()
+			return
+		}
+
 		// Check if subscription has expired or payment is pending
 		if services.IsSubscriptionAccessBlocked(&restaurant) {
 			cfg := services.ParseStoredSubscriptionConfig(&restaurant)

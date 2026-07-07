@@ -96,6 +96,7 @@ func main() {
 	handlers.SetupPublicRoutes(router, db)
 	handlers.SetupTrackRoutes(router, db)
 	handlers.SetupSubscriptionRoutes(router, db)
+	handlers.SetupPlatformRoutes(router, db)
 
 	// WebSocket route with authentication (token via query param for WebSocket compatibility)
 	authService := services.NewAuthService(db, cfg.JWTSecret)

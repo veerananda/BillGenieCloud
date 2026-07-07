@@ -323,3 +323,22 @@ func SetupSubscriptionRoutes(router *gin.Engine, db *gorm.DB) {
 
 	log.Println("✅ Subscription routes registered")
 }
+
+// SetupPlatformRoutes registers BillGenie creator-only operations console API.
+func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
+	ops := services.NewPlatformOpsService(db)
+	platformHandler := NewPlatformHandler(ops)
+
+	platform := router.Group("/platform")
+	platform.Use(middleware.PlatformAuthMiddleware())
+	{
+		platform.GET("/restaurants", platformHandler.ListRestaurants)
+		platform.GET("/restaurants/:restaurant_id", platformHandler.GetRestaurant)
+		platform.POST("/restaurants/:restaurant_id/grant-subscription", platformHandler.GrantSubscription)
+		platform.POST("/restaurants/:restaurant_id/extend-trial", platformHandler.ExtendTrial)
+		platform.PUT("/restaurants/:restaurant_id/selection", platformHandler.UpdateSelection)
+		platform.PUT("/restaurants/:restaurant_id/active", platformHandler.SetActive)
+	}
+
+	log.Println("✅ Platform ops routes registered (/platform/*)")
+}
