@@ -334,6 +334,14 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 		return nil, errors.New("user account is inactive")
 	}
 
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", user.RestaurantID).First(&restaurant).Error; err != nil {
+		return nil, errors.New("restaurant not found")
+	}
+	if !restaurant.IsActive {
+		return nil, errors.New("restaurant account is suspended. Contact BillGenie support")
+	}
+
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		return nil, errors.New("invalid password")

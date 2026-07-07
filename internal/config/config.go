@@ -42,6 +42,9 @@ type Config struct {
 	// CORS
 	CORSAllowedOrigins []string
 
+	// Platform ops (BillGenie creators console)
+	PlatformOpsAPIKey string
+
 	// Features
 	EnablePayment   bool
 	EnableWebSocket bool
@@ -82,6 +85,8 @@ func LoadConfig() *Config {
 
 		// CORS
 		CORSAllowedOrigins: parseOrigins(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,exp://localhost:19000")),
+
+		PlatformOpsAPIKey: getEnv("PLATFORM_OPS_API_KEY", ""),
 
 		// Features
 		EnablePayment:   getBoolEnv("ENABLE_PAYMENT", true),
