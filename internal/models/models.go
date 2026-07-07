@@ -64,6 +64,7 @@ type Restaurant struct {
 	IsSelfService   bool            `json:"is_self_service" gorm:"default:false"`   // True for self-service, False for dine-in
 	IsEmailVerified bool            `json:"is_email_verified" gorm:"default:false"` // Email verification status
 	CounterServiceModes string      `json:"counter_service_modes" gorm:"type:varchar(20);default:both"` // both | eat_here | takeaway
+	PricesIncludeGST    bool          `json:"prices_include_gst" gorm:"default:false"`
 	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"`             // Customizable settings
 	// Restaurant Profile fields
 	ContactNumber string    `json:"contact_number"`
@@ -185,8 +186,9 @@ type MenuItem struct {
 	Description  string    `json:"description" gorm:"type:text"`
 	Price        float64   `json:"price" gorm:"type:numeric(10,2);not null"`
 	CostPrice    float64   `json:"cost_price" gorm:"type:numeric(10,2)"` // For margin calculation
-	IsVeg        bool      `json:"is_veg" gorm:"default:false"`
-	IsAvailable  bool      `json:"is_available" gorm:"default:true"`
+	IsVeg             bool `json:"is_veg" gorm:"default:false"`
+	IsAvailable       bool `json:"is_available" gorm:"default:true"`
+	ReadilyAvailable  bool `json:"readily_available" gorm:"default:false"` // skip kitchen (e.g. water, packaged items)
 	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
@@ -543,6 +545,32 @@ func (PasswordReset) TableName() string {
 func (pr *PasswordReset) BeforeCreate(tx *gorm.DB) error {
 	if pr.ID == "" {
 		pr.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// LoginRecoveryOTP stores one-time codes for admin login number recovery.
+type LoginRecoveryOTP struct {
+	ID         string    `gorm:"primaryKey" json:"id"`
+	UserID     string    `json:"user_id" gorm:"index;not null"`
+	Identifier string    `json:"identifier" gorm:"index;not null"`
+	OTP        string    `json:"otp" gorm:"type:varchar(6);not null"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Attempts   int       `json:"attempts" gorm:"default:0"`
+	IsUsed     bool      `json:"is_used" gorm:"default:false"`
+	CreatedAt  time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt  time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+
+	User *User `json:"-" gorm:"foreignKey:UserID"`
+}
+
+func (LoginRecoveryOTP) TableName() string {
+	return "login_recovery_otps"
+}
+
+func (lr *LoginRecoveryOTP) BeforeCreate(tx *gorm.DB) error {
+	if lr.ID == "" {
+		lr.ID = uuid.New().String()
 	}
 	return nil
 }

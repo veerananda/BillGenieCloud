@@ -59,6 +59,7 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"cuisine":          restaurant.Cuisine,
 		"is_self_service":       restaurant.IsSelfService,
 		"counter_service_modes": counterModes,
+		"prices_include_gst":    restaurant.PricesIncludeGST,
 		"subscription_end":      restaurant.SubscriptionEnd,
 		"subscription_plan":     restaurant.SubscriptionPlan,
 		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
@@ -87,6 +88,7 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 		UPIQRCode           string  `json:"upi_qr_code"`
 		IsSelfService       *bool   `json:"is_self_service"`
 		CounterServiceModes string  `json:"counter_service_modes"`
+		PricesIncludeGST    *bool   `json:"prices_include_gst"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -132,6 +134,9 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "counter_service_modes must be both, eat_here, or takeaway"})
 			return
 		}
+	}
+	if input.PricesIncludeGST != nil {
+		restaurant.PricesIncludeGST = *input.PricesIncludeGST
 	}
 
 	if err := h.db.Save(&restaurant).Error; err != nil {

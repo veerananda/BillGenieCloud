@@ -252,6 +252,30 @@ func SubscriptionConfigJSON(sel SubscriptionSelection, quote SubscriptionQuote) 
 	return json.RawMessage(bytes), nil
 }
 
+func IsBasicSubscriptionSelection(sel SubscriptionSelection) bool {
+	if sel.OperationMode == "both" {
+		return false
+	}
+	if sel.OperationMode != "dine_in" && sel.OperationMode != "counter" {
+		return false
+	}
+	if sel.ExtraStaff != 0 || sel.ExtraManagers != 0 ||
+		sel.HistoryExtended || sel.Inventory || sel.KitchenDineIn || sel.KitchenCounter {
+		return false
+	}
+	if sel.OperationMode == "dine_in" {
+		return sel.MaxTables == IncludedTablesBasic
+	}
+	return sel.MaxTables == 0
+}
+
+func SubscriptionPlanFromSelection(sel SubscriptionSelection) string {
+	if IsBasicSubscriptionSelection(sel) {
+		return "basic"
+	}
+	return "customised"
+}
+
 func ApplyOperationModeToRestaurant(isSelfService *bool, counterModes *string, mode string) {
 	switch mode {
 	case "counter":
