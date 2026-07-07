@@ -256,7 +256,7 @@ func (s *SubscriptionRenewalService) applyPaidSelection(restaurant *models.Resta
 	restaurant.IsSelfService = isSelfService
 	restaurant.CounterServiceModes = counterModes
 	restaurant.SubscriptionMonthlyPrice = quote.MonthlySubtotal
-	restaurant.SubscriptionPlan = "basic"
+	restaurant.SubscriptionPlan = SubscriptionPlanFromSelection(validated)
 
 	startMode := cfg.StartMode
 	if startMode == "" {

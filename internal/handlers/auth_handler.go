@@ -327,6 +327,65 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	})
 }
 
+// ForgotLoginID emails a one-time code to recover the admin login number.
+// @Router /auth/forgot-login-id [post]
+func (h *AuthHandler) ForgotLoginID(c *gin.Context) {
+	var req struct {
+		Identifier string `json:"identifier" validate:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.authService.RequestLoginRecovery(req.Identifier); err != nil {
+		log.Printf("❌ Forgot login ID error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "A verification code has been sent to your registered email",
+	})
+}
+
+// VerifyLoginRecovery validates the OTP and returns the admin login number.
+// @Router /auth/verify-login-recovery [post]
+func (h *AuthHandler) VerifyLoginRecovery(c *gin.Context) {
+	var req struct {
+		Identifier string `json:"identifier" validate:"required"`
+		OTP        string `json:"otp" validate:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	loginID, err := h.authService.VerifyLoginRecovery(req.Identifier, req.OTP)
+	if err != nil {
+		log.Printf("❌ Verify login recovery error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"login_id": loginID,
+		"message":  "Login number recovered successfully",
+	})
+}
+
 // VerifyEmail verifies email with verification token
 // @Summary Verify email address
 // @Description Verify restaurant email with verification token

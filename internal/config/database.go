@@ -114,6 +114,7 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.RefreshToken{},
 		&models.UserSession{},
 		&models.PasswordReset{},
+		&models.LoginRecoveryOTP{},
 		&models.EmailVerification{},
 		&models.SubscriptionRenewal{},
 		&models.TrialEligibility{},

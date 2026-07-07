@@ -152,6 +152,11 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 	isSelfService := false
 	ApplyOperationModeToRestaurant(&isSelfService, &counterModes, subSelection.OperationMode)
 
+	subscriptionPlan := "trial"
+	if startMode == "paid" {
+		subscriptionPlan = SubscriptionPlanFromSelection(subSelection)
+	}
+
 	restaurant := &models.Restaurant{
 		ID:                       uuid.New().String(),
 		RestaurantCode:           restaurantCode,
@@ -166,7 +171,7 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		IsSelfService:            isSelfService,
 		CounterServiceModes:      counterModes,
 		SubscriptionEnd:          subscriptionEnd,
-		SubscriptionPlan:         "basic",
+		SubscriptionPlan:         subscriptionPlan,
 		SubscriptionMonthlyPrice: quote.MonthlySubtotal,
 		SubscriptionConfig:       subConfig,
 	}
@@ -752,6 +757,151 @@ func (s *AuthService) ResetPassword(token string, newPassword string) error {
 	}
 
 	return nil
+}
+
+const loginRecoveryOTPExpiry = 10 * time.Minute
+const loginRecoveryMaxAttempts = 5
+
+// RequestLoginRecovery emails a 6-digit OTP so an admin can recover their login number.
+func (s *AuthService) RequestLoginRecovery(identifier string) error {
+	user, err := s.findAdminByRecoveryIdentifier(identifier)
+	if err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(user.Email) == "" {
+		return errors.New("no email on file for this account. Contact support")
+	}
+
+	otp := generateNumericOTP(6)
+
+	if err := s.db.Model(&models.LoginRecoveryOTP{}).
+		Where("user_id = ? AND is_used = false", user.ID).
+		Update("is_used", true).Error; err != nil {
+		return fmt.Errorf("failed to invalidate previous recovery codes: %w", err)
+	}
+
+	recovery := &models.LoginRecoveryOTP{
+		UserID:     user.ID,
+		Identifier: strings.TrimSpace(identifier),
+		OTP:        otp,
+		ExpiresAt:  time.Now().Add(loginRecoveryOTPExpiry),
+		IsUsed:     false,
+		Attempts:   0,
+	}
+
+	if err := s.db.Create(recovery).Error; err != nil {
+		return fmt.Errorf("failed to create recovery code: %w", err)
+	}
+
+	subject := "Your BillGenie login recovery code"
+	body := fmt.Sprintf(
+		"Hi,\n\nYour login recovery code is: %s\n\nThis code expires in 10 minutes.\nIf you did not request this, ignore this email.\n\n- BillGenie",
+		otp,
+	)
+
+	if err := sendEmailSMTP(user.Email, subject, body); err != nil {
+		return fmt.Errorf("failed to send recovery email: %w", err)
+	}
+
+	return nil
+}
+
+// VerifyLoginRecovery validates the OTP and returns the admin login number.
+func (s *AuthService) VerifyLoginRecovery(identifier, otp string) (string, error) {
+	identifier = strings.TrimSpace(identifier)
+	otp = strings.TrimSpace(otp)
+
+	if identifier == "" || otp == "" {
+		return "", errors.New("identifier and verification code are required")
+	}
+	if len(otp) != 6 {
+		return "", errors.New("verification code must be 6 digits")
+	}
+
+	user, err := s.findAdminByRecoveryIdentifier(identifier)
+	if err != nil {
+		return "", err
+	}
+
+	var recovery models.LoginRecoveryOTP
+	if err := s.db.Where(
+		"user_id = ? AND is_used = false AND expires_at > ?",
+		user.ID,
+		time.Now(),
+	).Order("created_at DESC").First(&recovery).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", errors.New("no active recovery code. Request a new one")
+		}
+		return "", err
+	}
+
+	if recovery.Attempts >= loginRecoveryMaxAttempts {
+		return "", errors.New("too many failed attempts. Request a new code")
+	}
+
+	if recovery.OTP != otp {
+		s.db.Model(&recovery).Update("attempts", recovery.Attempts+1)
+		return "", errors.New("invalid verification code")
+	}
+
+	if err := s.db.Model(&recovery).Update("is_used", true).Error; err != nil {
+		return "", fmt.Errorf("failed to mark recovery code used: %w", err)
+	}
+
+	return user.StaffKey, nil
+}
+
+func (s *AuthService) findAdminByRecoveryIdentifier(identifier string) (*models.User, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return nil, errors.New("email or phone number is required")
+	}
+
+	if loginAdminKeyPattern.MatchString(identifier) ||
+		loginStaffKeyPattern.MatchString(identifier) ||
+		strings.HasPrefix(identifier, "SK_") {
+		return nil, errors.New("use your registered email or phone number to recover your login number")
+	}
+
+	var user models.User
+	var err error
+
+	if strings.Contains(identifier, "@") {
+		err = s.db.Where("email = ?", identifier).First(&user).Error
+	} else {
+		normalized := normalizePhone(identifier)
+		if len(normalized) < 10 {
+			return nil, errors.New("please enter a valid email or phone number")
+		}
+		err = s.db.Where(
+			"regexp_replace(phone, '[^0-9]', '', 'g') = ? OR regexp_replace(phone, '[^0-9]', '', 'g') LIKE ?",
+			normalized,
+			"%"+normalized,
+		).First(&user).Error
+	}
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("no account found with that email or phone number")
+		}
+		return nil, err
+	}
+
+	if user.Role != "admin" {
+		return nil, errors.New("login recovery is only available for restaurant admin accounts")
+	}
+
+	return &user, nil
+}
+
+func generateNumericOTP(length int) string {
+	const digits = "0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = digits[rand.Intn(len(digits))]
+	}
+	return string(b)
 }
 
 // generateRandomToken generates a random token of specified length
