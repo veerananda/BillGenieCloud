@@ -239,7 +239,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 			Quantity: itemReq.Quantity,
 			UnitRate: menuItem.Price,
 			Total:    menuItem.Price * float64(itemReq.Quantity),
-			Status:   "pending",
+			Status:   InitialOrderItemStatus(menuItem),
 			Notes:    itemReq.Notes,
 			SubId:    batchSubID,
 		}
@@ -276,12 +276,17 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		// If inventory doesn't exist or has insufficient quantity, we skip deduction (order still created)
 	}
 
-	// Calculate tax (assume 5% GST)
-	taxAmount := subTotal * 0.05
-	total := subTotal + taxAmount
+	// Calculate tax from restaurant GST setting
+	var restaurant models.Restaurant
+	if err := tx.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		log.Printf("❌ [CreateOrder] Restaurant not found: %v", err)
+		tx.Rollback()
+		return nil, nil, err
+	}
+	subTotal, taxAmount, total := CalculateOrderTax(subTotal, 0, restaurant.PricesIncludeGST)
 
 	// Update order totals
-	log.Printf("🔵 [CreateOrder] Updating order totals - SubTotal: ₹%.2f, Tax: ₹%.2f, Total: ₹%.2f", subTotal, taxAmount, total)
+	log.Printf("🔵 [CreateOrder] Updating order totals - SubTotal: ₹%.2f, Tax: ₹%.2f, Total: ₹%.2f (prices_include_gst=%v)", subTotal, taxAmount, total, restaurant.PricesIncludeGST)
 	if err := tx.Model(order).Updates(map[string]interface{}{
 		"sub_total":  subTotal,
 		"tax_amount": taxAmount,
@@ -390,7 +395,7 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 			Quantity: itemReq.Quantity,
 			UnitRate: menuItem.Price,
 			Total:    menuItem.Price * float64(itemReq.Quantity),
-			Status:   "pending",
+			Status:   InitialOrderItemStatus(menuItem),
 			Notes:    itemReq.Notes,
 			SubId:    batchSubID,
 		}
@@ -414,13 +419,31 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 		}
 	}
 
-	// Update order totals
-	order.SubTotal += totalAdded
-	order.Total = order.SubTotal + order.TaxAmount - order.DiscountAmount
+	// Recalculate order totals from all line items
+	var restaurant models.Restaurant
+	if err := tx.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, err
+	}
+
+	var allItems []models.OrderItem
+	if err := tx.Where("order_id = ?", orderID).Find(&allItems).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, err
+	}
+	grossTotal := 0.0
+	for _, item := range allItems {
+		grossTotal += item.Total
+	}
+	subTotal, taxAmount, total := CalculateOrderTax(grossTotal, order.DiscountAmount, restaurant.PricesIncludeGST)
+	order.SubTotal = subTotal
+	order.TaxAmount = taxAmount
+	order.Total = total
 
 	if err := tx.Model(&order).Updates(map[string]interface{}{
-		"sub_total": order.SubTotal,
-		"total":     order.Total,
+		"sub_total":  order.SubTotal,
+		"tax_amount": order.TaxAmount,
+		"total":      order.Total,
 	}).Error; err != nil {
 		tx.Rollback()
 		log.Printf("❌ [UpdateOrder] Failed to update order totals: %v", err)
