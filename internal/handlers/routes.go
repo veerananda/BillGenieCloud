@@ -326,6 +326,15 @@ func SetupSubscriptionRoutes(router *gin.Engine, db *gorm.DB) {
 	log.Println("✅ Subscription routes registered")
 }
 
+// SetupWebhookRoutes registers public payment provider callbacks.
+func SetupWebhookRoutes(router *gin.Engine, db *gorm.DB) {
+	webhookHandler := NewSubscriptionWebhookHandler(db)
+
+	router.POST("/webhooks/razorpay", webhookHandler.HandleRazorpayWebhook)
+
+	log.Println("✅ Webhook routes registered")
+}
+
 // SetupPlatformRoutes registers BillGenie creator-only operations console API.
 func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 	ops := services.NewPlatformOpsService(db)
