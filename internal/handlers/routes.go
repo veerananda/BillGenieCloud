@@ -338,6 +338,7 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 		platform.POST("/restaurants/:restaurant_id/extend-trial", platformHandler.ExtendTrial)
 		platform.PUT("/restaurants/:restaurant_id/selection", platformHandler.UpdateSelection)
 		platform.PUT("/restaurants/:restaurant_id/active", platformHandler.SetActive)
+		platform.DELETE("/restaurants/:restaurant_id", platformHandler.DeleteRestaurant)
 	}
 
 	log.Println("✅ Platform ops routes registered (/platform/*)")

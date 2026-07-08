@@ -60,4 +60,16 @@ Update add-ons without changing subscription end date.
 { "reason": "Abuse", "is_active": false }
 ```
 
-All mutations append to `audit_logs` with action prefix `platform_*`.
+### `DELETE /platform/restaurants/:id`
+Permanently deletes the restaurant and **all** related data (users, orders, menu, inventory, tables, audit logs, etc.). Irreversible.
+
+```json
+{
+  "reason": "Duplicate test signup — customer requested removal",
+  "confirm_name": "Exact Restaurant Name"
+}
+```
+
+`confirm_name` must match the restaurant name (case-insensitive).
+
+All mutations append to `audit_logs` with action prefix `platform_*` (except delete, which is logged server-side before cascade).

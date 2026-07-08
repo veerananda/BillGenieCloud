@@ -268,6 +268,9 @@ func (h *TableHandler) SetTableOccupied(c *gin.Context) {
 		return
 	}
 
+	table.IsOccupied = true
+	table.CurrentOrderID = &req.OrderID
+
 	// Broadcast table status change to all connected clients
 	if globalHub != nil {
 		BroadcastTableUpdate(globalHub, restaurantID, &table)
@@ -305,6 +308,9 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update table"})
 		return
 	}
+
+	table.IsOccupied = false
+	table.CurrentOrderID = nil
 
 	// Broadcast table status change to all connected clients
 	if globalHub != nil {

@@ -135,3 +135,22 @@ func (h *PlatformHandler) SetActive(c *gin.Context) {
 		"restaurant": h.ops.BuildSummaryPublic(restaurant),
 	})
 }
+
+// DeleteRestaurant permanently removes a tenant and all related data.
+func (h *PlatformHandler) DeleteRestaurant(c *gin.Context) {
+	var req services.DeleteRestaurantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	err := h.ops.DeleteRestaurant(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		if err.Error() == "restaurant not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Restaurant permanently deleted"})
+}

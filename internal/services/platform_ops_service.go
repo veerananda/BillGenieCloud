@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -67,6 +68,11 @@ type UpdateSelectionRequest struct {
 type SetActiveRequest struct {
 	IsActive bool   `json:"is_active"`
 	Reason   string `json:"reason" validate:"required"`
+}
+
+type DeleteRestaurantRequest struct {
+	Reason      string `json:"reason" validate:"required"`
+	ConfirmName string `json:"confirm_name" validate:"required"`
 }
 
 type PlatformOpsService struct {
@@ -343,6 +349,137 @@ func (s *PlatformOpsService) SetActive(restaurantID string, req SetActiveRequest
 	}
 	s.writePlatformAudit(restaurantID, actor, action, reason, oldSnapshot, restaurant)
 	return &restaurant, nil
+}
+
+// DeleteRestaurant permanently removes a tenant and all related rows.
+func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRestaurantRequest, actor string) error {
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		return errors.New("reason is required")
+	}
+	confirmName := strings.TrimSpace(req.ConfirmName)
+	if confirmName == "" {
+		return errors.New("confirm_name is required")
+	}
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return errors.New("restaurant not found")
+		}
+		return err
+	}
+
+	if !strings.EqualFold(confirmName, strings.TrimSpace(restaurant.Name)) {
+		return errors.New("confirm_name does not match restaurant name")
+	}
+
+	snapshot, _ := json.Marshal(map[string]interface{}{
+		"restaurant": restaurant,
+		"reason":     reason,
+		"actor":      actor,
+	})
+	log.Printf("platform_delete_restaurant: id=%s name=%q actor=%q reason=%q snapshot=%s",
+		restaurantID, restaurant.Name, actor, reason, string(snapshot))
+
+	tx := s.db.Begin()
+
+	deleteWhere := func(model interface{}, query string, args ...interface{}) error {
+		if err := tx.Where(query, args...).Delete(model).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+		return nil
+	}
+
+	var userIDs []string
+	if err := tx.Model(&models.User{}).Where("restaurant_id = ?", restaurantID).Pluck("id", &userIDs).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	var orderIDs []string
+	if err := tx.Model(&models.Order{}).Where("restaurant_id = ?", restaurantID).Pluck("id", &orderIDs).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Model(&models.RestaurantTable{}).
+		Where("restaurant_id = ?", restaurantID).
+		Update("current_order_id", nil).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if len(orderIDs) > 0 {
+		if err := deleteWhere(&models.OrderItem{}, "order_id IN ?", orderIDs); err != nil {
+			return fmt.Errorf("delete order items: %w", err)
+		}
+	}
+
+	if err := deleteWhere(&models.Transaction{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete transactions: %w", err)
+	}
+	if err := deleteWhere(&models.Order{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete orders: %w", err)
+	}
+	if err := deleteWhere(&models.Inventory{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete inventory: %w", err)
+	}
+	if err := deleteWhere(&models.MenuItemIngredient{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete menu item ingredients: %w", err)
+	}
+	if err := deleteWhere(&models.MenuItem{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete menu items: %w", err)
+	}
+	if err := deleteWhere(&models.Ingredient{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete ingredients: %w", err)
+	}
+
+	if len(userIDs) > 0 {
+		if err := deleteWhere(&models.RefreshToken{}, "user_id IN ?", userIDs); err != nil {
+			return fmt.Errorf("delete refresh tokens: %w", err)
+		}
+		if err := deleteWhere(&models.PasswordReset{}, "user_id IN ?", userIDs); err != nil {
+			return fmt.Errorf("delete password resets: %w", err)
+		}
+		if err := deleteWhere(&models.LoginRecoveryOTP{}, "user_id IN ?", userIDs); err != nil {
+			return fmt.Errorf("delete login recovery otps: %w", err)
+		}
+	}
+
+	if err := deleteWhere(&models.UserSession{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete user sessions: %w", err)
+	}
+	if err := deleteWhere(&models.User{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete users: %w", err)
+	}
+	if err := deleteWhere(&models.RestaurantTable{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete tables: %w", err)
+	}
+	if err := deleteWhere(&models.EmailVerification{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete email verifications: %w", err)
+	}
+	if err := deleteWhere(&models.SubscriptionRenewal{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete subscription renewals: %w", err)
+	}
+	if err := deleteWhere(&models.TrialEligibility{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete trial eligibilities: %w", err)
+	}
+	if err := deleteWhere(&models.AuditLog{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete audit logs: %w", err)
+	}
+	if err := tx.Delete(&restaurant).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("delete restaurant: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("commit delete restaurant: %w", err)
+	}
+
+	log.Printf("platform_delete_restaurant: completed id=%s name=%q", restaurantID, restaurant.Name)
+	return nil
 }
 
 func (s *PlatformOpsService) buildSummary(r *models.Restaurant) PlatformRestaurantSummary {
