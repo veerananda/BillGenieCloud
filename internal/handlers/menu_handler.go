@@ -86,6 +86,10 @@ func (h *MenuHandler) CreateMenuItem(c *gin.Context) {
 
 	log.Printf("✅ Menu item created: %s (ID: %s)", menuItem.Name, menuItem.ID)
 
+	if globalHub != nil {
+		BroadcastMenuUpdate(globalHub, restaurantID.(string), "created", menuItem, "")
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message":   "Menu item created successfully",
 		"menu_item": menuItem,
@@ -261,7 +265,18 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 		return
 	}
 
+	if err := h.db.Where("id = ? AND restaurant_id = ?", menuItemID, restaurantID).
+		First(&item).Error; err != nil {
+		log.Printf("❌ Menu item reload failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	log.Printf("✅ Menu item updated: %s", item.Name)
+
+	if globalHub != nil {
+		BroadcastMenuUpdate(globalHub, restaurantID.(string), "updated", &item, "")
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "Menu item updated successfully",
@@ -294,6 +309,10 @@ func (h *MenuHandler) DeleteMenuItem(c *gin.Context) {
 	}
 
 	log.Printf("✅ Menu item deleted: %s", menuItemID)
+
+	if globalHub != nil {
+		BroadcastMenuUpdate(globalHub, restaurantID.(string), "deleted", nil, menuItemID)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "Menu item deleted successfully",
@@ -337,7 +356,13 @@ func (h *MenuHandler) ToggleAvailability(c *gin.Context) {
 		return
 	}
 
+	item.IsAvailable = newAvailability
+
 	log.Printf("✅ Menu item availability toggled: %s -> %v", item.Name, newAvailability)
+
+	if globalHub != nil {
+		BroadcastMenuUpdate(globalHub, restaurantID.(string), "updated", &item, "")
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Menu item availability toggled",

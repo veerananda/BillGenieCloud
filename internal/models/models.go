@@ -372,6 +372,13 @@ type CheckoutEventData struct {
 	LockedByName   string `json:"locked_by_name"`
 }
 
+// MenuEventData for WebSocket menu create/update/delete notifications.
+type MenuEventData struct {
+	Action     string    `json:"action"` // "created" | "updated" | "deleted"
+	MenuItemID string    `json:"menu_item_id,omitempty"`
+	MenuItem   *MenuItem `json:"menu_item,omitempty"`
+}
+
 // InventoryEventData for WebSocket inventory updates
 type InventoryEventData struct {
 	Kind         string  `json:"kind"` // "menu_item" | "ingredient"
