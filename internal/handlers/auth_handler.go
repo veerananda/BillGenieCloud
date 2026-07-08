@@ -61,43 +61,26 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	log.Printf("✅ New restaurant registered: %s (ID: %s, Code: %s)", restaurant.Name, restaurant.ID, restaurant.RestaurantCode)
 
-	// Generate JWT tokens for the newly created admin user
-	accessToken, err := h.authService.GenerateAccessToken(user)
-	if err != nil {
-		log.Printf("❌ Access token generation error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate access token"})
-		return
+	emailSent := true
+	if _, err := h.authService.SendVerificationEmail(restaurant.ID, restaurant.Email); err != nil {
+		log.Printf("⚠️ Verification email failed for %s: %v", restaurant.Email, err)
+		emailSent = false
 	}
-
-	refreshToken, err := h.authService.GenerateRefreshToken(user)
-	if err != nil {
-		log.Printf("❌ Refresh token generation error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
-		return
-	}
-
-	if err := h.authService.CreateUserSession(user, accessToken); err != nil {
-		log.Printf("❌ Session creation error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-		return
-	}
-
-	log.Printf("✅ JWT tokens generated for user: %s", user.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"access_token":        accessToken,
-		"refresh_token":       refreshToken,
-		"expires_in":          3600,
-		"token_type":          "Bearer",
-		"restaurant_id":       restaurant.ID,
-		"restaurant_code":     restaurant.RestaurantCode,
-		"user_id":             user.ID,
-		"role":                user.Role,
-		"login_id":            user.StaffKey,
-		"staff_key":           user.StaffKey,
-		"subscription_phase":  services.ParseStoredSubscriptionConfig(restaurant).Phase,
-		"requires_payment":    services.ParseStoredSubscriptionConfig(restaurant).Phase == services.SubscriptionPhasePendingPayment,
-		"message":             fmt.Sprintf("Restaurant registered successfully! Your login number is: %s", user.StaffKey),
+		"restaurant_id":               restaurant.ID,
+		"restaurant_code":             restaurant.RestaurantCode,
+		"email":                       restaurant.Email,
+		"user_id":                     user.ID,
+		"role":                        user.Role,
+		"login_id":                    user.StaffKey,
+		"staff_key":                   user.StaffKey,
+		"subscription_phase":          services.ParseStoredSubscriptionConfig(restaurant).Phase,
+		"requires_payment":            services.ParseStoredSubscriptionConfig(restaurant).Phase == services.SubscriptionPhasePendingPayment,
+		"requires_email_verification": true,
+		"is_email_verified":           restaurant.IsEmailVerified,
+		"verification_email_sent":     emailSent,
+		"message":                     fmt.Sprintf("Restaurant registered successfully! Verify your email, then sign in with login number: %s", user.StaffKey),
 	})
 }
 
@@ -279,11 +262,10 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ Password reset token generated for identifier: %s", req.Identifier)
-	log.Printf("🔗 Reset link emailed to user")
+	log.Printf("✅ Password reset request processed for identifier: %s", req.Identifier)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Password reset link has been sent to your email",
+		"message": "A password reset link has been sent to your registered email.",
 	})
 }
 
@@ -411,7 +393,30 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	log.Printf("✅ Email verified successfully")
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Email verified successfully. You can now login.",
+		"message": "Email verified successfully. You can now sign in to BillGenie.",
+	})
+}
+
+// GetVerificationStatus reports whether a restaurant email has been verified.
+// @Router /auth/verification-status [get]
+func (h *AuthHandler) GetVerificationStatus(c *gin.Context) {
+	restaurantID := strings.TrimSpace(c.Query("restaurant_id"))
+	email := strings.TrimSpace(c.Query("email"))
+
+	if restaurantID == "" || email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "restaurant_id and email are required"})
+		return
+	}
+
+	verified, err := h.authService.GetEmailVerificationStatus(restaurantID, email)
+	if err != nil {
+		log.Printf("❌ Verification status error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"is_email_verified": verified,
 	})
 }
 
