@@ -36,6 +36,7 @@ type RenewalQuote struct {
 	SubscriptionPhase     string                 `json:"subscription_phase"`
 	RequiresPlanSelection bool                   `json:"requires_plan_selection"`
 	RequiresPayment       bool                   `json:"requires_payment"`
+	CurrentSelection      *SubscriptionSelection `json:"current_selection,omitempty"`
 }
 
 type CreateRenewalOrderResult struct {
@@ -122,7 +123,7 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 		return nil, err
 	}
 
-	requiresPlan := NeedsPlanSelection(restaurant)
+	requiresPlan := AllowsPlanReview(restaurant)
 	requiresPayment := cfg.Phase == SubscriptionPhasePendingPayment || IsSubscriptionAccessBlocked(restaurant)
 
 	if selectionOverride != nil {
@@ -140,6 +141,7 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 	}
 	subtotal, gst, total, amountPaise := quoteAmounts(quote, billingCycle)
 	daysRemaining := int(time.Until(restaurant.SubscriptionEnd).Hours() / 24)
+	currentSelection := selection
 
 	return &RenewalQuote{
 		BillingCycle:          billingCycle,
@@ -154,6 +156,7 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 		SubscriptionPhase:     cfg.Phase,
 		RequiresPlanSelection: requiresPlan,
 		RequiresPayment:       requiresPayment,
+		CurrentSelection:      &currentSelection,
 	}, nil
 }
 
@@ -163,8 +166,8 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 		return nil, err
 	}
 
-	requiresPlan := NeedsPlanSelection(restaurant)
-	if requiresPlan && selectionOverride == nil {
+	requiresPlan := AllowsPlanReview(restaurant)
+	if requiresPlan && selectionOverride == nil && cfg.Phase != SubscriptionPhasePendingPayment {
 		return nil, errors.New("choose a subscription plan before payment")
 	}
 
