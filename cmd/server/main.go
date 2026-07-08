@@ -14,7 +14,6 @@ import (
 	"restaurant-api/internal/config"
 	"restaurant-api/internal/handlers"
 	"restaurant-api/internal/middleware"
-	"restaurant-api/internal/models"
 	"restaurant-api/internal/realtime"
 	"restaurant-api/internal/services"
 
@@ -122,19 +121,6 @@ func main() {
 				msg = err.Error()
 			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": msg})
-			return
-		}
-
-		var restaurant models.Restaurant
-		if err := db.Where("id = ?", claims.RestaurantID).First(&restaurant).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check subscription status"})
-			return
-		}
-		if services.IsSubscriptionAccessBlocked(&restaurant) {
-			c.JSON(http.StatusPaymentRequired, gin.H{
-				"error":   "subscription_expired",
-				"message": "Your subscription has expired. Please renew to continue.",
-			})
 			return
 		}
 
