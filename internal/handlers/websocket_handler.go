@@ -421,6 +421,30 @@ func BroadcastCheckoutEvent(hub *WebSocketHub, restaurantID, eventType string, d
 	log.Printf("📤 Broadcast %s: order %s by %s to room %s", eventType, data.OrderID, data.LockedByName, restaurantID)
 }
 
+// BroadcastMenuUpdate notifies clients that the menu changed.
+func BroadcastMenuUpdate(hub *WebSocketHub, restaurantID, action string, item *models.MenuItem, menuItemID string) {
+	if action == "" {
+		return
+	}
+	_ = hub
+	data := models.MenuEventData{
+		Action:     action,
+		MenuItemID: menuItemID,
+		MenuItem:   item,
+	}
+	if action == "deleted" && menuItemID == "" && item != nil {
+		data.MenuItemID = item.ID
+	}
+	publishEvent(restaurantID, "menu_updated", data)
+	if action == "deleted" {
+		log.Printf("📤 Broadcast menu_updated (deleted): %s to room %s", data.MenuItemID, restaurantID)
+		return
+	}
+	if item != nil {
+		log.Printf("📤 Broadcast menu_updated (%s): %s to room %s", action, item.Name, restaurantID)
+	}
+}
+
 // BroadcastInventoryUpdate broadcasts menu-item inventory changes
 func BroadcastInventoryUpdate(hub *WebSocketHub, restaurantID string, itemName string, quantity float64, isLow bool) {
 	_ = hub

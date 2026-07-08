@@ -371,6 +371,17 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 
 	log.Printf("🔵 [UpdateOrder] Found existing order #%d with %d items", order.OrderNumber, len(order.Items))
 
+	if len(req.Items) == 0 {
+		customerName := strings.TrimSpace(req.CustomerName)
+		if customerName != order.CustomerName {
+			if err := tx.Model(&order).Update("customer_name", customerName).Error; err != nil {
+				tx.Rollback()
+				return nil, nil, err
+			}
+			order.CustomerName = customerName
+		}
+	}
+
 	// Add new items to the order (one KOT batch per update)
 	var totalAdded float64 = 0
 	batchSubID := uuid.New().String()
