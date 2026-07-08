@@ -110,3 +110,13 @@ func NeedsPlanSelection(restaurant *models.Restaurant) bool {
 	}
 	return cfg.Phase == SubscriptionPhaseTrial && time.Now().After(restaurant.SubscriptionEnd)
 }
+
+// AllowsPlanReview is true when the customer may review or edit plan details at checkout
+// (first paid activation after signup, or post-trial plan selection).
+func AllowsPlanReview(restaurant *models.Restaurant) bool {
+	cfg := ParseStoredSubscriptionConfig(restaurant)
+	if cfg.Phase == SubscriptionPhasePendingPayment {
+		return true
+	}
+	return NeedsPlanSelection(restaurant)
+}
