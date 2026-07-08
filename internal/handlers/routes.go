@@ -33,10 +33,12 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 		public.POST("/auth/login", authHandler.Login)
 		public.POST("/auth/refresh", authHandler.RefreshToken)
 		public.POST("/auth/forgot-password", authHandler.ForgotPassword)
+		public.GET("/reset-password", authHandler.ResetPasswordPage)
 		public.POST("/auth/reset-password", authHandler.ResetPassword)
 		public.POST("/auth/forgot-login-id", authHandler.ForgotLoginID)
 		public.POST("/auth/verify-login-recovery", authHandler.VerifyLoginRecovery)
 		public.POST("/auth/verify-email", authHandler.VerifyEmail)
+		public.GET("/auth/verification-status", authHandler.GetVerificationStatus)
 		public.POST("/auth/resend-verification", authHandler.ResendVerificationEmail)
 		public.GET("/health", authHandler.HealthCheck)
 	}
