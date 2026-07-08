@@ -159,7 +159,10 @@ SERVER_PORT=3000
 JWT_SECRET=your-secret-key
 RAZORPAY_KEY_ID=your-key-id
 RAZORPAY_KEY_SECRET=your-secret
+RAZORPAY_WEBHOOK_SECRET=your-webhook-secret
 ```
+
+Configure Razorpay Dashboard → Webhooks → `https://billgenie-api.fly.dev/webhooks/razorpay` with events `payment.captured` (and optionally `payment.authorized`). Use the same secret as `RAZORPAY_WEBHOOK_SECRET`.
 
 ## License
 

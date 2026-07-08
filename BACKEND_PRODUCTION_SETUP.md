@@ -169,12 +169,15 @@ CORS_ALLOWED_ORIGINS=https://your-frontend-domain.com
 # Payment (if using)
 RAZORPAY_KEY_ID=<your-key>
 RAZORPAY_KEY_SECRET=<your-secret>
+RAZORPAY_WEBHOOK_SECRET=<webhook-secret-from-razorpay-dashboard>
 
 # Features
 ENABLE_PAYMENT=true
 ENABLE_WEBSOCKET=true
 ENABLE_LOGGING=true
 ```
+
+Razorpay webhook URL: `https://billgenie-api.fly.dev/webhooks/razorpay` (`payment.captured` recommended).
 
 ---
 

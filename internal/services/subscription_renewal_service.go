@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const subscriptionGSTPercent = 18
@@ -217,6 +218,12 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 		return nil, errors.New("payment gateway not configured")
 	}
 
+	if err := s.db.Model(&models.SubscriptionRenewal{}).
+		Where("restaurant_id = ? AND status = ?", restaurantID, "pending").
+		Update("status", "superseded").Error; err != nil {
+		return nil, err
+	}
+
 	pendingJSON, _ := json.Marshal(selection)
 	renewal := models.SubscriptionRenewal{
 		RestaurantID:     restaurantID,
@@ -291,21 +298,6 @@ func (s *SubscriptionRenewalService) VerifyRenewalPayment(restaurantID string, r
 		return nil, errors.New("missing payment verification fields")
 	}
 
-	var renewal models.SubscriptionRenewal
-	if err := s.db.Where("razorpay_order_id = ? AND restaurant_id = ?", orderID, restaurantID).First(&renewal).Error; err != nil {
-		return nil, errors.New("renewal order not found")
-	}
-	if renewal.Status == "completed" {
-		var restaurant models.Restaurant
-		if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
-			return nil, err
-		}
-		return &VerifyRenewalPaymentResult{
-			SubscriptionEnd: restaurant.SubscriptionEnd,
-			Message:         "Subscription already renewed",
-		}, nil
-	}
-
 	valid := false
 	if IsDevMockOrder(orderID) {
 		if strings.ToLower(os.Getenv("SERVER_ENV")) == "production" {
@@ -323,56 +315,147 @@ func (s *SubscriptionRenewalService) VerifyRenewalPayment(restaurantID string, r
 		return nil, errors.New("payment verification failed")
 	}
 
-	var restaurant models.Restaurant
-	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
-		return nil, err
-	}
-	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	return s.completeRenewalPayment(restaurantID, orderID, paymentID, req.Selection)
+}
 
-	selection := cfg.Selection
-	if len(renewal.PendingSelection) > 0 {
-		if err := json.Unmarshal(renewal.PendingSelection, &selection); err != nil {
-			return nil, err
+// ProcessRazorpayWebhook activates subscription when Razorpay notifies payment success.
+func (s *SubscriptionRenewalService) ProcessRazorpayWebhook(body []byte) error {
+	event, err := ParseRazorpayWebhookEvent(body)
+	if err != nil {
+		return err
+	}
+
+	orderID, paymentID, ok := event.PaymentReference()
+	if !ok {
+		return nil
+	}
+	if paymentID == "" {
+		return nil
+	}
+
+	_, err = s.completeRenewalPayment("", orderID, paymentID, nil)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errRenewalOrderNotFound) || errors.Is(err, errRenewalOrderStale) {
+		return nil
+	}
+	return err
+}
+
+var (
+	errRenewalOrderNotFound = errors.New("renewal order not found")
+	errRenewalOrderStale    = errors.New("renewal order is stale")
+)
+
+func (s *SubscriptionRenewalService) completeRenewalPayment(
+	restaurantID string,
+	orderID string,
+	paymentID string,
+	selectionOverride *SubscriptionSelection,
+) (*VerifyRenewalPaymentResult, error) {
+	orderID = strings.TrimSpace(orderID)
+	paymentID = strings.TrimSpace(paymentID)
+	if orderID == "" || paymentID == "" {
+		return nil, errors.New("missing payment verification fields")
+	}
+
+	var result VerifyRenewalPaymentResult
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var renewal models.SubscriptionRenewal
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("razorpay_order_id = ?", orderID)
+		if strings.TrimSpace(restaurantID) != "" {
+			query = query.Where("restaurant_id = ?", restaurantID)
 		}
-	}
-	if req.Selection != nil {
-		validated, err := ValidateSubscriptionSelection(*req.Selection)
-		if err != nil {
-			return nil, err
+		if err := query.First(&renewal).Error; err != nil {
+			return errRenewalOrderNotFound
 		}
-		selection = validated
-	}
-	if NeedsPlanSelection(&restaurant) && req.Selection == nil && len(renewal.PendingSelection) == 0 {
-		return nil, errors.New("subscription plan selection is required")
-	}
 
-	if err := s.applyPaidSelection(&restaurant, cfg, selection, renewal.BillingCycle); err != nil {
-		return nil, err
-	}
+		resolvedRestaurantID := renewal.RestaurantID
+		if strings.TrimSpace(restaurantID) != "" && resolvedRestaurantID != restaurantID {
+			return errRenewalOrderNotFound
+		}
 
-	now := time.Now()
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		var restaurant models.Restaurant
+		if err := tx.Where("id = ?", resolvedRestaurantID).First(&restaurant).Error; err != nil {
+			return err
+		}
+
+		if renewal.Status == "completed" {
+			result = VerifyRenewalPaymentResult{
+				SubscriptionEnd: restaurant.SubscriptionEnd,
+				Message:         "Subscription already renewed",
+			}
+			return nil
+		}
+		if renewal.Status != "pending" {
+			return fmt.Errorf("%w: %s", errRenewalOrderStale, renewal.Status)
+		}
+
+		cfg := ParseStoredSubscriptionConfig(&restaurant)
+		selection := cfg.Selection
+		if len(renewal.PendingSelection) > 0 {
+			if err := json.Unmarshal(renewal.PendingSelection, &selection); err != nil {
+				return err
+			}
+		}
+		if selectionOverride != nil {
+			validated, err := ValidateSubscriptionSelection(*selectionOverride)
+			if err != nil {
+				return err
+			}
+			selection = validated
+		}
+		if NeedsPlanSelection(&restaurant) && selectionOverride == nil && len(renewal.PendingSelection) == 0 {
+			return errors.New("subscription plan selection is required")
+		}
+
+		if err := s.applyPaidSelection(&restaurant, cfg, selection, renewal.BillingCycle); err != nil {
+			return err
+		}
+
+		now := time.Now()
+		renewalUpdate := tx.Model(&models.SubscriptionRenewal{}).
+			Where("id = ? AND status = ?", renewal.ID, "pending").
+			Updates(map[string]interface{}{
+				"status":       "completed",
+				"payment_id":   paymentID,
+				"completed_at": now,
+			})
+		if renewalUpdate.Error != nil {
+			return renewalUpdate.Error
+		}
+		if renewalUpdate.RowsAffected == 0 {
+			if err := tx.Where("id = ?", resolvedRestaurantID).First(&restaurant).Error; err != nil {
+				return err
+			}
+			result = VerifyRenewalPaymentResult{
+				SubscriptionEnd: restaurant.SubscriptionEnd,
+				Message:         "Subscription already renewed",
+			}
+			return nil
+		}
+
 		if err := tx.Save(&restaurant).Error; err != nil {
 			return err
 		}
-		renewal.Status = "completed"
-		renewal.PaymentID = paymentID
-		renewal.CompletedAt = &now
-		if err := tx.Save(&renewal).Error; err != nil {
+
+		if err := s.trialService.MarkConverted(resolvedRestaurantID); err != nil {
 			return err
 		}
-		return s.trialService.MarkConverted(restaurantID)
-	}); err != nil {
+
+		message := "Subscription activated successfully"
+		if cfg.Phase == SubscriptionPhaseActive {
+			message = "Subscription renewed successfully"
+		}
+		result = VerifyRenewalPaymentResult{
+			SubscriptionEnd: restaurant.SubscriptionEnd,
+			Message:         message,
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	message := "Subscription activated successfully"
-	if cfg.Phase == SubscriptionPhaseActive {
-		message = "Subscription renewed successfully"
-	}
-
-	return &VerifyRenewalPaymentResult{
-		SubscriptionEnd: restaurant.SubscriptionEnd,
-		Message:         message,
-	}, nil
+	return &result, nil
 }
