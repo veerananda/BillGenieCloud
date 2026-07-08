@@ -240,15 +240,15 @@ func (s *AuthService) SendVerificationEmail(restaurantID, email string) (string,
 		return "", err
 	}
 
-	publicBase := os.Getenv("PUBLIC_APP_URL")
-	if publicBase == "" {
-		publicBase = "http://localhost:3000"
-	}
+	publicBase := publicAppBaseURL()
 	verificationLink := fmt.Sprintf("%s/verify-email?token=%s", publicBase, token)
-	deepLink := fmt.Sprintf("billgenie://verify-email?token=%s", token)
 
 	subject := "Verify your BillGenie email"
-	body := fmt.Sprintf("Hi,\n\nPlease verify your email by clicking this link:\n%s\n\nIf the link does not open the app, you can use this app link:\n%s\n\nThis link expires in 24 hours.\n\n- BillGenie", verificationLink, deepLink)
+	body := fmt.Sprintf(
+		"Hi,\n\nPlease verify your email by opening this link:\n%s\n\n"+
+			"This link expires in 24 hours. You must verify before you can sign in.\n\n- BillGenie",
+		verificationLink,
+	)
 
 	if err := sendEmailSMTP(email, subject, body); err != nil {
 		fmt.Printf("❌ Failed to send verification email to %s: %v\n", email, err)
@@ -291,6 +291,25 @@ func (s *AuthService) VerifyEmail(token string) error {
 	}
 
 	return nil
+}
+
+// GetEmailVerificationStatus returns whether the restaurant email matches and is verified.
+func (s *AuthService) GetEmailVerificationStatus(restaurantID, email string) (bool, error) {
+	restaurantID = strings.TrimSpace(restaurantID)
+	email = strings.TrimSpace(email)
+	if restaurantID == "" || email == "" {
+		return false, errors.New("restaurant_id and email are required")
+	}
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ? AND email = ?", restaurantID, email).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return false, errors.New("restaurant not found for that email")
+		}
+		return false, err
+	}
+
+	return restaurant.IsEmailVerified, nil
 }
 
 // ResendVerificationEmail resends verification email
@@ -340,6 +359,15 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	}
 	if !restaurant.IsActive {
 		return nil, errors.New("restaurant account is suspended. Contact BillGenie support")
+	}
+	if !restaurant.IsEmailVerified {
+		var verificationCount int64
+		if err := s.db.Model(&models.EmailVerification{}).Where("restaurant_id = ?", restaurant.ID).Count(&verificationCount).Error; err != nil {
+			return nil, err
+		}
+		if verificationCount > 0 {
+			return nil, errors.New("please verify your email before signing in. Check your inbox for the verification link sent during registration")
+		}
 	}
 
 	// Verify password
@@ -685,6 +713,14 @@ func (s *AuthService) ForgotPassword(identifier string) (string, error) {
 		return "", errors.New("staff members cannot reset password here. Please ask your admin to reset your password")
 	}
 
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", user.RestaurantID).First(&restaurant).Error; err != nil {
+		return "", errors.New("restaurant not found")
+	}
+	if !restaurant.IsEmailVerified {
+		return "", errors.New("your email is not verified yet. Check your inbox for the verification link sent during registration")
+	}
+
 	// Generate reset token (32-character random string)
 	resetToken := generateRandomToken(32)
 
@@ -701,15 +737,15 @@ func (s *AuthService) ForgotPassword(identifier string) (string, error) {
 		return "", fmt.Errorf("failed to create password reset token: %w", err)
 	}
 
-	publicBase := os.Getenv("PUBLIC_APP_URL")
-	if publicBase == "" {
-		publicBase = "http://localhost:3000"
-	}
+	publicBase := publicAppBaseURL()
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", publicBase, resetToken)
-	deepLink := fmt.Sprintf("billgenie://reset-password?token=%s", resetToken)
 
 	subject := "Reset your BillGenie password"
-	body := fmt.Sprintf("Hi,\n\nYou requested to reset your password. Click the link below to set a new password:\n%s\n\nIf the link does not open the app, you can use this app link:\n%s\n\nThis link expires in 1 hour.\nIf you did not request this, ignore this email.\n\n- BillGenie", resetLink, deepLink)
+	body := fmt.Sprintf(
+		"Hi,\n\nYou requested to reset your password.\n\nOpen this link to choose a new password:\n%s\n\n"+
+			"This link expires in 1 hour and works only once.\nIf you did not request this, ignore this email.\n\n- BillGenie",
+		resetLink,
+	)
 
 	if err := sendEmailSMTP(user.Email, subject, body); err != nil {
 		return "", fmt.Errorf("failed to send reset email: %w", err)
@@ -900,6 +936,14 @@ func (s *AuthService) findAdminByRecoveryIdentifier(identifier string) (*models.
 		return nil, errors.New("login recovery is only available for restaurant admin accounts")
 	}
 
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", user.RestaurantID).First(&restaurant).Error; err != nil {
+		return nil, errors.New("restaurant not found")
+	}
+	if !restaurant.IsEmailVerified {
+		return nil, errors.New("your email is not verified yet. Check your inbox for the verification link sent during registration")
+	}
+
 	return &user, nil
 }
 
@@ -912,7 +956,6 @@ func generateNumericOTP(length int) string {
 	return string(b)
 }
 
-// generateRandomToken generates a random token of specified length
 func generateRandomToken(length int) string {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, length)
@@ -920,6 +963,18 @@ func generateRandomToken(length int) string {
 		b[i] = charset[rand.Intn(len(charset))]
 	}
 	return string(b)
+}
+
+// publicAppBaseURL is the HTTPS base for links in emails (reset password, verify email).
+// Falls back to API_BASE_URL so Fly deployments work without a separate PUBLIC_APP_URL.
+func publicAppBaseURL() string {
+	if base := strings.TrimSpace(os.Getenv("PUBLIC_APP_URL")); base != "" {
+		return strings.TrimRight(base, "/")
+	}
+	if base := strings.TrimSpace(os.Getenv("API_BASE_URL")); base != "" {
+		return strings.TrimRight(base, "/")
+	}
+	return "http://localhost:3000"
 }
 
 // sendEmailSMTP sends an email using SMTP settings from environment variables
