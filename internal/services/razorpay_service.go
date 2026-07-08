@@ -117,6 +117,22 @@ func (r *RazorpayService) VerifyPaymentSignature(orderID, paymentID, signature s
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
+func (r *RazorpayService) WebhookSecret() string {
+	return strings.TrimSpace(os.Getenv("RAZORPAY_WEBHOOK_SECRET"))
+}
+
+// VerifyWebhookSignature validates Razorpay webhook callbacks (X-Razorpay-Signature).
+func (r *RazorpayService) VerifyWebhookSignature(body []byte, signature string) bool {
+	secret := r.WebhookSecret()
+	if secret == "" || signature == "" || len(body) == 0 {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
 // DevMockOrderID prefix for non-production testing without Razorpay keys.
 const DevMockOrderIDPrefix = "order_dev_"
 
