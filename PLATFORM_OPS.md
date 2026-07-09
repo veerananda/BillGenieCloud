@@ -72,4 +72,48 @@ Permanently deletes the restaurant and **all** related data (users, orders, menu
 
 `confirm_name` must match the restaurant name (case-insensitive).
 
+### `POST /platform/restaurants/:id/menu/bulk`
+Upsert menu items from platform onboarding (JSON body; Excel parsed client-side).
+
+```json
+{
+  "reason": "Onboarding — menu from customer spreadsheet",
+  "items": [
+    {
+      "category": "Main Course",
+      "type": "Paneer Butter Masala",
+      "price": 280,
+      "is_veg": true,
+      "is_available": true,
+      "is_readily_available": false
+    }
+  ]
+}
+```
+
+Excel columns: `category`, `type`, `price`, `isVeg`, `isAvailable`, `isReadilyAvailable`.  
+Upsert key: **category + type** (name), case-insensitive.
+
+### `POST /platform/restaurants/:id/recipes/bulk`
+Replace recipes per menu item; ingredients are auto-created for inventory (no stock columns).
+
+```json
+{
+  "reason": "Onboarding — recipes from customer spreadsheet",
+  "items": [
+    {
+      "category": "Burger",
+      "type": "Veg",
+      "ingredient_name": "Patty",
+      "unit": "grams",
+      "quantity": 120
+    }
+  ]
+}
+```
+
+Excel columns: `category`, `type`, `Ingredient name`, `unit`, `quantity`.  
+Use the same **category** and **type** values as the menu sheet (e.g. Burger + Veg vs Pizza + Veg are different items).  
+Upload menu bulk **before** recipes. Each menu in the file gets its full recipe replaced.
+
 All mutations append to `audit_logs` with action prefix `platform_*` (except delete, which is logged server-side before cascade).
