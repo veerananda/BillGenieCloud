@@ -94,6 +94,7 @@ func main() {
 	handlers.SetupIngredientRoutes(router, db)
 	handlers.SetupPublicRoutes(router, db)
 	handlers.SetupTrackRoutes(router, db)
+	handlers.SetupBillRoutes(router, db)
 	handlers.SetupSubscriptionRoutes(router, db)
 	handlers.SetupWebhookRoutes(router, db)
 	handlers.SetupPlatformRoutes(router, db)

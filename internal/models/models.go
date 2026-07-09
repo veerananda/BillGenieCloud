@@ -121,6 +121,9 @@ type Order struct {
 	UpiAmount       float64    `json:"upi_amount,omitempty" gorm:"type:numeric(10,2);default:0"`
 	TrackingToken     string     `json:"tracking_token,omitempty" gorm:"type:varchar(64);index"`
 	TrackingExpiresAt *time.Time `json:"tracking_expires_at,omitempty"`
+	BillToken           string     `json:"bill_token,omitempty" gorm:"type:varchar(64);index"`
+	BillExpiresAt       *time.Time `json:"bill_expires_at,omitempty"`
+	BillPreviewDiscount float64    `json:"bill_preview_discount,omitempty" gorm:"type:numeric(10,2);default:0"`
 	Notes           string     `json:"notes" gorm:"type:text"`
 	CreatedByUserID string     `json:"created_by_user_id"`
 	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
