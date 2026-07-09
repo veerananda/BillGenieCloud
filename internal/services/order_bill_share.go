@@ -1,7 +1,9 @@
 package services
 
 import (
+	"context"
 	"errors"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -11,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const billShareTTL = 4 * time.Hour
+const billShareTTL = 1 * time.Hour
 
 // BillItemView is a single line on the public customer bill page.
 type BillItemView struct {
@@ -173,6 +175,7 @@ func (s *OrderService) GetOrderByBillToken(token string) (*models.Order, *models
 	}
 
 	if order.BillExpiresAt != nil && time.Now().After(*order.BillExpiresAt) {
+		_ = s.clearBillShareToken(order.ID)
 		return nil, nil, errors.New("bill link expired")
 	}
 
@@ -182,4 +185,46 @@ func (s *OrderService) GetOrderByBillToken(token string) (*models.Order, *models
 	}
 
 	return &order, &restaurant, nil
+}
+
+func (s *OrderService) clearBillShareToken(orderID string) error {
+	return s.db.Model(&models.Order{}).Where("id = ?", orderID).Updates(map[string]interface{}{
+		"bill_token":            "",
+		"bill_expires_at":       nil,
+		"bill_preview_discount": 0,
+		"updated_at":            time.Now(),
+	}).Error
+}
+
+// CleanupExpiredBillTokens removes bill share tokens that have passed their expiry.
+func (s *OrderService) CleanupExpiredBillTokens() (int64, error) {
+	result := s.db.Model(&models.Order{}).
+		Where("bill_token <> '' AND bill_expires_at IS NOT NULL AND bill_expires_at < ?", time.Now()).
+		Updates(map[string]interface{}{
+			"bill_token":            "",
+			"bill_expires_at":       nil,
+			"bill_preview_discount": 0,
+			"updated_at":            time.Now(),
+		})
+	return result.RowsAffected, result.Error
+}
+
+// StartBillTokenCleanup runs periodic cleanup of expired bill share links.
+func (s *OrderService) StartBillTokenCleanup(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Minute)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if count, err := s.CleanupExpiredBillTokens(); err != nil {
+					log.Printf("bill token cleanup failed: %v", err)
+				} else if count > 0 {
+					log.Printf("cleared %d expired bill share token(s)", count)
+				}
+			}
+		}
+	}()
 }
