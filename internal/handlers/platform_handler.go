@@ -154,3 +154,53 @@ func (h *PlatformHandler) DeleteRestaurant(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Restaurant permanently deleted"})
 }
+
+// BulkUploadMenu imports or updates menu items for a restaurant (platform onboarding).
+func (h *PlatformHandler) BulkUploadMenu(c *gin.Context) {
+	var req services.BulkMenuUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.ops.BulkUploadMenu(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		if err.Error() == "restaurant not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if globalHub != nil {
+		restaurantID := c.Param("restaurant_id")
+		for i := range result.Items {
+			BroadcastMenuUpdate(globalHub, restaurantID, "updated", &result.Items[i], "")
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Menu bulk upload completed",
+		"result":  result,
+	})
+}
+
+// BulkUploadRecipes imports recipes (ingredients auto-created for inventory).
+func (h *PlatformHandler) BulkUploadRecipes(c *gin.Context) {
+	var req services.BulkRecipesUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.ops.BulkUploadRecipes(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		if err.Error() == "restaurant not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Recipes bulk upload completed",
+		"result":  result,
+	})
+}
