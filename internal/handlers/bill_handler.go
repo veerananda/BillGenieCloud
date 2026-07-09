@@ -59,9 +59,9 @@ func (h *BillHandler) BillDownload(c *gin.Context) {
 		return
 	}
 
-	filename := fmt.Sprintf("bill-%d.txt", summary.OrderNumber)
+	filename := fmt.Sprintf("bill-%d.html", summary.OrderNumber)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(buildBillReceiptText(*summary)))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(buildBillDownloadHTML(*summary)))
 }
 
 func billErrorHTML(message string) string {
@@ -91,68 +91,25 @@ func subtotalLabelBill(pricesIncludeGST bool) string {
 	return "Subtotal"
 }
 
-func buildBillReceiptText(summary services.BillSummaryView) string {
-	var lines []string
-	divider := "--------------------------------"
-
-	if summary.RestaurantName != "" {
-		lines = append(lines, summary.RestaurantName)
-	}
-	if summary.Address != "" {
-		lines = append(lines, summary.Address)
-	}
-	if summary.ContactNumber != "" {
-		lines = append(lines, summary.ContactNumber)
-	}
-	lines = append(lines, "")
-	lines = append(lines, "BILL SUMMARY")
-	lines = append(lines, divider)
-	lines = append(lines, fmt.Sprintf("Order: #%d", summary.OrderNumber))
-	if summary.TableNumber != "" {
-		lines = append(lines, fmt.Sprintf("Table: %s", summary.TableNumber))
-	}
-	if summary.CustomerName != "" && summary.CustomerName != "Guest" {
-		lines = append(lines, fmt.Sprintf("Customer: %s", summary.CustomerName))
-	}
-	if !summary.CreatedAt.IsZero() {
-		lines = append(lines, fmt.Sprintf("Date: %s", formatBillDateTime(summary.CreatedAt)))
-	}
-	lines = append(lines, divider)
-	lines = append(lines, "Items")
-	for _, item := range summary.Items {
-		lines = append(lines, fmt.Sprintf("%d x %s", item.Quantity, item.Name))
-		lines = append(lines, fmt.Sprintf("   %s", formatBillCurrency(item.Total)))
-	}
-	lines = append(lines, divider)
-	if summary.SubTotal > 0 {
-		lines = append(lines, fmt.Sprintf("%s: %s", subtotalLabelBill(summary.PricesIncludeGST), formatBillCurrency(summary.SubTotal)))
-	}
-	if summary.TaxAmount > 0 {
-		lines = append(lines, fmt.Sprintf("GST (5%%): %s", formatBillCurrency(summary.TaxAmount)))
-	}
-	if summary.DiscountAmount > 0 {
-		lines = append(lines, fmt.Sprintf("Discount: -%s", formatBillCurrency(summary.DiscountAmount)))
-	}
-	lines = append(lines, fmt.Sprintf("Total: %s", formatBillCurrency(summary.Total)))
-	if summary.IsPaid && summary.PaymentMethod != "" {
-		lines = append(lines, fmt.Sprintf("Payment: %s", strings.ToUpper(summary.PaymentMethod)))
-	} else {
-		lines = append(lines, "Payment: Pending at restaurant")
-	}
-	lines = append(lines, divider)
-	lines = append(lines, "Thank you!")
-	return strings.Join(lines, "\n")
+func buildBillDownloadHTML(summary services.BillSummaryView) string {
+	return strings.Replace(renderCustomerBillDocument(summary), "<!--CUSTOMER_CHROME-->", "", 1)
 }
 
 func renderBillPageHTML(token string, summary services.BillSummaryView) string {
-	title := summary.RestaurantName
-	if title == "" {
-		title = "BillGenie"
-	}
-
+	doc := renderCustomerBillDocument(summary)
 	statusBadge := `<span class="badge pending">Review bill — pay at restaurant</span>`
 	if summary.IsPaid {
 		statusBadge = `<span class="badge paid">Paid</span>`
+	}
+	chrome := fmt.Sprintf(`%s<div class="actions"><a class="btn btn-primary" href="/b/%s/download">Download bill</a></div><p class="note">Please verify your bill. Payment is collected by restaurant staff.</p>`,
+		statusBadge, token)
+	return strings.Replace(doc, "<!--CUSTOMER_CHROME-->", chrome, 1)
+}
+
+func renderCustomerBillDocument(summary services.BillSummaryView) string {
+	title := summary.RestaurantName
+	if title == "" {
+		title = "BillGenie"
 	}
 
 	var itemRows strings.Builder
@@ -189,6 +146,12 @@ func renderBillPageHTML(token string, summary services.BillSummaryView) string {
 		meta += fmt.Sprintf(" · Table %s", escapeBillHTML(summary.TableNumber))
 	}
 	dateLine := formatBillDateTime(summary.CreatedAt)
+	customerLine := ""
+	if summary.CustomerName != "" && summary.CustomerName != "Guest" &&
+		summary.CustomerName != "Takeaway" && summary.CustomerName != "Counter" &&
+		summary.CustomerName != "Self Service" {
+		customerLine = fmt.Sprintf(`<p class="customer">Customer: %s</p>`, escapeBillHTML(summary.CustomerName))
+	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -198,60 +161,55 @@ func renderBillPageHTML(token string, summary services.BillSummaryView) string {
   <title>Bill #%d</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
-    .wrap { max-width: 480px; margin: 0 auto; padding: 20px 16px 40px; }
-    .card { background: #fff; border-radius: 16px; box-shadow: 0 4px 24px rgba(15,23,42,.08); overflow: hidden; }
-    .head { padding: 20px 20px 12px; text-align: center; border-bottom: 1px solid #e2e8f0; }
-    .head h1 { margin: 0; font-size: 1.25rem; }
-    .head p { margin: 6px 0 0; color: #64748b; font-size: .9rem; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f8fafc; color: #0f172a; padding: 24px 16px; }
+    .sheet { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 18px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 10px 30px rgba(15,23,42,.08); }
+    .head { padding: 24px 20px 18px; text-align: center; background: linear-gradient(180deg, #eff6ff 0%%, #ffffff 100%%); border-bottom: 1px solid #e2e8f0; }
+    .brand { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 8px; }
+    .head h1 { margin: 0; font-size: 1.35rem; line-height: 1.3; }
+    .meta, .date, .customer { margin: 6px 0 0; color: #64748b; font-size: .92rem; }
     .badge { display: inline-block; margin-top: 12px; padding: 6px 12px; border-radius: 999px; font-size: .8rem; font-weight: 600; }
     .badge.pending { background: #fef3c7; color: #92400e; }
     .badge.paid { background: #dcfce7; color: #166534; }
-    .body { padding: 16px 20px 20px; }
+    .body { padding: 18px 20px 24px; }
     table { width: 100%%; border-collapse: collapse; font-size: .95rem; }
-    th { text-align: left; color: #94a3b8; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; padding-bottom: 8px; }
+    th { text-align: left; color: #94a3b8; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
     th.qty, th.amount, td.qty, td.amount { text-align: right; }
-    td { padding: 10px 0; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
-    .item-name { padding-right: 8px; }
-    .totals { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
-    .row { display: flex; justify-content: space-between; padding: 4px 0; color: #475569; font-size: .95rem; }
+    td { padding: 12px 0; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+    .item-name { padding-right: 10px; font-weight: 500; }
+    .totals { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e2e8f0; }
+    .row { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; color: #475569; font-size: .95rem; }
     .row.discount { color: #16a34a; }
-    .row.total { margin-top: 8px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 1.15rem; font-weight: 700; color: #0f172a; }
-    .actions { display: flex; gap: 10px; margin-top: 20px; }
-  .btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; padding: 12px 14px; border-radius: 12px; font-size: .95rem; font-weight: 600; text-decoration: none; border: none; cursor: pointer; }
+    .row.total { margin-top: 10px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 1.2rem; font-weight: 800; color: #0f172a; }
+    .actions { margin-top: 20px; }
+    .btn { display: flex; width: 100%%; align-items: center; justify-content: center; padding: 12px 14px; border-radius: 12px; font-size: .95rem; font-weight: 600; text-decoration: none; }
     .btn-primary { background: #2563eb; color: #fff; }
-    .btn-secondary { background: #f1f5f9; color: #0f172a; }
     .note { margin-top: 16px; text-align: center; color: #94a3b8; font-size: .82rem; line-height: 1.4; }
-    @media print { body { background: #fff; } .actions, .note { display: none; } .wrap { padding: 0; } .card { box-shadow: none; } }
+    .footer { margin-top: 18px; text-align: center; color: #94a3b8; font-size: .85rem; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <div class="head">
-        <h1>%s</h1>
-        <p>%s</p>
+  <div class="sheet">
+    <div class="head">
+      <div class="brand">Bill Summary</div>
+      <h1>%s</h1>
+      <p class="meta">%s</p>
+      %s
+      %s
+      <!--CUSTOMER_CHROME-->
+    </div>
+    <div class="body">
+      <table>
+        <thead><tr><th>Item</th><th class="qty">Qty</th><th class="amount">Amount</th></tr></thead>
+        <tbody>%s</tbody>
+      </table>
+      <div class="totals">
         %s
         %s
+        %s
+        <div class="row total"><span>Total</span><span>%s</span></div>
+        %s
       </div>
-      <div class="body">
-        <table>
-          <thead><tr><th>Item</th><th class="qty">Qty</th><th class="amount">Amount</th></tr></thead>
-          <tbody>%s</tbody>
-        </table>
-        <div class="totals">
-          %s
-          %s
-          %s
-          <div class="row total"><span>Total</span><span>%s</span></div>
-          %s
-        </div>
-        <div class="actions">
-          <a class="btn btn-primary" href="/b/%s/download">Download bill</a>
-          <button class="btn btn-secondary" type="button" onclick="window.print()">Print / Save PDF</button>
-        </div>
-        <p class="note">Please verify your bill. Payment is collected by restaurant staff.</p>
-      </div>
+      <p class="footer">Thank you for dining with us.</p>
     </div>
   </div>
 </body>
@@ -259,15 +217,14 @@ func renderBillPageHTML(token string, summary services.BillSummaryView) string {
 		summary.OrderNumber,
 		escapeBillHTML(title),
 		meta,
-		statusBadge,
 		dateLineHTML(dateLine),
+		customerLine,
 		itemRows.String(),
 		subtotalRow,
 		taxRow,
 		discountRow,
 		formatBillCurrency(summary.Total),
 		paymentRow,
-		token,
 	)
 }
 
