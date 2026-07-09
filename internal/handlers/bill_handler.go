@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 // SetupBillRoutes registers public customer bill pages (no auth).
 func SetupBillRoutes(router *gin.Engine, db *gorm.DB) {
 	orderService := services.NewOrderService(db)
+	orderService.StartBillTokenCleanup(context.Background())
 	handler := &BillHandler{orderService: orderService}
 
 	router.GET("/b/:token", handler.BillPage)
@@ -59,9 +61,16 @@ func (h *BillHandler) BillDownload(c *gin.Context) {
 		return
 	}
 
-	filename := fmt.Sprintf("bill-%d.html", summary.OrderNumber)
+	pdfBytes, err := buildBillPDF(*summary)
+	if err != nil {
+		log.Printf("bill PDF generation failed: %v", err)
+		c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(billErrorHTML("Could not generate bill PDF. Please try again.")))
+		return
+	}
+
+	filename := fmt.Sprintf("bill-%d.pdf", summary.OrderNumber)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(buildBillDownloadHTML(*summary)))
+	c.Data(http.StatusOK, "application/pdf", pdfBytes)
 }
 
 func billErrorHTML(message string) string {
@@ -91,9 +100,6 @@ func subtotalLabelBill(pricesIncludeGST bool) string {
 	return "Subtotal"
 }
 
-func buildBillDownloadHTML(summary services.BillSummaryView) string {
-	return strings.Replace(renderCustomerBillDocument(summary), "<!--CUSTOMER_CHROME-->", "", 1)
-}
 
 func renderBillPageHTML(token string, summary services.BillSummaryView) string {
 	doc := renderCustomerBillDocument(summary)
@@ -101,9 +107,9 @@ func renderBillPageHTML(token string, summary services.BillSummaryView) string {
 	if summary.IsPaid {
 		statusBadge = `<span class="badge paid">Paid</span>`
 	}
-	chrome := fmt.Sprintf(`%s<div class="actions"><a class="btn btn-primary" href="/b/%s/download">Download bill</a></div><p class="note">Please verify your bill. Payment is collected by restaurant staff.</p>`,
-		statusBadge, token)
-	return strings.Replace(doc, "<!--CUSTOMER_CHROME-->", chrome, 1)
+	doc = strings.Replace(doc, "<!--BILL_BADGE-->", statusBadge, 1)
+	actions := fmt.Sprintf(`<div class="actions-wrap"><div class="actions"><a class="btn btn-primary" href="/b/%s/download">Download bill (PDF)</a></div><p class="note">Please verify your bill. Payment is collected by restaurant staff. This link expires in 1 hour.</p></div>`, token)
+	return strings.Replace(doc, "<!--BILL_ACTIONS-->", actions, 1)
 }
 
 func renderCustomerBillDocument(summary services.BillSummaryView) string {
@@ -161,8 +167,9 @@ func renderCustomerBillDocument(summary services.BillSummaryView) string {
   <title>Bill #%d</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f8fafc; color: #0f172a; padding: 24px 16px; }
-    .sheet { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 18px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 10px 30px rgba(15,23,42,.08); }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f8fafc; color: #0f172a; padding: 24px 16px 40px; }
+    .page { max-width: 420px; margin: 0 auto; }
+    .sheet { background: #fff; border-radius: 18px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 10px 30px rgba(15,23,42,.08); }
     .head { padding: 24px 20px 18px; text-align: center; background: linear-gradient(180deg, #eff6ff 0%%, #ffffff 100%%); border-bottom: 1px solid #e2e8f0; }
     .brand { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 8px; }
     .head h1 { margin: 0; font-size: 1.35rem; line-height: 1.3; }
@@ -180,7 +187,8 @@ func renderCustomerBillDocument(summary services.BillSummaryView) string {
     .row { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; color: #475569; font-size: .95rem; }
     .row.discount { color: #16a34a; }
     .row.total { margin-top: 10px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 1.2rem; font-weight: 800; color: #0f172a; }
-    .actions { margin-top: 20px; }
+    .actions { margin-top: 0; }
+    .actions-wrap { margin-top: 20px; }
     .btn { display: flex; width: 100%%; align-items: center; justify-content: center; padding: 12px 14px; border-radius: 12px; font-size: .95rem; font-weight: 600; text-decoration: none; }
     .btn-primary { background: #2563eb; color: #fff; }
     .note { margin-top: 16px; text-align: center; color: #94a3b8; font-size: .82rem; line-height: 1.4; }
@@ -188,29 +196,32 @@ func renderCustomerBillDocument(summary services.BillSummaryView) string {
   </style>
 </head>
 <body>
-  <div class="sheet">
-    <div class="head">
-      <div class="brand">Bill Summary</div>
-      <h1>%s</h1>
-      <p class="meta">%s</p>
-      %s
-      %s
-      <!--CUSTOMER_CHROME-->
-    </div>
-    <div class="body">
-      <table>
-        <thead><tr><th>Item</th><th class="qty">Qty</th><th class="amount">Amount</th></tr></thead>
-        <tbody>%s</tbody>
-      </table>
-      <div class="totals">
+  <div class="page">
+    <div class="sheet">
+      <div class="head">
+        <div class="brand">Bill Summary</div>
+        <h1>%s</h1>
+        <p class="meta">%s</p>
         %s
         %s
-        %s
-        <div class="row total"><span>Total</span><span>%s</span></div>
-        %s
+        <!--BILL_BADGE-->
       </div>
-      <p class="footer">Thank you for dining with us.</p>
+      <div class="body">
+        <table>
+          <thead><tr><th>Item</th><th class="qty">Qty</th><th class="amount">Amount</th></tr></thead>
+          <tbody>%s</tbody>
+        </table>
+        <div class="totals">
+          %s
+          %s
+          %s
+          <div class="row total"><span>Total</span><span>%s</span></div>
+          %s
+        </div>
+        <p class="footer">Thank you for dining with us.</p>
+      </div>
     </div>
+    <!--BILL_ACTIONS-->
   </div>
 </body>
 </html>`,
