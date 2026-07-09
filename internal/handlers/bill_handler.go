@@ -61,16 +61,9 @@ func (h *BillHandler) BillDownload(c *gin.Context) {
 		return
 	}
 
-	pdfBytes, err := buildBillPDF(*summary)
-	if err != nil {
-		log.Printf("bill PDF generation failed: %v", err)
-		c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(billErrorHTML("Could not generate bill PDF. Please try again.")))
-		return
-	}
-
-	filename := fmt.Sprintf("bill-%d.pdf", summary.OrderNumber)
+	filename := fmt.Sprintf("bill-%d.html", summary.OrderNumber)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(http.StatusOK, "application/pdf", pdfBytes)
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(buildBillDownloadHTML(*summary)))
 }
 
 func billErrorHTML(message string) string {
@@ -101,6 +94,12 @@ func subtotalLabelBill(pricesIncludeGST bool) string {
 }
 
 
+func buildBillDownloadHTML(summary services.BillSummaryView) string {
+	doc := renderCustomerBillDocument(summary)
+	doc = strings.Replace(doc, "<!--BILL_BADGE-->", "", 1)
+	return strings.Replace(doc, "<!--BILL_ACTIONS-->", "", 1)
+}
+
 func renderBillPageHTML(token string, summary services.BillSummaryView) string {
 	doc := renderCustomerBillDocument(summary)
 	statusBadge := `<span class="badge pending">Review bill — pay at restaurant</span>`
@@ -108,7 +107,7 @@ func renderBillPageHTML(token string, summary services.BillSummaryView) string {
 		statusBadge = `<span class="badge paid">Paid</span>`
 	}
 	doc = strings.Replace(doc, "<!--BILL_BADGE-->", statusBadge, 1)
-	actions := fmt.Sprintf(`<div class="actions-wrap"><div class="actions"><a class="btn btn-primary" href="/b/%s/download">Download bill (PDF)</a></div><p class="note">Please verify your bill. Payment is collected by restaurant staff. This link expires in 1 hour.</p></div>`, token)
+	actions := fmt.Sprintf(`<div class="actions-wrap"><div class="actions"><a class="btn btn-primary" href="/b/%s/download">Download bill</a></div><p class="note">Please verify your bill. Payment is collected by restaurant staff. This link expires in 1 hour.</p></div>`, token)
 	return strings.Replace(doc, "<!--BILL_ACTIONS-->", actions, 1)
 }
 
@@ -193,6 +192,12 @@ func renderCustomerBillDocument(summary services.BillSummaryView) string {
     .btn-primary { background: #2563eb; color: #fff; }
     .note { margin-top: 16px; text-align: center; color: #94a3b8; font-size: .82rem; line-height: 1.4; }
     .footer { margin-top: 18px; text-align: center; color: #94a3b8; font-size: .85rem; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page { max-width: none; }
+      .sheet { box-shadow: none; border: none; border-radius: 0; }
+      .actions-wrap, .badge, .note { display: none !important; }
+    }
   </style>
 </head>
 <body>
