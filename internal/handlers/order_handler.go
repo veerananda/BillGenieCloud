@@ -1274,3 +1274,33 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 		"status":   input.Status,
 	})
 }
+
+// CreateBillShare generates a customer bill link and QR token for review/download.
+func (h *OrderHandler) CreateBillShare(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	orderID := c.Param("order_id")
+	var input struct {
+		DiscountAmount float64 `json:"discount_amount"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil && err.Error() != "EOF" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	order, err := h.orderService.CreateBillShare(restaurantID.(string), orderID, input.DiscountAmount)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"bill_token": order.BillToken,
+		"bill_url":   services.BuildBillURL(order.BillToken),
+		"expires_at": order.BillExpiresAt,
+	})
+}
