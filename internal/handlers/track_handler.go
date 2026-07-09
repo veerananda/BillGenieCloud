@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"restaurant-api/internal/models"
 	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,7 @@ func SetupTrackRoutes(router *gin.Engine, db *gorm.DB) {
 	}
 
 	router.GET("/t/:token", handler.TrackPage)
+	router.GET("/t/:token/download", handler.TrackDownload)
 	router.GET("/t/:token/events", handler.TrackEvents)
 	router.GET("/t/:token/status", handler.TrackStatusJSON)
 
@@ -41,7 +43,15 @@ type TrackHandler struct {
 	hub          *services.OrderTrackingHub
 }
 
-func (h *TrackHandler) loadTracking(token string) (*services.TrackingStatus, int, string) {
+type trackPageContext struct {
+	order          *models.Order
+	restaurant     *models.Restaurant
+	summary        services.BillSummaryView
+	status         services.TrackingStatus
+	kitchenEnabled bool
+}
+
+func (h *TrackHandler) loadTrackPage(token string) (*trackPageContext, int, string) {
 	order, restaurant, err := h.orderService.GetOrderByTrackingToken(token)
 	if err != nil {
 		if strings.Contains(err.Error(), "expired") {
@@ -50,43 +60,102 @@ func (h *TrackHandler) loadTracking(token string) (*services.TrackingStatus, int
 		return nil, http.StatusNotFound, "Order not found."
 	}
 
+	if !services.IsCounterOrderForTracking(order) {
+		return nil, http.StatusNotFound, "Order not found."
+	}
+
 	restaurantName := ""
+	var limits services.SubscriptionLimits
 	if restaurant != nil {
 		restaurantName = restaurant.Name
+		limits, _ = services.LoadSubscriptionLimits(h.orderService.GetDB(), restaurant)
 	}
+
+	kitchenEnabled := services.OrderUsesKitchen(limits, order)
+	summary := services.BuildBillSummary(order, restaurant)
 	status := services.BuildTrackingStatus(order, restaurantName)
-	return &status, http.StatusOK, ""
+
+	return &trackPageContext{
+		order:          order,
+		restaurant:     restaurant,
+		summary:        summary,
+		status:         status,
+		kitchenEnabled: kitchenEnabled,
+	}, http.StatusOK, ""
+}
+
+func (h *TrackHandler) loadTracking(token string) (*services.TrackingStatus, int, string) {
+	ctx, code, message := h.loadTrackPage(token)
+	if ctx == nil {
+		return nil, code, message
+	}
+	return &ctx.status, http.StatusOK, ""
 }
 
 func (h *TrackHandler) TrackPage(c *gin.Context) {
 	token := c.Param("token")
-	status, code, message := h.loadTracking(token)
-	if status == nil {
+	ctx, code, message := h.loadTrackPage(token)
+	if ctx == nil {
 		c.Data(code, "text/html; charset=utf-8", []byte(trackErrorHTML(message)))
 		return
 	}
 
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(renderTrackPageHTML(token, *status)))
+	var html string
+	if ctx.kitchenEnabled {
+		html = renderTrackPageWithKitchenHTML(token, ctx.status, ctx.summary)
+	} else {
+		html = renderTrackBillOnlyPageHTML(token, ctx.summary)
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+}
+
+func (h *TrackHandler) TrackDownload(c *gin.Context) {
+	token := c.Param("token")
+	ctx, code, message := h.loadTrackPage(token)
+	if ctx == nil {
+		c.Data(code, "text/html; charset=utf-8", []byte(trackErrorHTML(message)))
+		return
+	}
+
+	filename := fmt.Sprintf("bill-%d.html", ctx.summary.TicketNumber)
+	if ctx.summary.TicketNumber <= 0 {
+		filename = fmt.Sprintf("bill-%d.html", ctx.summary.OrderNumber)
+	}
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(buildBillDownloadHTML(ctx.summary)))
 }
 
 func (h *TrackHandler) TrackStatusJSON(c *gin.Context) {
 	token := c.Param("token")
-	status, code, message := h.loadTracking(token)
-	if status == nil {
+	ctx, code, message := h.loadTrackPage(token)
+	if ctx == nil {
 		c.JSON(code, gin.H{"error": message})
 		return
 	}
-	c.JSON(http.StatusOK, status)
+	if !ctx.kitchenEnabled {
+		c.JSON(http.StatusOK, gin.H{
+			"kitchen_enabled": false,
+			"ticket_number":   ctx.status.TicketNumber,
+			"message":         "Kitchen updates are not enabled for this order.",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, ctx.status)
 }
 
 func (h *TrackHandler) TrackEvents(c *gin.Context) {
 	token := c.Param("token")
-	status, code, message := h.loadTracking(token)
-	if status == nil {
+	ctx, code, message := h.loadTrackPage(token)
+	if ctx == nil {
 		c.JSON(code, gin.H{"error": message})
 		return
 	}
+	if !ctx.kitchenEnabled {
+		c.JSON(http.StatusOK, gin.H{"kitchen_enabled": false})
+		return
+	}
 
+	status := ctx.status
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
@@ -104,10 +173,9 @@ func (h *TrackHandler) TrackEvents(c *gin.Context) {
 		flusher.Flush()
 	}
 
-	writeSSE(*status)
+	writeSSE(status)
 
 	if h.hub == nil {
-		// Fallback: keep connection open with periodic noop until client disconnects
 		ticker := time.NewTicker(25 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -151,6 +219,14 @@ func NotifyOrderTrackingUpdate(orderService *services.OrderService, orderID, res
 	if err != nil || order.TrackingToken == "" || !services.IsCounterOrderForTracking(order) {
 		return
 	}
+	var restaurant models.Restaurant
+	if err := orderService.GetDB().Where("id = ?", order.RestaurantID).First(&restaurant).Error; err != nil {
+		return
+	}
+	limits, _ := services.LoadSubscriptionLimits(orderService.GetDB(), &restaurant)
+	if !services.OrderUsesKitchen(limits, order) {
+		return
+	}
 	restaurantName := orderService.GetRestaurantName(order.RestaurantID)
 	status := services.BuildTrackingStatus(order, restaurantName)
 	globalTrackHub.Publish(order.TrackingToken, status)
@@ -159,13 +235,55 @@ func NotifyOrderTrackingUpdate(orderService *services.OrderService, orderID, res
 func trackErrorHTML(message string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Order tracking</title>
+<title>Order</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f5;color:#333}
 .card{background:#fff;padding:32px;border-radius:16px;max-width:360px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08)}</style></head>
-<body><div class="card"><h1>Order tracking</h1><p>%s</p></div></body></html>`, message)
+<body><div class="card"><h1>Order</h1><p>%s</p></div></body></html>`, message)
 }
 
-func renderTrackPageHTML(token string, status services.TrackingStatus) string {
+func trackStatusStylesBlock() string {
+	return `<style>
+    .track-wrap { max-width: 420px; margin: 0 auto; }
+    .track-status { margin-bottom: 20px; }
+    .track-status h1 { font-size: 1.25rem; margin: 0 0 4px; text-align: center; color: #475569; font-weight: 600; }
+    .track-ticket { text-align: center; font-size: 2.5rem; font-weight: 800; margin: 8px 0 20px; color: #0f172a; }
+    .track-box { border: 4px solid #ef4444; background: #fee2e2; border-radius: 20px; padding: 36px 20px; text-align: center; min-height: 160px; display: flex; flex-direction: column; justify-content: center; transition: background .4s, border-color .4s; }
+    .track-message { font-size: 1.5rem; font-weight: 700; margin: 0; }
+    .track-sub { margin-top: 10px; color: #475569; font-size: 1rem; }
+    .track-mode { text-align: center; margin-top: 16px; color: #64748b; font-size: .95rem; }
+    .track-footer { margin-top: 16px; text-align: center; color: #94a3b8; font-size: .85rem; }
+  </style>`
+}
+
+func renderTrackBillSection(token string, summary services.BillSummaryView) string {
+	fragment := renderCustomerBillPageFragment(summary)
+	fragment = strings.Replace(fragment, "<!--BILL_BADGE-->", `<span class="badge paid">Paid</span>`, 1)
+	actions := renderBillDownloadActions(
+		fmt.Sprintf("/t/%s/download", token),
+		"Save or print this bill from your browser. This link expires in 4 hours.",
+	)
+	return strings.Replace(fragment, "<!--BILL_ACTIONS-->", actions, 1)
+}
+
+func renderTrackBillOnlyPageHTML(token string, summary services.BillSummaryView) string {
+	billSection := renderTrackBillSection(token, summary)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Bill #%d</title>
+  %s
+</head>
+<body>
+  <div class="track-wrap">
+    %s
+  </div>
+</body>
+</html>`, summary.OrderNumber, customerBillStylesBlock(), billSection)
+}
+
+func renderTrackPageWithKitchenHTML(token string, status services.TrackingStatus, summary services.BillSummaryView) string {
 	color := status.Color
 	if color != "orange" && color != "green" {
 		color = "red"
@@ -189,35 +307,39 @@ func renderTrackPageHTML(token string, status services.TrackingStatus) string {
 		title = "BillGenie"
 	}
 
+	statusSection := fmt.Sprintf(`<div class="track-status">
+    <h1>%s</h1>
+    <div class="track-ticket">#%d</div>
+    <div class="track-box" id="status-box" style="border-color:%s;background:%s">
+      <p class="track-message" id="status-message">%s</p>
+      <p class="track-sub" id="status-sub">%s</p>
+    </div>
+    <p class="track-mode">%s order</p>
+    <p class="track-footer">Order status updates automatically below.</p>
+  </div>`,
+		escapeBillHTML(title),
+		status.TicketNumber,
+		border, bg,
+		escapeBillHTML(status.Message),
+		escapeBillHTML(subTextForStatus(status)),
+		mode,
+	)
+
+	billSection := renderTrackBillSection(token, summary)
+
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Order #%d</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; min-height: 100vh; background: #f8fafc; color: #0f172a; }
-    .wrap { max-width: 420px; margin: 0 auto; padding: 24px 16px 40px; }
-    h1 { font-size: 1.25rem; margin: 0 0 4px; text-align: center; color: #475569; font-weight: 600; }
-    .ticket { text-align: center; font-size: 2.5rem; font-weight: 800; margin: 8px 0 20px; }
-    .box { border: 4px solid %s; background: %s; border-radius: 20px; padding: 36px 20px; text-align: center; min-height: 180px; display: flex; flex-direction: column; justify-content: center; transition: background .4s, border-color .4s; }
-    .message { font-size: 1.5rem; font-weight: 700; margin: 0; }
-    .sub { margin-top: 10px; color: #475569; font-size: 1rem; }
-    .mode { text-align: center; margin-top: 16px; color: #64748b; font-size: .95rem; }
-    .footer { margin-top: 28px; text-align: center; color: #94a3b8; font-size: .85rem; }
-  </style>
+  %s
+  %s
 </head>
 <body>
-  <div class="wrap">
-    <h1>%s</h1>
-    <div class="ticket">#%d</div>
-    <div class="box" id="status-box">
-      <p class="message" id="status-message">%s</p>
-      <p class="sub" id="status-sub">%s</p>
-    </div>
-    <p class="mode">%s order</p>
-    <p class="footer">This page updates automatically. Show your ticket number at the counter.</p>
+  <div class="track-wrap">
+    %s
+    %s
   </div>
   <script>
     const token = %q;
@@ -241,8 +363,7 @@ func renderTrackPageHTML(token string, status services.TrackingStatus) string {
     connect();
   </script>
 </body>
-</html>`, status.TicketNumber, border, bg, title, status.TicketNumber, status.Message,
-		subTextForStatus(status), mode, token)
+</html>`, status.TicketNumber, customerBillStylesBlock(), trackStatusStylesBlock(), statusSection, billSection, token)
 }
 
 func subTextForStatus(status services.TrackingStatus) string {

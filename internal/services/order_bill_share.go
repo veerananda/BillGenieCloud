@@ -30,6 +30,8 @@ type BillSummaryView struct {
 	ContactNumber    string         `json:"contact_number,omitempty"`
 	TableNumber      string         `json:"table_number"`
 	OrderNumber      int            `json:"order_number"`
+	TicketNumber     int            `json:"ticket_number,omitempty"`
+	ServiceMode      string         `json:"service_mode,omitempty"`
 	CustomerName     string         `json:"customer_name,omitempty"`
 	Items            []BillItemView `json:"items"`
 	SubTotal         float64        `json:"sub_total"`
@@ -105,12 +107,19 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 		paymentMethod = order.PaymentMethod
 	}
 
+	ticketNumber := order.TicketNumber
+	if ticketNumber <= 0 {
+		ticketNumber = order.OrderNumber
+	}
+
 	return BillSummaryView{
 		RestaurantName:   restaurantName,
 		Address:          address,
 		ContactNumber:    contact,
 		TableNumber:      order.TableNumber,
 		OrderNumber:      order.OrderNumber,
+		TicketNumber:     ticketNumber,
+		ServiceMode:      order.ServiceMode,
 		CustomerName:     order.CustomerName,
 		Items:            items,
 		SubTotal:         subTotal,
