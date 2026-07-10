@@ -307,7 +307,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		items = append(items, itemResp)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"order": gin.H{
 			"id":              order.ID,
 			"restaurant_id":   order.RestaurantID,
@@ -336,7 +336,13 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			"completed_at":    order.CompletedAt,
 			"items":           items,
 		},
-	})
+	}
+	if order.OrderType == "counter" && order.TrackingToken != "" {
+		orderResp := resp["order"].(gin.H)
+		orderResp["tracking_token"] = order.TrackingToken
+		orderResp["tracking_url"] = services.BuildTrackingURL(order.TrackingToken)
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // UpdateOrder updates an existing order with new items
