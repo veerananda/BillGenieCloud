@@ -58,16 +58,43 @@ func adjustIngredientStockForMenuItems(
 	items []MenuItemQuantity,
 	deduct bool,
 ) ([]models.Ingredient, error) {
-	updatedIDs := make(map[string]struct{})
+	if len(items) == 0 {
+		return nil, nil
+	}
 
+	menuItemIDs := make([]string, 0, len(items))
+	seenMenu := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		var recipes []models.MenuItemIngredient
-		if err := tx.Where("restaurant_id = ? AND menu_item_id = ?", restaurantID, item.MenuItemID).
-			Find(&recipes).Error; err != nil {
-			return nil, err
+		if item.MenuItemID == "" || item.Quantity < 1 {
+			continue
 		}
+		if _, ok := seenMenu[item.MenuItemID]; ok {
+			continue
+		}
+		seenMenu[item.MenuItemID] = struct{}{}
+		menuItemIDs = append(menuItemIDs, item.MenuItemID)
+	}
+	if len(menuItemIDs) == 0 {
+		return nil, nil
+	}
 
-		for _, recipe := range recipes {
+	var recipes []models.MenuItemIngredient
+	if err := tx.Where("restaurant_id = ? AND menu_item_id IN ?", restaurantID, menuItemIDs).
+		Find(&recipes).Error; err != nil {
+		return nil, err
+	}
+
+	recipesByMenuItem := make(map[string][]models.MenuItemIngredient, len(menuItemIDs))
+	for _, recipe := range recipes {
+		recipesByMenuItem[recipe.MenuItemID] = append(recipesByMenuItem[recipe.MenuItemID], recipe)
+	}
+
+	stockDeltaByIngredient := make(map[string]float64)
+	for _, item := range items {
+		if item.MenuItemID == "" || item.Quantity < 1 {
+			continue
+		}
+		for _, recipe := range recipesByMenuItem[item.MenuItemID] {
 			if recipe.IngredientID == "" {
 				continue
 			}
@@ -75,27 +102,32 @@ func adjustIngredientStockForMenuItems(
 			if amount <= 0 {
 				continue
 			}
-
-			expr := gorm.Expr("current_stock + ?", amount)
 			if deduct {
-				expr = gorm.Expr("current_stock - ?", amount)
+				stockDeltaByIngredient[recipe.IngredientID] -= amount
+			} else {
+				stockDeltaByIngredient[recipe.IngredientID] += amount
 			}
+		}
+	}
 
-			result := tx.Model(&models.Ingredient{}).
-				Where("id = ? AND restaurant_id = ?", recipe.IngredientID, restaurantID).
-				Update("current_stock", expr)
-			if result.Error != nil {
-				return nil, result.Error
+	updatedIDs := make(map[string]struct{})
+	for ingredientID, delta := range stockDeltaByIngredient {
+		if delta == 0 {
+			continue
+		}
+		result := tx.Model(&models.Ingredient{}).
+			Where("id = ? AND restaurant_id = ?", ingredientID, restaurantID).
+			Update("current_stock", gorm.Expr("current_stock + ?", delta))
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected > 0 {
+			updatedIDs[ingredientID] = struct{}{}
+			action := "restored"
+			if deduct {
+				action = "deducted"
 			}
-			if result.RowsAffected > 0 {
-				updatedIDs[recipe.IngredientID] = struct{}{}
-				action := "restored"
-				if deduct {
-					action = "deducted"
-				}
-				log.Printf("✅ Ingredient stock %s: %s (%.3f %s) for menu item %s",
-					action, recipe.IngredientID, amount, recipe.Unit, item.MenuItemID)
-			}
+			log.Printf("✅ Ingredient stock %s: %s (delta %.3f)", action, ingredientID, delta)
 		}
 	}
 

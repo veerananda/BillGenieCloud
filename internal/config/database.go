@@ -165,6 +165,12 @@ func MigrateDatabase(db *gorm.DB) {
 	} else {
 		log.Println("✅ AddCanRestockInventory migration completed")
 	}
+
+	if err := migrations.AddPerformanceIndexes(db); err != nil {
+		log.Printf("⚠️  Migration AddPerformanceIndexes skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ AddPerformanceIndexes migration completed")
+	}
 }
 
 func CloseDatabase(db *gorm.DB) {
