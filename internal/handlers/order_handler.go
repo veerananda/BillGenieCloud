@@ -218,9 +218,14 @@ func (h *OrderHandler) ListCounterOrdersToday(c *gin.Context) {
 			"sub_total":       order.SubTotal,
 			"tax_amount":      order.TaxAmount,
 			"total":           order.Total,
+			"payment_method":  order.PaymentMethod,
 			"created_at":      order.CreatedAt,
 			"items":           items,
 		})
+		if order.OrderType == "counter" && order.TrackingToken != "" {
+			out[len(out)-1]["tracking_token"] = order.TrackingToken
+			out[len(out)-1]["tracking_url"] = services.BuildTrackingURL(order.TrackingToken)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"orders": out, "total": len(out)})
