@@ -96,16 +96,11 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		return nil, nil, err
 	}
 
-	// Validate items exist (but don't require inventory to be set up)
-	for _, item := range req.Items {
-		var menuItem models.MenuItem
-		if err := s.db.Where("restaurant_id = ? AND id = ?", restaurantID, item.MenuItemID).
-			First(&menuItem).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil, nil, errors.New("menu item not found")
-			}
-			return nil, nil, err
-		}
+	// Validate items exist (batch load — one query instead of N)
+	menuItemIDs := uniqueMenuItemIDs(req.Items)
+	menuItemsByID, err := loadMenuItemsMap(s.db, restaurantID, menuItemIDs)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Start transaction
@@ -207,27 +202,25 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 
 	log.Printf("✅ [CreateOrder] Order created with ID: %s (RowsAffected: %d)", order.ID, createResult.RowsAffected)
 
-	// Double-check the order was actually created in transaction
-	var verifyOrder models.Order
-	if err := tx.Where("id = ?", order.ID).First(&verifyOrder).Error; err != nil {
-		log.Printf("⚠️  [CreateOrder] WARNING: Order not found in transaction immediately after Create! Error: %v", err)
-		log.Printf("⚠️  [CreateOrder] This suggests Create() might not have actually saved the order")
-		tx.Rollback()
-		return nil, nil, fmt.Errorf("order creation verification failed: %v", err)
-	}
-	log.Printf("✅ [CreateOrder] Order verified in transaction: ID=%s, Status=%s", verifyOrder.ID, verifyOrder.Status)
-
 	// Create order items (inventory deduction is now optional)
 	subTotal := 0.0
 	batchSubID := uuid.New().String()
 	log.Printf("🔵 [CreateOrder] KOT batch sub_id: %s", batchSubID)
 	log.Printf("🔵 [CreateOrder] Processing %d items for order #%d", len(req.Items), orderNumber)
+
+	inventoryByMenuID, err := loadInventoryByMenuMap(tx, restaurantID, menuItemIDs)
+	if err != nil {
+		log.Printf("❌ [CreateOrder] Failed to batch-load inventory: %v", err)
+		tx.Rollback()
+		return nil, nil, err
+	}
+
 	for i, itemReq := range req.Items {
-		var menuItem models.MenuItem
-		if err := tx.Where("id = ?", itemReq.MenuItemID).First(&menuItem).Error; err != nil {
-			log.Printf("❌ [CreateOrder] Item %d: Menu item not found for ID: %s, error: %v", i+1, itemReq.MenuItemID, err)
+		menuItem, ok := menuItemsByID[itemReq.MenuItemID]
+		if !ok {
+			log.Printf("❌ [CreateOrder] Item %d: Menu item not found for ID: %s", i+1, itemReq.MenuItemID)
 			tx.Rollback()
-			return nil, nil, err
+			return nil, nil, errors.New("menu item not found")
 		}
 
 		// Create order item with explicit UUID generation
@@ -255,10 +248,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		subTotal += orderItem.Total
 
 		// Attempt to deduct inventory if it exists
-		var inventory models.Inventory
-		if err := tx.Where("restaurant_id = ? AND menu_item_id = ?", restaurantID, menuItem.ID).
-			First(&inventory).Error; err == nil {
-			// Inventory record exists, deduct it
+		if inventory, ok := inventoryByMenuID[menuItem.ID]; ok {
 			if inventory.Quantity >= float64(itemReq.Quantity) {
 				log.Printf("🔵 [CreateOrder] Item %d: Deducting inventory - Current: %.0f, Deduct: %d", i+1, inventory.Quantity, itemReq.Quantity)
 				if err := tx.Model(&models.Inventory{}).
@@ -333,16 +323,10 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 
 // UpdateOrder adds items to an existing order
 func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req CreateOrderRequest) (*models.Order, []models.Ingredient, error) {
-	// Validate items exist
-	for _, item := range req.Items {
-		var menuItem models.MenuItem
-		if err := s.db.Where("restaurant_id = ? AND id = ?", restaurantID, item.MenuItemID).
-			First(&menuItem).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil, nil, errors.New("menu item not found")
-			}
-			return nil, nil, err
-		}
+	menuItemIDs := uniqueMenuItemIDs(req.Items)
+	menuItemsByID, err := loadMenuItemsMap(s.db, restaurantID, menuItemIDs)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Start transaction
@@ -387,14 +371,10 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 	batchSubID := uuid.New().String()
 	log.Printf("🔵 [UpdateOrder] KOT batch sub_id: %s", batchSubID)
 	for _, itemReq := range req.Items {
-		var menuItem models.MenuItem
-		if err := tx.Where("restaurant_id = ? AND id = ?", restaurantID, itemReq.MenuItemID).
-			First(&menuItem).Error; err != nil {
+		menuItem, ok := menuItemsByID[itemReq.MenuItemID]
+		if !ok {
 			tx.Rollback()
-			if err == gorm.ErrRecordNotFound {
-				return nil, nil, errors.New("menu item not found")
-			}
-			return nil, nil, err
+			return nil, nil, errors.New("menu item not found")
 		}
 
 		// Create order item
@@ -801,13 +781,16 @@ func (s *OrderService) ListOrders(restaurantID string, status string, limit int,
 
 // OrderSummaryItem is a lightweight line item for list/summary views.
 type OrderSummaryItem struct {
-	ID       string  `json:"id"`
-	MenuID   string  `json:"menu_id"`
-	Quantity int     `json:"quantity"`
-	UnitRate float64 `json:"unit_rate"`
-	Status   string  `json:"status"`
-	Name     string  `json:"name"`
-	IsVeg    bool    `json:"is_vegetarian"`
+	ID        string  `json:"id"`
+	MenuID    string  `json:"menu_id"`
+	Quantity  int     `json:"quantity"`
+	UnitRate  float64 `json:"unit_rate"`
+	Status    string  `json:"status"`
+	Name      string  `json:"name"`
+	IsVeg     bool    `json:"is_vegetarian"`
+	SubId     string  `json:"sub_id,omitempty"`
+	Notes     string  `json:"notes,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // OrderSummary is a lightweight order payload without full menu metadata.
@@ -865,7 +848,7 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 
 	if err := query.
 		Preload("Items", func(db *gorm.DB) *gorm.DB {
-			return db.Select("id", "order_id", "menu_id", "quantity", "unit_rate", "status", "total")
+			return db.Select("id", "order_id", "menu_id", "quantity", "unit_rate", "status", "total", "sub_id", "notes", "created_at")
 		}).
 		Preload("Items.MenuItem", func(db *gorm.DB) *gorm.DB {
 			return db.Select("id", "name", "is_veg")
@@ -893,13 +876,16 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 				isVeg = item.MenuItem.IsVeg
 			}
 			items = append(items, OrderSummaryItem{
-				ID:       item.ID,
-				MenuID:   item.MenuID,
-				Quantity: item.Quantity,
-				UnitRate: item.UnitRate,
-				Status:   item.Status,
-				Name:     name,
-				IsVeg:    isVeg,
+				ID:        item.ID,
+				MenuID:    item.MenuID,
+				Quantity:  item.Quantity,
+				UnitRate:  item.UnitRate,
+				Status:    item.Status,
+				Name:      name,
+				IsVeg:     isVeg,
+				SubId:     item.SubId,
+				Notes:     item.Notes,
+				CreatedAt: item.CreatedAt,
 			})
 		}
 

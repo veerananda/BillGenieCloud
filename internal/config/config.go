@@ -52,6 +52,7 @@ type Config struct {
 }
 
 func LoadConfig() *Config {
+	environment := getEnv("SERVER_ENV", "development")
 	cfg := &Config{
 		// Database
 		DatabaseURL: getEnv("DATABASE_URL", "postgresql://user:password@localhost:5432/restaurant_db"),
@@ -64,7 +65,7 @@ func LoadConfig() *Config {
 
 		// Server
 		ServerPort:  getEnv("PORT", getEnv("SERVER_PORT", "3000")), // Fly.io sets PORT; SERVER_PORT for local dev
-		Environment: getEnv("SERVER_ENV", "development"),
+		Environment: environment,
 		APIBaseURL:  getEnv("API_BASE_URL", "http://localhost:3000"),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 
@@ -91,7 +92,7 @@ func LoadConfig() *Config {
 		// Features
 		EnablePayment:   getBoolEnv("ENABLE_PAYMENT", true),
 		EnableWebSocket: getBoolEnv("ENABLE_WEBSOCKET", true),
-		EnableLogging:   getBoolEnv("ENABLE_LOGGING", true),
+		EnableLogging:   getBoolEnv("ENABLE_LOGGING", environment != "production"),
 	}
 
 	log.Printf("✅ Configuration loaded (Environment: %s)", cfg.Environment)
