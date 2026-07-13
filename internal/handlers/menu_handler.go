@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -42,6 +44,29 @@ func NewMenuHandler(db *gorm.DB) *MenuHandler {
 	return &MenuHandler{db: db}
 }
 
+func (h *MenuHandler) getRequestUser(c *gin.Context) (*models.User, error) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		return nil, errors.New("user not found in context")
+	}
+	var user models.User
+	if err := h.db.Where("id = ?", userID.(string)).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func isAvailabilityOnlyUpdate(req UpdateMenuItemRequest) bool {
+	return req.IsAvailable != nil &&
+		req.Name == "" &&
+		req.Category == "" &&
+		req.Description == "" &&
+		req.Price <= 0 &&
+		req.CostPrice <= 0 &&
+		req.IsVeg == nil &&
+		req.ReadilyAvailable == nil
+}
+
 // CreateMenuItem creates a new menu item
 // @Summary Create menu item
 // @Description Add new item to restaurant menu
@@ -52,6 +77,12 @@ func NewMenuHandler(db *gorm.DB) *MenuHandler {
 // @Success 201 {object} map[string]interface{}
 // @Router /menu [post]
 func (h *MenuHandler) CreateMenuItem(c *gin.Context) {
+	user, err := h.getRequestUser(c)
+	if err != nil || !services.UserCanManageMenu(user) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions for menu management"})
+		return
+	}
+
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
@@ -206,6 +237,12 @@ func (h *MenuHandler) GetMenuItem(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /menu/:menu_item_id [put]
 func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
+	user, err := h.getRequestUser(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
@@ -231,6 +268,13 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 		log.Printf("❌ Binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if !services.UserCanManageMenu(user) {
+		if user.Role != "manager" || !isAvailabilityOnlyUpdate(req) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions for menu management"})
+			return
+		}
 	}
 
 	updates := map[string]interface{}{}
@@ -293,6 +337,12 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /menu/:menu_item_id [delete]
 func (h *MenuHandler) DeleteMenuItem(c *gin.Context) {
+	user, err := h.getRequestUser(c)
+	if err != nil || !services.UserCanManageMenu(user) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions for menu management"})
+		return
+	}
+
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
@@ -329,6 +379,12 @@ func (h *MenuHandler) DeleteMenuItem(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /menu/:menu_item_id/toggle [put]
 func (h *MenuHandler) ToggleAvailability(c *gin.Context) {
+	user, err := h.getRequestUser(c)
+	if err != nil || !services.UserCanToggleMenuAvailability(user) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to change item availability"})
+		return
+	}
+
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})

@@ -46,6 +46,7 @@ type AuthResponse struct {
 	Name            string `json:"name"`
 	CanCancelOrders     bool   `json:"can_cancel_orders"`
 	CanRestockInventory bool   `json:"can_restock_inventory"`
+	MenuManagementAccess bool  `json:"menu_management_access"`
 }
 
 type RegisterRequest struct {
@@ -404,8 +405,9 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 		UserID:          user.ID,
 		Role:            user.Role,
 		Name:            user.Name,
-		CanCancelOrders:     user.CanCancelOrders,
-		CanRestockInventory: user.CanRestockInventory,
+		CanCancelOrders:      user.CanCancelOrders,
+		CanRestockInventory:  user.CanRestockInventory,
+		MenuManagementAccess: user.MenuManagementAccess,
 	}, nil
 }
 
@@ -518,8 +520,9 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 		UserID:          user.ID,
 		Role:            user.Role,
 		Name:            user.Name,
-		CanCancelOrders:     user.CanCancelOrders,
-		CanRestockInventory: user.CanRestockInventory,
+		CanCancelOrders:      user.CanCancelOrders,
+		CanRestockInventory:  user.CanRestockInventory,
+		MenuManagementAccess: user.MenuManagementAccess,
 	}, nil
 }
 

@@ -20,6 +20,7 @@ type User struct {
 	IsActive       bool      `json:"is_active" gorm:"default:true"`
 	CanCancelOrders      bool      `json:"can_cancel_orders" gorm:"default:false"`
 	CanRestockInventory  bool      `json:"can_restock_inventory" gorm:"default:false"`
+	MenuManagementAccess bool      `json:"menu_management_access" gorm:"default:false"`
 	StaffKey             string    `json:"staff_key" gorm:"unique;index"` // Globally unique per-staff key (not null enforced in migration)
 	KeyGeneratedAt time.Time `json:"key_generated_at" gorm:"autoCreateTime:milli"`
 	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`

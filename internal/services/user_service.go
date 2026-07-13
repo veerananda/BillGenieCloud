@@ -32,8 +32,9 @@ type CreateUserRequest struct {
 	Password string `json:"password" validate:"omitempty,min=6"`
 	Role            string `json:"role" validate:"required,oneof=manager staff chef"`
 	StaffKey        string `json:"staff_key"`
-	CanCancelOrders     bool   `json:"can_cancel_orders"`
-	CanRestockInventory bool   `json:"can_restock_inventory"`
+	CanCancelOrders      bool   `json:"can_cancel_orders"`
+	CanRestockInventory  bool   `json:"can_restock_inventory"`
+	MenuManagementAccess bool   `json:"menu_management_access"`
 }
 
 // UpdateUserRequest for updating existing staff/manager/chef
@@ -43,8 +44,9 @@ type UpdateUserRequest struct {
 	Password        string `json:"password" validate:"omitempty,min=6"` // Optional: only update if provided
 	Role            string `json:"role" validate:"omitempty,oneof=manager staff chef"`
 	IsActive        *bool  `json:"is_active"`
-	CanCancelOrders     *bool  `json:"can_cancel_orders"`
-	CanRestockInventory *bool  `json:"can_restock_inventory"`
+	CanCancelOrders      *bool  `json:"can_cancel_orders"`
+	CanRestockInventory  *bool  `json:"can_restock_inventory"`
+	MenuManagementAccess *bool  `json:"menu_management_access"`
 }
 
 // NewUserService creates a new user service
@@ -137,6 +139,11 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		canRestockInventory = true
 	}
 
+	menuManagementAccess := false
+	if req.Role == "manager" && req.MenuManagementAccess {
+		menuManagementAccess = true
+	}
+
 	user := &models.User{
 		ID:                  uuid.New().String(),
 		RestaurantID:        restaurantID,
@@ -147,8 +154,9 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		Role:                req.Role,
 		StaffKey:            staffKey,
 		IsActive:            true,
-		CanCancelOrders:     canCancelOrders,
-		CanRestockInventory: canRestockInventory,
+		CanCancelOrders:      canCancelOrders,
+		CanRestockInventory:  canRestockInventory,
+		MenuManagementAccess: menuManagementAccess,
 	}
 
 	// Save to database
@@ -261,6 +269,9 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 			if req.Role == "manager" {
 				updates["can_restock_inventory"] = false
 			}
+			if req.Role != "manager" {
+				updates["menu_management_access"] = false
+			}
 		}
 	}
 
@@ -281,6 +292,16 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		}
 		if effectiveRole == "staff" || effectiveRole == "chef" {
 			updates["can_restock_inventory"] = *req.CanRestockInventory
+		}
+	}
+
+	if req.MenuManagementAccess != nil {
+		effectiveRole := user.Role
+		if !isAdmin && req.Role != "" {
+			effectiveRole = req.Role
+		}
+		if effectiveRole == "manager" {
+			updates["menu_management_access"] = *req.MenuManagementAccess
 		}
 	}
 
@@ -347,6 +368,34 @@ func UserCanRestockInventory(user *models.User) bool {
 		return true
 	case "staff", "chef":
 		return user.CanRestockInventory
+	default:
+		return false
+	}
+}
+
+// UserCanManageMenu reports whether a user may add/edit/delete menu items and categories.
+func UserCanManageMenu(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	switch user.Role {
+	case "admin":
+		return true
+	case "manager":
+		return user.MenuManagementAccess
+	default:
+		return false
+	}
+}
+
+// UserCanToggleMenuAvailability reports whether a user may enable/disable item availability.
+func UserCanToggleMenuAvailability(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	switch user.Role {
+	case "admin", "manager":
+		return true
 	default:
 		return false
 	}
