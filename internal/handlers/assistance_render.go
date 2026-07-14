@@ -43,7 +43,6 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .line-name{font-weight:700}
     .line-sub{margin-top:3px;color:#64748b;font-size:.85rem}
     .line-total{font-weight:800;white-space:nowrap}
-    .veg{font-size:.75rem;margin-right:5px}
     .bill{margin-top:20px;display:none}
     .bill.show{display:block}
     .bill a{display:flex;width:100%%;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;font-size:.95rem;font-weight:600;text-decoration:none;margin-top:8px}
@@ -127,12 +126,6 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
           const left = document.createElement('div');
           const name = document.createElement('div');
           name.className = 'line-name';
-          if (typeof item.is_veg === 'boolean') {
-            const veg = document.createElement('span');
-            veg.className = 'veg';
-            veg.textContent = item.is_veg ? 'V' : 'NV';
-            name.appendChild(veg);
-          }
           name.appendChild(document.createTextNode(item.name || 'Item'));
           const sub = document.createElement('div');
           sub.className = 'line-sub';
