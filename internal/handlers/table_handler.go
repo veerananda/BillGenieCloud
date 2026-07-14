@@ -75,6 +75,9 @@ func (h *TableHandler) CreateTable(c *gin.Context) {
 		Name:         req.Name,
 		IsOccupied:   false,
 	}
+	if token, err := services.GenerateAssistanceToken(); err == nil {
+		table.AssistanceToken = &token
+	}
 
 	if err := h.db.Create(&table).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create table"})
@@ -134,6 +137,9 @@ func (h *TableHandler) CreateBulkTables(c *gin.Context) {
 			RestaurantID: restaurantID,
 			Name:         name,
 			IsOccupied:   false,
+		}
+		if token, err := services.GenerateAssistanceToken(); err == nil {
+			table.AssistanceToken = &token
 		}
 
 		if err := h.db.Create(&table).Error; err == nil {
@@ -302,8 +308,9 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 	}
 
 	if err := h.db.Model(&table).Updates(map[string]interface{}{
-		"is_occupied":      false,
-		"current_order_id": nil,
+		"is_occupied":             false,
+		"current_order_id":        nil,
+		"assistance_requested_at": nil,
 	}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update table"})
 		return
@@ -311,6 +318,7 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 
 	table.IsOccupied = false
 	table.CurrentOrderID = nil
+	table.AssistanceRequestedAt = nil
 
 	// Broadcast table status change to all connected clients
 	if globalHub != nil {
@@ -318,6 +326,72 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 		log.Printf("📤 SetTableVacant: Broadcasted table vacant: %s (ID: %s)", table.Name, table.ID)
 	} else {
 		log.Printf("⚠️  SetTableVacant: WebSocket hub not available, skipping broadcast")
+	}
+
+	c.JSON(http.StatusOK, table)
+}
+
+// GetAssistanceQR ensures a token exists and returns the customer assistance URL.
+// GET /tables/:id/assistance-qr
+func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
+	restaurantID := c.GetString("restaurant_id")
+	if restaurantID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	tableID := c.Param("id")
+	var table models.RestaurantTable
+	if err := h.db.Where("id = ? AND restaurant_id = ?", tableID, restaurantID).
+		First(&table).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Table not found"})
+		return
+	}
+
+	if err := services.EnsureTableAssistanceToken(h.db, &table); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create assistance QR"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"table_id":         table.ID,
+		"table_name":       table.Name,
+		"assistance_token": tableAssistanceTokenValue(table),
+		"assistance_url":   services.BuildAssistanceURL(tableAssistanceTokenValue(table)),
+	})
+}
+
+func tableAssistanceTokenValue(table models.RestaurantTable) string {
+	if table.AssistanceToken == nil {
+		return ""
+	}
+	return *table.AssistanceToken
+}
+
+// ClearAssistance clears the call-waiter attention flag for a table.
+// POST /tables/:id/clear-assistance
+func (h *TableHandler) ClearAssistance(c *gin.Context) {
+	restaurantID := c.GetString("restaurant_id")
+	if restaurantID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	tableID := c.Param("id")
+	var table models.RestaurantTable
+	if err := h.db.Where("id = ? AND restaurant_id = ?", tableID, restaurantID).
+		First(&table).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Table not found"})
+		return
+	}
+
+	if err := services.ClearTableAssistance(h.db, &table); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear assistance"})
+		return
+	}
+
+	if globalHub != nil {
+		BroadcastTableUpdate(globalHub, restaurantID, &table)
 	}
 
 	c.JSON(http.StatusOK, table)
