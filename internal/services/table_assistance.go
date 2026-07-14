@@ -75,7 +75,6 @@ type AssistanceBillItem struct {
 	UnitRate float64 `json:"unit_rate"`
 	Total    float64 `json:"total"`
 	Category string  `json:"category,omitempty"`
-	IsVeg    *bool   `json:"is_veg,omitempty"`
 }
 
 // AssistanceStatus is the public SSE/status payload for /a/:token.
