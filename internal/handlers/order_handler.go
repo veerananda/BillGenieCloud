@@ -981,6 +981,9 @@ func (h *OrderHandler) StartCheckout(c *gin.Context) {
 	}
 
 	if h.checkoutLock == nil {
+		if _, err := h.orderService.CreateBillShare(restaurantID.(string), orderID, 0); err != nil {
+			log.Printf("⚠️  StartCheckout: could not create bill share for order %s: %v", orderID, err)
+		}
 		c.JSON(http.StatusOK, gin.H{"message": "checkout started"})
 		return
 	}
@@ -1016,6 +1019,11 @@ func (h *OrderHandler) StartCheckout(c *gin.Context) {
 			LockedByUserID: lock.UserID,
 			LockedByName:   lock.UserName,
 		})
+	}
+
+	// Unlock customer assistance page with a reviewable bill when checkout starts.
+	if _, err := h.orderService.CreateBillShare(restaurantID.(string), orderID, 0); err != nil {
+		log.Printf("⚠️  StartCheckout: could not create bill share for order %s: %v", orderID, err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

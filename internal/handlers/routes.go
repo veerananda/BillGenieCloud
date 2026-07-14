@@ -198,6 +198,8 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	{
 		tableStatus.PUT("/:id/occupy", tableHandler.SetTableOccupied)
 		tableStatus.PUT("/:id/vacant", tableHandler.SetTableVacant)
+		tableStatus.GET("/:id/assistance-qr", tableHandler.GetAssistanceQR)
+		tableStatus.POST("/:id/clear-assistance", tableHandler.ClearAssistance)
 	}
 
 	// Create single table and modify operations
@@ -219,6 +221,8 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	log.Println("   📍 DELETE /tables/:id (admin/manager required)")
 	log.Println("   📍 PUT    /tables/:id/occupy (auth required - any role)")
 	log.Println("   📍 PUT    /tables/:id/vacant (auth required - any role)")
+	log.Println("   📍 GET    /tables/:id/assistance-qr (auth required - any role)")
+	log.Println("   📍 POST   /tables/:id/clear-assistance (auth required - any role)")
 }
 
 // SetupUserRoutes registers user/staff endpoints

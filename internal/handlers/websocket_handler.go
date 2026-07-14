@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -405,13 +406,14 @@ func BroadcastOrderItemStatusEvent(hub *WebSocketHub, restaurantID string, order
 func BroadcastTableUpdate(hub *WebSocketHub, restaurantID string, table *models.RestaurantTable) {
 	_ = hub
 	data := models.TableEventData{
-		TableID:        table.ID,
-		TableNumber:    table.Name,
-		IsOccupied:     table.IsOccupied,
-		CurrentOrderID: table.CurrentOrderID,
+		TableID:             table.ID,
+		TableNumber:         table.Name,
+		IsOccupied:          table.IsOccupied,
+		CurrentOrderID:      table.CurrentOrderID,
+		AssistanceRequested: services.TableNeedsAssistance(table),
 	}
 	publishEvent(restaurantID, "table_status_changed", data)
-	log.Printf("📤 Broadcast table update: Table %s (Occupied: %v) to room %s", table.Name, table.IsOccupied, restaurantID)
+	log.Printf("📤 Broadcast table update: Table %s (Occupied: %v, Assistance: %v) to room %s", table.Name, table.IsOccupied, data.AssistanceRequested, restaurantID)
 }
 
 // BroadcastCheckoutEvent broadcasts checkout lock start/cancel events.

@@ -362,10 +362,11 @@ type OrderEventData struct {
 
 // TableEventData for WebSocket table status updates
 type TableEventData struct {
-	TableID        string  `json:"table_id"`
-	TableNumber    string  `json:"table_number"`
-	IsOccupied     bool    `json:"is_occupied"`
-	CurrentOrderID *string `json:"current_order_id,omitempty"`
+	TableID              string  `json:"table_id"`
+	TableNumber          string  `json:"table_number"`
+	IsOccupied           bool    `json:"is_occupied"`
+	CurrentOrderID       *string `json:"current_order_id,omitempty"`
+	AssistanceRequested  bool    `json:"assistance_requested"`
 }
 
 // CheckoutEventData for checkout lock WebSocket events
@@ -450,14 +451,16 @@ func (m *MenuItemIngredient) BeforeCreate(tx *gorm.DB) error {
 
 // RestaurantTable represents a physical table in a dine-in restaurant
 type RestaurantTable struct {
-	ID             string    `gorm:"primaryKey" json:"id"`
-	RestaurantID   string    `json:"restaurant_id" gorm:"index" validate:"required"`
-	Name           string    `json:"name" gorm:"not null;index"` // "1", "2", "1a", "VIP1", etc.
-	IsOccupied     bool      `json:"is_occupied" gorm:"default:false"`
-	Capacity       *int      `json:"capacity"`                      // Seating capacity - number of members
-	CurrentOrderID *string   `json:"current_order_id" gorm:"index"` // Link to active order, nullable
-	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt      time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	ID                     string     `gorm:"primaryKey" json:"id"`
+	RestaurantID           string     `json:"restaurant_id" gorm:"index" validate:"required"`
+	Name                   string     `json:"name" gorm:"not null;index"` // "1", "2", "1a", "VIP1", etc.
+	IsOccupied             bool       `json:"is_occupied" gorm:"default:false"`
+	Capacity               *int       `json:"capacity"`                      // Seating capacity - number of members
+	CurrentOrderID         *string    `json:"current_order_id" gorm:"index"` // Link to active order, nullable
+	AssistanceToken       *string    `json:"assistance_token,omitempty" gorm:"type:varchar(64);uniqueIndex"`
+	AssistanceRequestedAt *time.Time `json:"assistance_requested_at,omitempty"`
+	CreatedAt              time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt              time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
