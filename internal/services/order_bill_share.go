@@ -205,6 +205,21 @@ func (s *OrderService) clearBillShareToken(orderID string) error {
 	}).Error
 }
 
+// ClearBillShare revokes a customer bill preview link for an order.
+func (s *OrderService) ClearBillShare(restaurantID, orderID string) (*models.Order, error) {
+	var order models.Order
+	if err := s.db.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).First(&order).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("order not found")
+		}
+		return nil, err
+	}
+	if err := s.clearBillShareToken(order.ID); err != nil {
+		return nil, err
+	}
+	return s.reloadOrderWithItems(orderID, restaurantID)
+}
+
 // CleanupExpiredBillTokens removes bill share tokens that have passed their expiry.
 func (s *OrderService) CleanupExpiredBillTokens() (int64, error) {
 	result := s.db.Model(&models.Order{}).

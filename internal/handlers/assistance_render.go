@@ -90,9 +90,12 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       document.getElementById('tableName').textContent = state.table_name || '';
       const meta = document.getElementById('orderMeta');
       const total = document.getElementById('totalMeta');
-      if (state.has_active_order) {
-        meta.textContent = (state.item_count || 0) + ((state.item_count === 1) ? ' item ordered' : ' items ordered');
+      if (state.bill_available) {
+        meta.textContent = 'Bill ready';
         total.textContent = money(state.order_total);
+      } else if (state.has_active_order) {
+        meta.textContent = 'Table session active';
+        total.textContent = '';
       } else if (state.order_status === 'completed') {
         meta.textContent = 'Order completed';
         total.textContent = money(state.order_total);
