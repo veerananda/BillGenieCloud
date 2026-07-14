@@ -922,6 +922,8 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 
 	if order.OrderType == "counter" && order.TrackingToken != "" {
 		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
+	} else {
+		NotifyAssistanceUpdateByOrder(h.orderService.GetDB(), h.orderService, order)
 	}
 
 	resp := gin.H{
@@ -1121,6 +1123,9 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 				CurrentOrderID: nil,
 			})
 		}
+	}
+	if err == nil {
+		NotifyAssistanceUpdateByOrder(h.orderService.GetDB(), h.orderService, order)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
