@@ -81,6 +81,8 @@ func main() {
 
 	trackHub := services.NewOrderTrackingHub()
 	handlers.SetOrderTrackingHub(trackHub)
+	assistanceHub := services.NewAssistanceHub()
+	handlers.SetAssistanceHub(assistanceHub)
 
 	// Setup routes
 	handlers.SetupAuthRoutes(router, db)

@@ -327,6 +327,7 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 	} else {
 		log.Printf("⚠️  SetTableVacant: WebSocket hub not available, skipping broadcast")
 	}
+	NotifyAssistanceUpdateByTableID(h.db, services.NewOrderService(h.db), table.ID)
 
 	c.JSON(http.StatusOK, table)
 }
@@ -393,6 +394,7 @@ func (h *TableHandler) ClearAssistance(c *gin.Context) {
 	if globalHub != nil {
 		BroadcastTableUpdate(globalHub, restaurantID, &table)
 	}
+	NotifyAssistanceUpdateByTableID(h.db, services.NewOrderService(h.db), table.ID)
 
 	c.JSON(http.StatusOK, table)
 }

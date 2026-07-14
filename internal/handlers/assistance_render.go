@@ -128,7 +128,16 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     });
 
     render(state);
-    setInterval(refresh, 3000);
+
+    if (window.EventSource) {
+      const es = new EventSource('/a/' + token + '/events');
+      es.onmessage = (ev) => {
+        try { render(JSON.parse(ev.data)); } catch (e) {}
+      };
+      es.onerror = () => {
+        // Browser reconnects automatically; keep last known UI state.
+      };
+    }
   </script>
 </body>
 </html>`, restaurant, tableName, restaurant, tableName, token, string(initial))
