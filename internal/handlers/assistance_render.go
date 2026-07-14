@@ -35,11 +35,18 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .btn-call{background:#2563eb;color:#fff}
     .btn-call:disabled{opacity:.55;cursor:default}
     .note{margin-top:12px;text-align:center;color:#94a3b8;font-size:.85rem;min-height:1.2em}
+    .items{margin-top:20px;display:none}
+    .items.show{display:block}
+    .items h2,.bill h2{margin:0 0 10px;font-size:1.05rem}
+    .line{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #e2e8f0}
+    .line:last-child{border-bottom:0}
+    .line-name{font-weight:700}
+    .line-sub{margin-top:3px;color:#64748b;font-size:.85rem}
+    .line-total{font-weight:800;white-space:nowrap}
+    .veg{font-size:.75rem;margin-right:5px}
     .bill{margin-top:20px;display:none}
     .bill.show{display:block}
-    .bill h2{margin:0 0 10px;font-size:1.05rem}
     .bill a{display:flex;width:100%%;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;font-size:.95rem;font-weight:600;text-decoration:none;margin-top:8px}
-    .bill .review{background:#eff6ff;color:#1d4ed8}
     .bill .download{background:#0f172a;color:#fff}
   </style>
 </head>
@@ -55,10 +62,13 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       </div>
       <button class="btn btn-call" id="callBtn" type="button">Call waiter</button>
       <p class="note" id="note"></p>
+      <div class="items" id="itemsPanel">
+        <h2>Bill items</h2>
+        <div id="itemsList"></div>
+      </div>
       <div class="bill" id="billPanel">
-        <h2>Your bill is ready</h2>
-        <p class="sub" style="margin-bottom:0">Review and download before paying at the table.</p>
-        <a class="review" id="billReview" href="#" target="_blank" rel="noopener">Review bill</a>
+        <h2>Download bill</h2>
+        <p class="sub" style="margin-bottom:0">Your bill is ready to download.</p>
         <a class="download" id="billDownload" href="#">Download bill</a>
       </div>
     </div>
@@ -68,8 +78,9 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     let state = %s;
     const callBtn = document.getElementById('callBtn');
     const note = document.getElementById('note');
+    const itemsPanel = document.getElementById('itemsPanel');
+    const itemsList = document.getElementById('itemsList');
     const billPanel = document.getElementById('billPanel');
-    const billReview = document.getElementById('billReview');
     const billDownload = document.getElementById('billDownload');
 
     function money(n){ return '₹' + Number(n||0).toFixed(2); }
@@ -83,11 +94,21 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       if (state.has_active_order) {
         meta.textContent = (state.item_count || 0) + ((state.item_count === 1) ? ' item ordered' : ' items ordered');
         total.textContent = money(state.order_total);
+      } else if (state.order_status === 'completed') {
+        meta.textContent = 'Order completed';
+        total.textContent = money(state.order_total);
+      } else if (state.order_status === 'cancelled') {
+        meta.textContent = 'Order cancelled';
+        total.textContent = '';
       } else {
         meta.textContent = 'No active order yet';
         total.textContent = '';
       }
-      if (state.assistance_requested) {
+      if (!state.has_active_order) {
+        callBtn.disabled = true;
+        callBtn.textContent = 'Session closed';
+        note.textContent = 'This table session is no longer active.';
+      } else if (state.assistance_requested) {
         callBtn.disabled = true;
         callBtn.textContent = 'Waiter notified';
         note.textContent = 'Staff has been notified. Someone will be with you shortly.';
@@ -96,9 +117,43 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         callBtn.textContent = 'Call waiter';
         note.textContent = '';
       }
+      const items = Array.isArray(state.items) ? state.items : [];
+      itemsList.innerHTML = '';
+      if (items.length) {
+        itemsPanel.classList.add('show');
+        items.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'line';
+          const left = document.createElement('div');
+          const name = document.createElement('div');
+          name.className = 'line-name';
+          if (typeof item.is_veg === 'boolean') {
+            const veg = document.createElement('span');
+            veg.className = 'veg';
+            veg.textContent = item.is_veg ? 'V' : 'NV';
+            name.appendChild(veg);
+          }
+          name.appendChild(document.createTextNode(item.name || 'Item'));
+          const sub = document.createElement('div');
+          sub.className = 'line-sub';
+          const parts = [];
+          if (item.category) parts.push(item.category);
+          parts.push((item.quantity || 0) + ' x ' + money(item.unit_rate));
+          sub.textContent = parts.join(' - ');
+          left.appendChild(name);
+          left.appendChild(sub);
+          const right = document.createElement('div');
+          right.className = 'line-total';
+          right.textContent = money(item.total);
+          row.appendChild(left);
+          row.appendChild(right);
+          itemsList.appendChild(row);
+        });
+      } else {
+        itemsPanel.classList.remove('show');
+      }
       if (state.bill_available && state.bill_url) {
         billPanel.classList.add('show');
-        billReview.href = state.bill_url;
         billDownload.href = state.bill_download_url || (state.bill_url + '/download');
       } else {
         billPanel.classList.remove('show');

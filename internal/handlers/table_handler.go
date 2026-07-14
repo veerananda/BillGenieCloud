@@ -75,9 +75,6 @@ func (h *TableHandler) CreateTable(c *gin.Context) {
 		Name:         req.Name,
 		IsOccupied:   false,
 	}
-	if token, err := services.GenerateAssistanceToken(); err == nil {
-		table.AssistanceToken = &token
-	}
 
 	if err := h.db.Create(&table).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create table"})
@@ -137,9 +134,6 @@ func (h *TableHandler) CreateBulkTables(c *gin.Context) {
 			RestaurantID: restaurantID,
 			Name:         name,
 			IsOccupied:   false,
-		}
-		if token, err := services.GenerateAssistanceToken(); err == nil {
-			table.AssistanceToken = &token
 		}
 
 		if err := h.db.Create(&table).Error; err == nil {
@@ -332,7 +326,7 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 	c.JSON(http.StatusOK, table)
 }
 
-// GetAssistanceQR ensures a token exists and returns the customer assistance URL.
+// GetAssistanceQR ensures the active order has a token and returns its customer assistance URL.
 // GET /tables/:id/assistance-qr
 func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 	restaurantID := c.GetString("restaurant_id")
@@ -349,7 +343,24 @@ func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 		return
 	}
 
-	if err := services.EnsureTableAssistanceToken(h.db, &table); err != nil {
+	if table.CurrentOrderID == nil || *table.CurrentOrderID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No active order for this table"})
+		return
+	}
+
+	var order models.Order
+	if err := h.db.Where(
+		"id = ? AND restaurant_id = ? AND table_id = ? AND status NOT IN ?",
+		*table.CurrentOrderID,
+		restaurantID,
+		table.ID,
+		[]string{"completed", "cancelled"},
+	).First(&order).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Active order not found for this table"})
+		return
+	}
+
+	if err := services.EnsureOrderAssistanceToken(h.db, &order); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create assistance QR"})
 		return
 	}
@@ -357,16 +368,10 @@ func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"table_id":         table.ID,
 		"table_name":       table.Name,
-		"assistance_token": tableAssistanceTokenValue(table),
-		"assistance_url":   services.BuildAssistanceURL(tableAssistanceTokenValue(table)),
+		"order_id":         order.ID,
+		"assistance_token": order.TrackingToken,
+		"assistance_url":   services.BuildAssistanceURL(order.TrackingToken),
 	})
-}
-
-func tableAssistanceTokenValue(table models.RestaurantTable) string {
-	if table.AssistanceToken == nil {
-		return ""
-	}
-	return *table.AssistanceToken
 }
 
 // ClearAssistance clears the call-waiter attention flag for a table.
