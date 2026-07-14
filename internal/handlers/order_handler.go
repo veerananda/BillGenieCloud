@@ -1056,6 +1056,12 @@ func (h *OrderHandler) CancelCheckout(c *gin.Context) {
 		h.checkoutLock.Release(orderID, userID.(string))
 	}
 
+	if order, err := h.orderService.ClearBillShare(restaurantID.(string), orderID); err != nil {
+		log.Printf("⚠️  CancelCheckout: could not clear bill share for order %s: %v", orderID, err)
+	} else {
+		NotifyAssistanceUpdateByOrder(h.orderService.GetDB(), h.orderService, order)
+	}
+
 	if globalHub != nil {
 		BroadcastCheckoutEvent(globalHub, restaurantID.(string), "checkout_cancelled", models.CheckoutEventData{
 			OrderID:        orderID,

@@ -74,44 +74,6 @@ func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus
 		status.AssistanceRequested = services.TableNeedsAssistance(&table)
 	}
 
-	qty := 0
-	groupedItems := make(map[string]int)
-	for _, item := range order.Items {
-		qty += item.Quantity
-		unitRate := item.UnitRate
-		if unitRate <= 0 && item.Quantity > 0 {
-			unitRate = item.Total / float64(item.Quantity)
-		}
-		name := strings.TrimSpace(item.MenuID)
-		category := ""
-		if item.MenuItem != nil {
-			if strings.TrimSpace(item.MenuItem.Name) != "" {
-				name = item.MenuItem.Name
-			}
-			category = item.MenuItem.Category
-		}
-		lineTotal := item.Total
-		if lineTotal <= 0 {
-			lineTotal = unitRate * float64(item.Quantity)
-		}
-
-		key := fmt.Sprintf("%s|%s|%s|%.2f", item.MenuID, strings.ToLower(name), strings.ToLower(category), unitRate)
-		if idx, ok := groupedItems[key]; ok {
-			status.Items[idx].Quantity += item.Quantity
-			status.Items[idx].Total += lineTotal
-			continue
-		}
-
-		groupedItems[key] = len(status.Items)
-		status.Items = append(status.Items, services.AssistanceBillItem{
-			Name:     name,
-			Quantity: item.Quantity,
-			UnitRate: unitRate,
-			Total:    lineTotal,
-			Category: category,
-		})
-	}
-	status.ItemCount = qty
 	status.OrderTotal = order.Total
 	if order.Total <= 0 {
 		status.OrderTotal = order.SubTotal
@@ -122,6 +84,45 @@ func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus
 			status.BillAvailable = true
 			status.BillURL = services.BuildBillURL(order.BillToken)
 			status.BillDownloadURL = status.BillURL + "/download"
+		}
+	}
+
+	if status.BillAvailable {
+		groupedItems := make(map[string]int)
+		for _, item := range order.Items {
+			status.ItemCount += item.Quantity
+			unitRate := item.UnitRate
+			if unitRate <= 0 && item.Quantity > 0 {
+				unitRate = item.Total / float64(item.Quantity)
+			}
+			name := strings.TrimSpace(item.MenuID)
+			category := ""
+			if item.MenuItem != nil {
+				if strings.TrimSpace(item.MenuItem.Name) != "" {
+					name = item.MenuItem.Name
+				}
+				category = item.MenuItem.Category
+			}
+			lineTotal := item.Total
+			if lineTotal <= 0 {
+				lineTotal = unitRate * float64(item.Quantity)
+			}
+
+			key := fmt.Sprintf("%s|%s|%s|%.2f", item.MenuID, strings.ToLower(name), strings.ToLower(category), unitRate)
+			if idx, ok := groupedItems[key]; ok {
+				status.Items[idx].Quantity += item.Quantity
+				status.Items[idx].Total += lineTotal
+				continue
+			}
+
+			groupedItems[key] = len(status.Items)
+			status.Items = append(status.Items, services.AssistanceBillItem{
+				Name:     name,
+				Quantity: item.Quantity,
+				UnitRate: unitRate,
+				Total:    lineTotal,
+				Category: category,
+			})
 		}
 	}
 
