@@ -15,37 +15,37 @@ import (
 )
 
 type PlatformRestaurantSummary struct {
-	ID                   string    `json:"id"`
-	RestaurantCode       string    `json:"restaurant_code"`
-	Name                 string    `json:"name"`
-	OwnerName            string    `json:"owner_name"`
-	Email                string    `json:"email"`
-	Phone                string    `json:"phone"`
-	City                 string    `json:"city"`
-	SubscriptionPlan     string    `json:"subscription_plan"`
-	SubscriptionPhase    string    `json:"subscription_phase"`
-	SubscriptionEnd      time.Time `json:"subscription_end"`
-	DaysRemaining        int       `json:"days_remaining"`
-	IsActive             bool      `json:"is_active"`
-	IsAccessBlocked      bool      `json:"is_access_blocked"`
-	MonthlyPrice         int       `json:"monthly_price"`
-	AdminCount           int64     `json:"admin_count"`
-	StaffCount           int64     `json:"staff_count"`
-	TableCount           int64     `json:"table_count"`
-	CreatedAt            time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	RestaurantCode    string    `json:"restaurant_code"`
+	Name              string    `json:"name"`
+	OwnerName         string    `json:"owner_name"`
+	Email             string    `json:"email"`
+	Phone             string    `json:"phone"`
+	City              string    `json:"city"`
+	SubscriptionPlan  string    `json:"subscription_plan"`
+	SubscriptionPhase string    `json:"subscription_phase"`
+	SubscriptionEnd   time.Time `json:"subscription_end"`
+	DaysRemaining     int       `json:"days_remaining"`
+	IsActive          bool      `json:"is_active"`
+	IsAccessBlocked   bool      `json:"is_access_blocked"`
+	MonthlyPrice      int       `json:"monthly_price"`
+	AdminCount        int64     `json:"admin_count"`
+	StaffCount        int64     `json:"staff_count"`
+	TableCount        int64     `json:"table_count"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type PlatformRestaurantDetail struct {
 	PlatformRestaurantSummary
-	Selection       SubscriptionSelection `json:"selection"`
-	Limits          SubscriptionLimits    `json:"limits"`
-	Usage           SubscriptionUsage     `json:"usage"`
-	HasEverPaid     bool                  `json:"has_ever_paid"`
-	StartMode       string                `json:"start_mode"`
-	IsSelfService   bool                  `json:"is_self_service"`
-	CounterModes    string                `json:"counter_service_modes"`
-	RecentRenewals  []models.SubscriptionRenewal `json:"recent_renewals"`
-	AdminLoginHint  string                `json:"admin_login_hint,omitempty"`
+	Selection      SubscriptionSelection        `json:"selection"`
+	Limits         SubscriptionLimits           `json:"limits"`
+	Usage          SubscriptionUsage            `json:"usage"`
+	HasEverPaid    bool                         `json:"has_ever_paid"`
+	StartMode      string                       `json:"start_mode"`
+	IsSelfService  bool                         `json:"is_self_service"`
+	CounterModes   string                       `json:"counter_service_modes"`
+	RecentRenewals []models.SubscriptionRenewal `json:"recent_renewals"`
+	AdminLoginHint string                       `json:"admin_login_hint,omitempty"`
 }
 
 type GrantSubscriptionRequest struct {
@@ -56,8 +56,8 @@ type GrantSubscriptionRequest struct {
 }
 
 type ExtendTrialRequest struct {
-	Days     int    `json:"days"`
-	Reason   string `json:"reason" validate:"required"`
+	Days   int    `json:"days"`
+	Reason string `json:"reason" validate:"required"`
 }
 
 type UpdateSelectionRequest struct {
@@ -76,13 +76,13 @@ type DeleteRestaurantRequest struct {
 }
 
 type PlatformOpsService struct {
-	db            *gorm.DB
+	db             *gorm.DB
 	renewalService *SubscriptionRenewalService
 }
 
 func NewPlatformOpsService(db *gorm.DB) *PlatformOpsService {
 	return &PlatformOpsService{
-		db:            db,
+		db:             db,
 		renewalService: NewSubscriptionRenewalService(db),
 	}
 }
@@ -465,6 +465,9 @@ func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRes
 	}
 	if err := deleteWhere(&models.TrialEligibility{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete trial eligibilities: %w", err)
+	}
+	if err := deleteWhere(&models.SupportIssue{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete support issues: %w", err)
 	}
 	if err := deleteWhere(&models.AuditLog{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete audit logs: %w", err)

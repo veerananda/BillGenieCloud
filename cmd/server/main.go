@@ -91,6 +91,7 @@ func main() {
 	handlers.SetupMenuRoutes(router, db)
 	handlers.SetupMenuItemIngredientRoutes(router, db)
 	handlers.SetupRestaurantRoutes(router, db)
+	handlers.SetupSupportIssueRoutes(router, db)
 	handlers.SetupTableRoutes(router, db)
 	handlers.SetupUserRoutes(router, db)
 	handlers.SetupIngredientRoutes(router, db)
