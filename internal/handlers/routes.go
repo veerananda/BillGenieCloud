@@ -165,6 +165,21 @@ func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
 	log.Println("✅ Restaurant routes registered")
 }
 
+// SetupSupportIssueRoutes registers customer support issue endpoints.
+func SetupSupportIssueRoutes(router *gin.Engine, db *gorm.DB) {
+	authService := getAuthService(db)
+	supportHandler := NewSupportIssueHandler(services.NewSupportIssueService(db))
+
+	protected := router.Group("/support")
+	protected.Use(middleware.AuthMiddleware(authService))
+	{
+		protected.GET("/issues", supportHandler.ListRestaurantIssues)
+		protected.POST("/issues", supportHandler.CreateIssue)
+	}
+
+	log.Println("✅ Support issue routes registered")
+}
+
 // SetupTableRoutes registers table management endpoints
 func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	authService := getAuthService(db)
@@ -344,10 +359,13 @@ func SetupWebhookRoutes(router *gin.Engine, db *gorm.DB) {
 func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 	ops := services.NewPlatformOpsService(db)
 	platformHandler := NewPlatformHandler(ops)
+	supportHandler := NewSupportIssueHandler(services.NewSupportIssueService(db))
 
 	platform := router.Group("/platform")
 	platform.Use(middleware.PlatformAuthMiddleware())
 	{
+		platform.GET("/support-issues", supportHandler.ListPlatformIssues)
+		platform.PUT("/support-issues/:issue_id", supportHandler.UpdatePlatformIssue)
 		platform.GET("/restaurants", platformHandler.ListRestaurants)
 		platform.GET("/restaurants/:restaurant_id", platformHandler.GetRestaurant)
 		platform.POST("/restaurants/:restaurant_id/grant-subscription", platformHandler.GrantSubscription)

@@ -10,21 +10,21 @@ import (
 
 // User represents a staff member or restaurant owner
 type User struct {
-	ID             string    `gorm:"primaryKey" json:"id"`
-	RestaurantID   string    `json:"restaurant_id" gorm:"index"`
-	Name           string    `json:"name" gorm:"not null"`
-	Email          string    `json:"email" gorm:"index"` // Email only required for admin, nullable for staff
-	Phone          string    `json:"phone"`
-	PasswordHash   string    `json:"-" gorm:"not null"`
-	Role           string    `json:"role" gorm:"not null;type:varchar(50)"` // "admin", "manager", "staff"
-	IsActive       bool      `json:"is_active" gorm:"default:true"`
+	ID                   string    `gorm:"primaryKey" json:"id"`
+	RestaurantID         string    `json:"restaurant_id" gorm:"index"`
+	Name                 string    `json:"name" gorm:"not null"`
+	Email                string    `json:"email" gorm:"index"` // Email only required for admin, nullable for staff
+	Phone                string    `json:"phone"`
+	PasswordHash         string    `json:"-" gorm:"not null"`
+	Role                 string    `json:"role" gorm:"not null;type:varchar(50)"` // "admin", "manager", "staff"
+	IsActive             bool      `json:"is_active" gorm:"default:true"`
 	CanCancelOrders      bool      `json:"can_cancel_orders" gorm:"default:false"`
 	CanRestockInventory  bool      `json:"can_restock_inventory" gorm:"default:false"`
 	MenuManagementAccess bool      `json:"menu_management_access" gorm:"default:false"`
 	StaffKey             string    `json:"staff_key" gorm:"unique;index"` // Globally unique per-staff key (not null enforced in migration)
-	KeyGeneratedAt time.Time `json:"key_generated_at" gorm:"autoCreateTime:milli"`
-	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt      time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	KeyGeneratedAt       time.Time `json:"key_generated_at" gorm:"autoCreateTime:milli"`
+	CreatedAt            time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt            time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
@@ -46,27 +46,27 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 
 // Restaurant represents a restaurant business
 type Restaurant struct {
-	ID              string          `gorm:"primaryKey" json:"id"`
-	RestaurantCode  string          `json:"restaurant_code" gorm:"unique;size:10;index"` // Unique code for login (not null enforced in migration)
-	Name            string          `json:"name" gorm:"not null;index"`
-	OwnerName       string          `json:"owner_name"`
-	Email           string          `json:"email"`
-	Phone           string          `json:"phone"`
-	Address         string          `json:"address"`
-	City            string          `json:"city" gorm:"index"`
-	Cuisine         string          `json:"cuisine"` // "Indian", "Chinese", etc.
-	TotalTables     int             `json:"total_tables" gorm:"default:10"`
-	TotalStaff      int             `json:"total_staff" gorm:"default:5"`
-	SubscriptionEnd time.Time       `json:"subscription_end"`
-	SubscriptionPlan string         `json:"subscription_plan" gorm:"type:varchar(32);default:basic"`
-	SubscriptionMonthlyPrice int    `json:"subscription_monthly_price" gorm:"default:799"`
-	SubscriptionConfig json.RawMessage `json:"subscription_config" gorm:"type:jsonb"`
-	IsActive        bool            `json:"is_active" gorm:"default:true"`
-	IsSelfService   bool            `json:"is_self_service" gorm:"default:false"`   // True for self-service, False for dine-in
-	IsEmailVerified bool            `json:"is_email_verified" gorm:"default:false"` // Email verification status
-	CounterServiceModes string      `json:"counter_service_modes" gorm:"type:varchar(20);default:both"` // both | eat_here | takeaway
-	PricesIncludeGST    bool          `json:"prices_include_gst" gorm:"default:false"`
-	Settings        json.RawMessage `json:"settings" gorm:"type:jsonb"`             // Customizable settings
+	ID                       string          `gorm:"primaryKey" json:"id"`
+	RestaurantCode           string          `json:"restaurant_code" gorm:"unique;size:10;index"` // Unique code for login (not null enforced in migration)
+	Name                     string          `json:"name" gorm:"not null;index"`
+	OwnerName                string          `json:"owner_name"`
+	Email                    string          `json:"email"`
+	Phone                    string          `json:"phone"`
+	Address                  string          `json:"address"`
+	City                     string          `json:"city" gorm:"index"`
+	Cuisine                  string          `json:"cuisine"` // "Indian", "Chinese", etc.
+	TotalTables              int             `json:"total_tables" gorm:"default:10"`
+	TotalStaff               int             `json:"total_staff" gorm:"default:5"`
+	SubscriptionEnd          time.Time       `json:"subscription_end"`
+	SubscriptionPlan         string          `json:"subscription_plan" gorm:"type:varchar(32);default:basic"`
+	SubscriptionMonthlyPrice int             `json:"subscription_monthly_price" gorm:"default:799"`
+	SubscriptionConfig       json.RawMessage `json:"subscription_config" gorm:"type:jsonb"`
+	IsActive                 bool            `json:"is_active" gorm:"default:true"`
+	IsSelfService            bool            `json:"is_self_service" gorm:"default:false"`                       // True for self-service, False for dine-in
+	IsEmailVerified          bool            `json:"is_email_verified" gorm:"default:false"`                     // Email verification status
+	CounterServiceModes      string          `json:"counter_service_modes" gorm:"type:varchar(20);default:both"` // both | eat_here | takeaway
+	PricesIncludeGST         bool            `json:"prices_include_gst" gorm:"default:false"`
+	Settings                 json.RawMessage `json:"settings" gorm:"type:jsonb"` // Customizable settings
 	// Restaurant Profile fields
 	ContactNumber string    `json:"contact_number"`
 	UPIID         string    `json:"upi_id" gorm:"type:varchar(100)"` // UPI VPA for dynamic payment links
@@ -104,11 +104,11 @@ type Order struct {
 	TableID        *string `json:"table_id" gorm:"index"` // Link to RestaurantTable for dine-in orders
 	CustomerName   string  `json:"customer_name"`
 	CustomerPhone  string  `json:"customer_phone,omitempty" gorm:"type:varchar(20)"`
-	OrderNumber    int     `json:"order_number" gorm:"index"`                        // Sequential order number
+	OrderNumber    int     `json:"order_number" gorm:"index"`                                  // Sequential order number
 	OrderType      string  `json:"order_type" gorm:"default:'dine_in';type:varchar(20);index"` // dine_in | counter
-	TicketNumber   int     `json:"ticket_number" gorm:"default:0;index"`             // Daily counter ticket (resets each day)
-	ServiceMode    string  `json:"service_mode,omitempty" gorm:"type:varchar(20)"`   // eat_here | takeaway (counter orders)
-	Status         string  `json:"status" gorm:"default:'pending';type:varchar(50)"` // pending, confirmed, completed, cancelled
+	TicketNumber   int     `json:"ticket_number" gorm:"default:0;index"`                       // Daily counter ticket (resets each day)
+	ServiceMode    string  `json:"service_mode,omitempty" gorm:"type:varchar(20)"`             // eat_here | takeaway (counter orders)
+	Status         string  `json:"status" gorm:"default:'pending';type:varchar(50)"`           // pending, confirmed, completed, cancelled
 	SubTotal       float64 `json:"sub_total" gorm:"type:numeric(10,2);default:0"`
 	TaxAmount      float64 `json:"tax_amount" gorm:"type:numeric(10,2);default:0"`
 	DiscountAmount float64 `json:"discount_amount" gorm:"type:numeric(10,2);default:0"`
@@ -116,20 +116,20 @@ type Order struct {
 	PaymentMethod  string  `json:"payment_method" gorm:"type:varchar(50)"` // "cash", "card", "upi"
 	PaymentID      string  `json:"payment_id"`                             // Razorpay payment ID
 	// Payment completion details
-	AmountReceived  float64    `json:"amount_received,omitempty" gorm:"type:numeric(10,2)"`
-	ChangeReturned  float64    `json:"change_returned,omitempty" gorm:"type:numeric(10,2)"`
-	CashAmount      float64    `json:"cash_amount,omitempty" gorm:"type:numeric(10,2);default:0"`
-	UpiAmount       float64    `json:"upi_amount,omitempty" gorm:"type:numeric(10,2);default:0"`
-	TrackingToken     string     `json:"tracking_token,omitempty" gorm:"type:varchar(64);index"`
-	TrackingExpiresAt *time.Time `json:"tracking_expires_at,omitempty"`
+	AmountReceived      float64    `json:"amount_received,omitempty" gorm:"type:numeric(10,2)"`
+	ChangeReturned      float64    `json:"change_returned,omitempty" gorm:"type:numeric(10,2)"`
+	CashAmount          float64    `json:"cash_amount,omitempty" gorm:"type:numeric(10,2);default:0"`
+	UpiAmount           float64    `json:"upi_amount,omitempty" gorm:"type:numeric(10,2);default:0"`
+	TrackingToken       string     `json:"tracking_token,omitempty" gorm:"type:varchar(64);index"`
+	TrackingExpiresAt   *time.Time `json:"tracking_expires_at,omitempty"`
 	BillToken           string     `json:"bill_token,omitempty" gorm:"type:varchar(64);index"`
 	BillExpiresAt       *time.Time `json:"bill_expires_at,omitempty"`
 	BillPreviewDiscount float64    `json:"bill_preview_discount,omitempty" gorm:"type:numeric(10,2);default:0"`
-	Notes           string     `json:"notes" gorm:"type:text"`
-	CreatedByUserID string     `json:"created_by_user_id"`
-	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt       time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
-	CompletedAt     *time.Time `json:"completed_at"`
+	Notes               string     `json:"notes" gorm:"type:text"`
+	CreatedByUserID     string     `json:"created_by_user_id"`
+	CreatedAt           time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt           time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+	CompletedAt         *time.Time `json:"completed_at"`
 
 	// Relations
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
@@ -183,18 +183,18 @@ func (oi *OrderItem) BeforeCreate(tx *gorm.DB) error {
 
 // MenuItem represents a food item on the menu
 type MenuItem struct {
-	ID           string    `gorm:"primaryKey" json:"id"`
-	RestaurantID string    `json:"restaurant_id" gorm:"index" validate:"required"`
-	Name         string    `json:"name" gorm:"not null;index"`
-	Category     string    `json:"category" gorm:"index"` // "appetizer", "main", "dessert", "drink"
-	Description  string    `json:"description" gorm:"type:text"`
-	Price        float64   `json:"price" gorm:"type:numeric(10,2);not null"`
-	CostPrice    float64   `json:"cost_price" gorm:"type:numeric(10,2)"` // For margin calculation
-	IsVeg             bool `json:"is_veg" gorm:"default:false"`
-	IsAvailable       bool `json:"is_available" gorm:"default:true"`
-	ReadilyAvailable  bool `json:"readily_available" gorm:"default:false"` // skip kitchen (e.g. water, packaged items)
-	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	ID               string    `gorm:"primaryKey" json:"id"`
+	RestaurantID     string    `json:"restaurant_id" gorm:"index" validate:"required"`
+	Name             string    `json:"name" gorm:"not null;index"`
+	Category         string    `json:"category" gorm:"index"` // "appetizer", "main", "dessert", "drink"
+	Description      string    `json:"description" gorm:"type:text"`
+	Price            float64   `json:"price" gorm:"type:numeric(10,2);not null"`
+	CostPrice        float64   `json:"cost_price" gorm:"type:numeric(10,2)"` // For margin calculation
+	IsVeg            bool      `json:"is_veg" gorm:"default:false"`
+	IsAvailable      bool      `json:"is_available" gorm:"default:true"`
+	ReadilyAvailable bool      `json:"readily_available" gorm:"default:false"` // skip kitchen (e.g. water, packaged items)
+	CreatedAt        time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt        time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
@@ -321,16 +321,16 @@ type NotificationEvent struct {
 
 // WSOrderItem is the WebSocket-safe order line (includes menu name for clients).
 type WSOrderItem struct {
-	ID           string  `json:"id"`
-	MenuID       string  `json:"menu_id"`
-	Name         string  `json:"name"`
-	Quantity     int     `json:"quantity"`
-	UnitRate     float64 `json:"unit_rate"`
-	Total        float64 `json:"total"`
-	Status       string  `json:"status"`
-	SubId        string  `json:"sub_id,omitempty"`
-	Notes        string  `json:"notes,omitempty"`
-	IsVegetarian bool    `json:"is_vegetarian,omitempty"`
+	ID           string    `json:"id"`
+	MenuID       string    `json:"menu_id"`
+	Name         string    `json:"name"`
+	Quantity     int       `json:"quantity"`
+	UnitRate     float64   `json:"unit_rate"`
+	Total        float64   `json:"total"`
+	Status       string    `json:"status"`
+	SubId        string    `json:"sub_id,omitempty"`
+	Notes        string    `json:"notes,omitempty"`
+	IsVegetarian bool      `json:"is_vegetarian,omitempty"`
 	CreatedAt    time.Time `json:"created_at,omitempty"`
 }
 
@@ -362,11 +362,11 @@ type OrderEventData struct {
 
 // TableEventData for WebSocket table status updates
 type TableEventData struct {
-	TableID              string  `json:"table_id"`
-	TableNumber          string  `json:"table_number"`
-	IsOccupied           bool    `json:"is_occupied"`
-	CurrentOrderID       *string `json:"current_order_id,omitempty"`
-	AssistanceRequested  bool    `json:"assistance_requested"`
+	TableID             string  `json:"table_id"`
+	TableNumber         string  `json:"table_number"`
+	IsOccupied          bool    `json:"is_occupied"`
+	CurrentOrderID      *string `json:"current_order_id,omitempty"`
+	AssistanceRequested bool    `json:"assistance_requested"`
 }
 
 // CheckoutEventData for checkout lock WebSocket events
@@ -451,16 +451,16 @@ func (m *MenuItemIngredient) BeforeCreate(tx *gorm.DB) error {
 
 // RestaurantTable represents a physical table in a dine-in restaurant
 type RestaurantTable struct {
-	ID                     string     `gorm:"primaryKey" json:"id"`
-	RestaurantID           string     `json:"restaurant_id" gorm:"index" validate:"required"`
-	Name                   string     `json:"name" gorm:"not null;index"` // "1", "2", "1a", "VIP1", etc.
-	IsOccupied             bool       `json:"is_occupied" gorm:"default:false"`
-	Capacity               *int       `json:"capacity"`                      // Seating capacity - number of members
-	CurrentOrderID         *string    `json:"current_order_id" gorm:"index"` // Link to active order, nullable
+	ID                    string     `gorm:"primaryKey" json:"id"`
+	RestaurantID          string     `json:"restaurant_id" gorm:"index" validate:"required"`
+	Name                  string     `json:"name" gorm:"not null;index"` // "1", "2", "1a", "VIP1", etc.
+	IsOccupied            bool       `json:"is_occupied" gorm:"default:false"`
+	Capacity              *int       `json:"capacity"`                      // Seating capacity - number of members
+	CurrentOrderID        *string    `json:"current_order_id" gorm:"index"` // Link to active order, nullable
 	AssistanceToken       *string    `json:"assistance_token,omitempty" gorm:"type:varchar(64);uniqueIndex"`
 	AssistanceRequestedAt *time.Time `json:"assistance_requested_at,omitempty"`
-	CreatedAt              time.Time  `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt              time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+	CreatedAt             time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt             time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
@@ -618,16 +618,16 @@ func (ev *EmailVerification) BeforeCreate(tx *gorm.DB) error {
 
 // SubscriptionRenewal tracks subscription payment orders (Razorpay).
 type SubscriptionRenewal struct {
-	ID              string     `gorm:"primaryKey" json:"id"`
-	RestaurantID    string     `json:"restaurant_id" gorm:"index;not null"`
-	RazorpayOrderID string     `json:"razorpay_order_id" gorm:"uniqueIndex;not null"`
-	AmountPaise     int        `json:"amount_paise" gorm:"not null"`
-	BillingCycle    string     `json:"billing_cycle" gorm:"type:varchar(16);not null"` // monthly | annual
-	Status          string     `json:"status" gorm:"type:varchar(32);default:'pending'"` // pending | completed | superseded | failed
-	PaymentID       string          `json:"payment_id"`
+	ID               string          `gorm:"primaryKey" json:"id"`
+	RestaurantID     string          `json:"restaurant_id" gorm:"index;not null"`
+	RazorpayOrderID  string          `json:"razorpay_order_id" gorm:"uniqueIndex;not null"`
+	AmountPaise      int             `json:"amount_paise" gorm:"not null"`
+	BillingCycle     string          `json:"billing_cycle" gorm:"type:varchar(16);not null"`   // monthly | annual
+	Status           string          `json:"status" gorm:"type:varchar(32);default:'pending'"` // pending | completed | superseded | failed
+	PaymentID        string          `json:"payment_id"`
 	PendingSelection json.RawMessage `json:"pending_selection,omitempty" gorm:"type:jsonb"`
-	CreatedAt       time.Time       `json:"created_at" gorm:"autoCreateTime"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	CreatedAt        time.Time       `json:"created_at" gorm:"autoCreateTime"`
+	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
 
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
 }
@@ -656,4 +656,39 @@ type TrialEligibility struct {
 
 func (TrialEligibility) TableName() string {
 	return "trial_eligibilities"
+}
+
+// SupportIssue represents a customer query or problem reported from web/app.
+type SupportIssue struct {
+	ID                    string     `gorm:"primaryKey" json:"id"`
+	RestaurantID          string     `json:"restaurant_id" gorm:"index;not null"`
+	UserID                string     `json:"user_id" gorm:"index"`
+	ReporterName          string     `json:"reporter_name"`
+	ReporterRole          string     `json:"reporter_role" gorm:"type:varchar(50)"`
+	Category              string     `json:"category" gorm:"type:varchar(32);default:problem"`
+	Title                 string     `json:"title" gorm:"type:varchar(160);not null"`
+	Description           string     `json:"description" gorm:"type:text;not null"`
+	ScreenshotDataURL     string     `json:"screenshot_data_url,omitempty" gorm:"type:text"`
+	ScreenshotName        string     `json:"screenshot_name,omitempty" gorm:"type:varchar(255)"`
+	ScreenshotContentType string     `json:"screenshot_content_type,omitempty" gorm:"type:varchar(80)"`
+	Status                string     `json:"status" gorm:"type:varchar(32);default:open;index"`
+	ResolutionNote        string     `json:"resolution_note,omitempty" gorm:"type:text"`
+	ResolvedBy            string     `json:"resolved_by,omitempty" gorm:"type:varchar(120)"`
+	ResolvedAt            *time.Time `json:"resolved_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt             time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+	User       *User       `json:"-" gorm:"foreignKey:UserID"`
+}
+
+func (SupportIssue) TableName() string {
+	return "support_issues"
+}
+
+func (si *SupportIssue) BeforeCreate(tx *gorm.DB) error {
+	if si.ID == "" {
+		si.ID = uuid.New().String()
+	}
+	return nil
 }
