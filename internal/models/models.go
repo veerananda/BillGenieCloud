@@ -624,6 +624,7 @@ type SubscriptionRenewal struct {
 	RazorpayOrderID  string          `json:"razorpay_order_id" gorm:"uniqueIndex;not null"`
 	AmountPaise      int             `json:"amount_paise" gorm:"not null"`
 	BillingCycle     string          `json:"billing_cycle" gorm:"type:varchar(16);not null"`   // monthly | annual
+	Kind             string          `json:"kind" gorm:"type:varchar(16);default:'renew'"`     // renew | upgrade
 	Status           string          `json:"status" gorm:"type:varchar(32);default:'pending'"` // pending | completed | superseded | failed
 	PaymentID        string          `json:"payment_id"`
 	PendingSelection json.RawMessage `json:"pending_selection,omitempty" gorm:"type:jsonb"`
