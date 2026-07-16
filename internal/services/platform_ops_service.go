@@ -312,7 +312,13 @@ func (s *PlatformOpsService) UpdateSelection(restaurantID string, req UpdateSele
 		hasEverPaid = true
 	}
 
-	configJSON, err := BuildSubscriptionConfigJSON(phase, cfg.StartMode, validated, quote, hasEverPaid)
+	cfg.Phase = phase
+	cfg.Selection = validated
+	cfg.Quote = quote
+	cfg.HasEverPaid = hasEverPaid
+	cfg.PendingSelection = nil
+	cfg.PendingChangeAt = nil
+	configJSON, err := MarshalSubscriptionConfig(cfg)
 	if err != nil {
 		return nil, err
 	}

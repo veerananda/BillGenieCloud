@@ -127,6 +127,12 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 	requiresPlan := AllowsPlanReview(restaurant)
 	requiresPayment := cfg.Phase == SubscriptionPhasePendingPayment || IsSubscriptionAccessBlocked(restaurant)
 
+	// Scheduled downgrade drives the next renewal amount unless caller overrides.
+	if selectionOverride == nil && cfg.PendingSelection != nil {
+		selection = *cfg.PendingSelection
+		quote = CalculateSubscriptionQuote(selection)
+	}
+
 	if selectionOverride != nil {
 		validated, err := ValidateSubscriptionSelection(*selectionOverride)
 		if err != nil {
@@ -170,6 +176,11 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 	requiresPlan := AllowsPlanReview(restaurant)
 	if requiresPlan && selectionOverride == nil && cfg.Phase != SubscriptionPhasePendingPayment {
 		return nil, errors.New("choose a subscription plan before payment")
+	}
+
+	if selectionOverride == nil && cfg.PendingSelection != nil {
+		selection = *cfg.PendingSelection
+		quote = CalculateSubscriptionQuote(selection)
 	}
 
 	if selectionOverride != nil {
@@ -230,6 +241,7 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 		RazorpayOrderID:  orderID,
 		AmountPaise:      amountPaise,
 		BillingCycle:     billingCycle,
+		Kind:             RenewalKindRenew,
 		Status:           "pending",
 		PendingSelection: pendingJSON,
 	}
@@ -272,7 +284,17 @@ func (s *SubscriptionRenewalService) applyPaidSelection(restaurant *models.Resta
 	if startMode == "" {
 		startMode = "paid"
 	}
-	configJSON, err := BuildSubscriptionConfigJSON(SubscriptionPhaseActive, startMode, validated, quote, true)
+	now := time.Now()
+	cfg.Phase = SubscriptionPhaseActive
+	cfg.StartMode = startMode
+	cfg.Selection = validated
+	cfg.Quote = quote
+	cfg.HasEverPaid = true
+	cfg.PendingSelection = nil
+	cfg.PendingChangeAt = nil
+	cfg.PeriodStartedAt = &now
+
+	configJSON, err := MarshalSubscriptionConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -455,7 +477,9 @@ func (s *SubscriptionRenewalService) completeRenewalPayment(
 		}
 
 		message := "Subscription activated successfully"
-		if cfg.Phase == SubscriptionPhaseActive {
+		if renewal.Kind == RenewalKindUpgrade {
+			message = "Plan upgraded successfully"
+		} else if cfg.Phase == SubscriptionPhaseActive {
 			message = "Subscription renewed successfully"
 		}
 		result = VerifyRenewalPaymentResult{

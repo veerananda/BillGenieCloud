@@ -40,37 +40,22 @@ type SubscriptionUsage struct {
 	Admins         int64 `json:"admins"`
 }
 
-func LoadSubscriptionLimits(db *gorm.DB, restaurant *models.Restaurant) (SubscriptionLimits, error) {
-	if restaurant == nil {
-		return SubscriptionLimits{}, errors.New("restaurant is required")
-	}
-	if len(restaurant.SubscriptionConfig) == 0 {
-		return legacySubscriptionLimits(restaurant), nil
-	}
-
-	stored := ParseStoredSubscriptionConfig(restaurant)
-	if stored.Phase == SubscriptionPhaseTrial && time.Now().Before(restaurant.SubscriptionEnd) {
-		limits := TrialSubscriptionLimits()
-		limits.MonthlyPrice = restaurant.SubscriptionMonthlyPrice
-		return limits, nil
-	}
-
-	sel := stored.Selection
-
+// LimitsFromSelection builds enforcement limits from a plan selection.
+func LimitsFromSelection(sel SubscriptionSelection, monthlyPriceHint int) SubscriptionLimits {
 	maxTables := 0
 	if sel.OperationMode != "counter" {
 		maxTables = NormalizeMaxTables(sel.MaxTables)
 	}
 
 	limits := SubscriptionLimits{
-		OperationMode:         sel.OperationMode,
-		MaxManagers:           BundledManagersFromTables(maxTables) + sel.ExtraManagers,
-		MaxStaffAndChefs:      BundledStaffFromTables(maxTables) + sel.ExtraStaff,
-		HistoryDays:           IncludedHistoryDaysINR,
-		KitchenDineIn:  sel.KitchenDineIn,
-		KitchenCounter: sel.KitchenCounter,
-		Inventory:      sel.Inventory,
-		MonthlyPrice:   restaurant.SubscriptionMonthlyPrice,
+		OperationMode:    sel.OperationMode,
+		MaxManagers:      BundledManagersFromTables(maxTables) + sel.ExtraManagers,
+		MaxStaffAndChefs: BundledStaffFromTables(maxTables) + sel.ExtraStaff,
+		HistoryDays:      IncludedHistoryDaysINR,
+		KitchenDineIn:    sel.KitchenDineIn,
+		KitchenCounter:   sel.KitchenCounter,
+		Inventory:        sel.Inventory,
+		MonthlyPrice:     monthlyPriceHint,
 	}
 	if sel.HistoryExtended {
 		limits.HistoryDays = ExtendedHistoryDays
@@ -94,8 +79,42 @@ func LoadSubscriptionLimits(db *gorm.DB, restaurant *models.Restaurant) (Subscri
 	if limits.MonthlyPrice <= 0 {
 		limits.MonthlyPrice = CalculateSubscriptionQuote(sel).MonthlySubtotal
 	}
+	return limits
+}
 
-	return limits, nil
+// UsageExceedsLimits reports whether current usage would violate the given limits.
+func UsageExceedsLimits(usage SubscriptionUsage, limits SubscriptionLimits) error {
+	if limits.DineInEnabled && limits.MaxTables > 0 && int(usage.Tables) > limits.MaxTables {
+		return fmt.Errorf("you currently have %d tables but the new plan allows %d — remove tables before downgrading", usage.Tables, limits.MaxTables)
+	}
+	if !limits.DineInEnabled && usage.Tables > 0 {
+		return fmt.Errorf("the new plan has no dine-in tables — remove existing tables before downgrading")
+	}
+	if int(usage.Managers) > limits.MaxManagers {
+		return fmt.Errorf("you currently have %d managers but the new plan allows %d — remove managers before downgrading", usage.Managers, limits.MaxManagers)
+	}
+	if int(usage.StaffAndChefs) > limits.MaxStaffAndChefs {
+		return fmt.Errorf("you currently have %d staff/chefs but the new plan allows %d — remove staff before downgrading", usage.StaffAndChefs, limits.MaxStaffAndChefs)
+	}
+	return nil
+}
+
+func LoadSubscriptionLimits(db *gorm.DB, restaurant *models.Restaurant) (SubscriptionLimits, error) {
+	if restaurant == nil {
+		return SubscriptionLimits{}, errors.New("restaurant is required")
+	}
+	if len(restaurant.SubscriptionConfig) == 0 {
+		return legacySubscriptionLimits(restaurant), nil
+	}
+
+	stored := ParseStoredSubscriptionConfig(restaurant)
+	if stored.Phase == SubscriptionPhaseTrial && time.Now().Before(restaurant.SubscriptionEnd) {
+		limits := TrialSubscriptionLimits()
+		limits.MonthlyPrice = restaurant.SubscriptionMonthlyPrice
+		return limits, nil
+	}
+
+	return LimitsFromSelection(stored.Selection, restaurant.SubscriptionMonthlyPrice), nil
 }
 
 func legacySubscriptionLimits(restaurant *models.Restaurant) SubscriptionLimits {

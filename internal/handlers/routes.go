@@ -346,6 +346,11 @@ func SetupSubscriptionRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("/renewal-quote", subscriptionHandler.GetRenewalQuote)
 		protected.POST("/create-order", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.CreateRenewalOrder)
 		protected.POST("/verify-payment", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.VerifyRenewalPayment)
+		protected.POST("/change-quote", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.QuotePlanChange)
+		protected.POST("/change-order", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.CreatePlanChangeOrder)
+		protected.POST("/verify-change-payment", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.VerifyPlanChangePayment)
+		protected.POST("/schedule-change", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.SchedulePlanChange)
+		protected.POST("/cancel-scheduled-change", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.CancelScheduledPlanChange)
 	}
 
 	log.Println("✅ Subscription routes registered")

@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	SubscriptionPhaseTrial           = "trial"
-	SubscriptionPhasePendingPayment  = "pending_payment"
-	SubscriptionPhaseActive          = "active"
-	TrialDurationDays                = 15
+	SubscriptionPhaseTrial          = "trial"
+	SubscriptionPhasePendingPayment = "pending_payment"
+	SubscriptionPhaseActive         = "active"
+	TrialDurationDays               = 15
 )
 
 // Fixed trial bundle — keep in sync with BillGenieApp-new/src/config/subscriptionPricing.ts
@@ -46,11 +46,14 @@ func TrialSubscriptionLimits() SubscriptionLimits {
 }
 
 type StoredSubscriptionConfig struct {
-	Phase         string                `json:"phase"`
-	Selection     SubscriptionSelection `json:"selection"`
-	Quote         SubscriptionQuote     `json:"quote"`
-	HasEverPaid   bool                  `json:"has_ever_paid"`
-	StartMode     string                `json:"start_mode,omitempty"`
+	Phase            string                 `json:"phase"`
+	Selection        SubscriptionSelection  `json:"selection"`
+	Quote            SubscriptionQuote      `json:"quote"`
+	HasEverPaid      bool                   `json:"has_ever_paid"`
+	StartMode        string                 `json:"start_mode,omitempty"`
+	PendingSelection *SubscriptionSelection `json:"pending_selection,omitempty"`
+	PendingChangeAt  *time.Time             `json:"pending_change_at,omitempty"`
+	PeriodStartedAt  *time.Time             `json:"period_started_at,omitempty"`
 }
 
 func ParseStoredSubscriptionConfig(restaurant *models.Restaurant) StoredSubscriptionConfig {
@@ -68,10 +71,26 @@ func ParseStoredSubscriptionConfig(restaurant *models.Restaurant) StoredSubscrip
 	if validated, err := ValidateSubscriptionSelection(cfg.Selection); err == nil {
 		cfg.Selection = validated
 	}
+	if cfg.PendingSelection != nil {
+		if validated, err := ValidateSubscriptionSelection(*cfg.PendingSelection); err == nil {
+			cfg.PendingSelection = &validated
+		} else {
+			cfg.PendingSelection = nil
+			cfg.PendingChangeAt = nil
+		}
+	}
 	if cfg.Phase == "" {
 		cfg.Phase = SubscriptionPhaseTrial
 	}
 	return cfg
+}
+
+func MarshalSubscriptionConfig(cfg StoredSubscriptionConfig) (json.RawMessage, error) {
+	bytes, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(bytes), nil
 }
 
 func BuildSubscriptionConfigJSON(phase string, startMode string, sel SubscriptionSelection, quote SubscriptionQuote, hasEverPaid bool) (json.RawMessage, error) {
@@ -82,11 +101,7 @@ func BuildSubscriptionConfigJSON(phase string, startMode string, sel Subscriptio
 		Quote:       quote,
 		HasEverPaid: hasEverPaid,
 	}
-	bytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return json.RawMessage(bytes), nil
+	return MarshalSubscriptionConfig(payload)
 }
 
 func IsSubscriptionAccessBlocked(restaurant *models.Restaurant) bool {
@@ -119,4 +134,16 @@ func AllowsPlanReview(restaurant *models.Restaurant) bool {
 		return true
 	}
 	return NeedsPlanSelection(restaurant)
+}
+
+// CanChangePlanMidCycle is true for paid active subscriptions that are not expired.
+func CanChangePlanMidCycle(restaurant *models.Restaurant) bool {
+	if restaurant == nil {
+		return false
+	}
+	cfg := ParseStoredSubscriptionConfig(restaurant)
+	if cfg.Phase != SubscriptionPhaseActive || !cfg.HasEverPaid {
+		return false
+	}
+	return time.Now().Before(restaurant.SubscriptionEnd)
 }
