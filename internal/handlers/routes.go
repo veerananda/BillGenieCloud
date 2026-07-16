@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 
 	"restaurant-api/internal/middleware"
@@ -168,7 +169,9 @@ func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
 // SetupSupportIssueRoutes registers customer support issue endpoints.
 func SetupSupportIssueRoutes(router *gin.Engine, db *gorm.DB) {
 	authService := getAuthService(db)
-	supportHandler := NewSupportIssueHandler(services.NewSupportIssueService(db))
+	supportService := services.NewSupportIssueService(db)
+	supportService.StartScreenshotRetentionCleanup(context.Background())
+	supportHandler := NewSupportIssueHandler(supportService)
 
 	protected := router.Group("/support")
 	protected.Use(middleware.AuthMiddleware(authService))
