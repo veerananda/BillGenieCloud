@@ -175,6 +175,7 @@ func SetupSupportIssueRoutes(router *gin.Engine, db *gorm.DB) {
 	{
 		protected.GET("/issues", supportHandler.ListRestaurantIssues)
 		protected.POST("/issues", supportHandler.CreateIssue)
+		protected.GET("/issues/:issue_id/screenshots", supportHandler.GetRestaurantIssueScreenshots)
 	}
 
 	log.Println("✅ Support issue routes registered")
@@ -366,6 +367,7 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 	{
 		platform.GET("/support-issues", supportHandler.ListPlatformIssues)
 		platform.PUT("/support-issues/:issue_id", supportHandler.UpdatePlatformIssue)
+		platform.GET("/support-issues/:issue_id/screenshots", supportHandler.GetPlatformIssueScreenshots)
 		platform.GET("/restaurants", platformHandler.ListRestaurants)
 		platform.GET("/restaurants/:restaurant_id", platformHandler.GetRestaurant)
 		platform.POST("/restaurants/:restaurant_id/grant-subscription", platformHandler.GrantSubscription)

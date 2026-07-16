@@ -125,6 +125,46 @@ func (h *SupportIssueHandler) UpdatePlatformIssue(c *gin.Context) {
 	})
 }
 
+func (h *SupportIssueHandler) GetRestaurantIssueScreenshots(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant_id not found in context"})
+		return
+	}
+
+	issueID := c.Param("issue_id")
+	screenshots, err := h.service.GetRestaurantIssueScreenshots(restaurantID.(string), issueID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if err.Error() == "support issue not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"screenshots": screenshots,
+	})
+}
+
+func (h *SupportIssueHandler) GetPlatformIssueScreenshots(c *gin.Context) {
+	issueID := c.Param("issue_id")
+	screenshots, err := h.service.GetPlatformIssueScreenshots(issueID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if err.Error() == "support issue not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"screenshots": screenshots,
+	})
+}
+
 func (h *SupportIssueHandler) platformActor(c *gin.Context) string {
 	if actor, ok := c.Get("platform_actor"); ok {
 		if s, ok := actor.(string); ok && s != "" {
