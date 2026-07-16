@@ -98,6 +98,14 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Println("✅ FixEmailConstraint migration completed")
 	}
 
+	// Add is_approved BEFORE AutoMigrate so existing restaurants are grandfathered
+	// as approved instead of being locked out by the new default-false column.
+	if err := migrations.AddIsApproved(db); err != nil {
+		log.Printf("⚠️  Migration AddIsApproved skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ AddIsApproved migration completed")
+	}
+
 	// Now run AutoMigrate on all models
 	err := db.AutoMigrate(
 		&models.User{},

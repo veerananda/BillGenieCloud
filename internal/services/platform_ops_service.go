@@ -28,6 +28,8 @@ type PlatformRestaurantSummary struct {
 	DaysRemaining     int       `json:"days_remaining"`
 	IsActive          bool      `json:"is_active"`
 	IsAccessBlocked   bool      `json:"is_access_blocked"`
+	IsEmailVerified   bool      `json:"is_email_verified"`
+	IsApproved        bool      `json:"is_approved"`
 	MonthlyPrice      int       `json:"monthly_price"`
 	AdminCount        int64     `json:"admin_count"`
 	StaffCount        int64     `json:"staff_count"`
@@ -68,6 +70,10 @@ type UpdateSelectionRequest struct {
 type SetActiveRequest struct {
 	IsActive bool   `json:"is_active"`
 	Reason   string `json:"reason" validate:"required"`
+}
+
+type SetApprovedRequest struct {
+	Reason string `json:"reason" validate:"required"`
 }
 
 type DeleteRestaurantRequest struct {
@@ -351,6 +357,66 @@ func (s *PlatformOpsService) SetActive(restaurantID string, req SetActiveRequest
 	return &restaurant, nil
 }
 
+// ApproveRestaurant marks a restaurant as approved to sign in, after BillGenie
+// staff review. Requires the restaurant's email to already be verified, and
+// notifies the restaurant owner by email once approved.
+func (s *PlatformOpsService) ApproveRestaurant(restaurantID string, req SetApprovedRequest, actor string) (*models.Restaurant, error) {
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		return nil, errors.New("reason is required")
+	}
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("restaurant not found")
+		}
+		return nil, err
+	}
+
+	if !restaurant.IsEmailVerified {
+		return nil, errors.New("restaurant must verify their email before approval")
+	}
+	if restaurant.IsApproved {
+		return nil, errors.New("restaurant is already approved")
+	}
+
+	oldSnapshot, _ := json.Marshal(restaurant)
+	restaurant.IsApproved = true
+	if err := s.db.Save(&restaurant).Error; err != nil {
+		return nil, err
+	}
+
+	s.writePlatformAudit(restaurantID, actor, "platform_approve_restaurant", reason, oldSnapshot, restaurant)
+	s.sendApprovalEmail(&restaurant)
+	return &restaurant, nil
+}
+
+func (s *PlatformOpsService) sendApprovalEmail(restaurant *models.Restaurant) {
+	if restaurant.Email == "" {
+		return
+	}
+
+	loginHint := ""
+	var admin models.User
+	if err := s.db.Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurant.ID, "admin", true).
+		Order("created_at ASC").First(&admin).Error; err == nil {
+		loginHint = admin.StaffKey
+	}
+
+	subject := "Your BillGenie account has been approved"
+	body := fmt.Sprintf(
+		"Hi %s,\n\nGood news - %s has been reviewed and approved by the BillGenie team.\n"+
+			"Your email is verified and your account is now fully active.\n\n"+
+			"Sign in now with your login number: %s\n\n- BillGenie",
+		restaurant.OwnerName, restaurant.Name, loginHint,
+	)
+
+	if err := sendEmailSMTP(restaurant.Email, subject, body); err != nil {
+		log.Printf("⚠️  Failed to send approval email to %s: %v", restaurant.Email, err)
+	}
+}
+
 // DeleteRestaurant permanently removes a tenant and all related rows.
 func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRestaurantRequest, actor string) error {
 	reason := strings.TrimSpace(req.Reason)
@@ -511,6 +577,8 @@ func (s *PlatformOpsService) buildSummary(r *models.Restaurant) PlatformRestaura
 		DaysRemaining:     daysRemaining,
 		IsActive:          r.IsActive,
 		IsAccessBlocked:   IsSubscriptionAccessBlocked(r),
+		IsEmailVerified:   r.IsEmailVerified,
+		IsApproved:        r.IsApproved,
 		MonthlyPrice:      r.SubscriptionMonthlyPrice,
 		AdminCount:        adminCount,
 		StaffCount:        staffCount,

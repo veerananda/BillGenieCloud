@@ -64,6 +64,7 @@ type Restaurant struct {
 	IsActive                 bool            `json:"is_active" gorm:"default:true"`
 	IsSelfService            bool            `json:"is_self_service" gorm:"default:false"`                       // True for self-service, False for dine-in
 	IsEmailVerified          bool            `json:"is_email_verified" gorm:"default:false"`                     // Email verification status
+	IsApproved               bool            `json:"is_approved" gorm:"default:false"`                           // BillGenie staff approval status
 	CounterServiceModes      string          `json:"counter_service_modes" gorm:"type:varchar(20);default:both"` // both | eat_here | takeaway
 	PricesIncludeGST         bool            `json:"prices_include_gst" gorm:"default:false"`
 	Settings                 json.RawMessage `json:"settings" gorm:"type:jsonb"` // Customizable settings

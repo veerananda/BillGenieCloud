@@ -79,8 +79,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"requires_payment":            services.ParseStoredSubscriptionConfig(restaurant).Phase == services.SubscriptionPhasePendingPayment,
 		"requires_email_verification": true,
 		"is_email_verified":           restaurant.IsEmailVerified,
+		"requires_approval":           true,
+		"is_approved":                 restaurant.IsApproved,
 		"verification_email_sent":     emailSent,
-		"message":                     fmt.Sprintf("Restaurant registered successfully! Verify your email, then sign in with login number: %s", user.StaffKey),
+		"message":                     fmt.Sprintf("Restaurant registered successfully! Verify your email, then wait for BillGenie approval before signing in with login number: %s", user.StaffKey),
 	})
 }
 
