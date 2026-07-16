@@ -1,8 +1,10 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -17,8 +19,9 @@ const (
 	SupportIssueStatusResolved   = "resolved"
 	SupportIssueStatusClosed     = "closed"
 
-	maxSupportScreenshotChars = 3 * 1024 * 1024
-	maxSupportScreenshots     = 5
+	maxSupportScreenshotChars     = 700_000 // ~500 KB image as a base64 data URL
+	maxSupportScreenshots         = 5
+	supportScreenshotRetentionDays = 90
 )
 
 type SupportIssueScreenshot struct {
@@ -339,7 +342,7 @@ func validateSupportScreenshot(dataURL, name, contentType string) (SupportIssueS
 		return SupportIssueScreenshot{}, nil
 	}
 	if len(dataURL) > maxSupportScreenshotChars {
-		return SupportIssueScreenshot{}, errors.New("each screenshot must be smaller than 3 MB")
+		return SupportIssueScreenshot{}, errors.New("each screenshot must be smaller than 500 KB")
 	}
 	if !strings.HasPrefix(dataURL, "data:image/") {
 		return SupportIssueScreenshot{}, errors.New("screenshots must be image data URLs")
@@ -352,7 +355,7 @@ func validateSupportScreenshot(dataURL, name, contentType string) (SupportIssueS
 
 	screenshotName := strings.TrimSpace(name)
 	if screenshotName == "" {
-		screenshotName = "support-screenshot.jpg"
+		screenshotName = "support-screenshot.webp"
 	}
 
 	return SupportIssueScreenshot{
@@ -457,4 +460,54 @@ func buildSupportIssueListSummary(issue models.SupportIssue) SupportIssueSummary
 		summary.RestaurantCode = issue.Restaurant.RestaurantCode
 	}
 	return summary
+}
+
+// CleanupOldSupportScreenshots removes screenshot payloads from resolved/closed tickets
+// older than supportScreenshotRetentionDays to reduce database bloat.
+func (s *SupportIssueService) CleanupOldSupportScreenshots() (int64, error) {
+	cutoff := time.Now().AddDate(0, 0, -supportScreenshotRetentionDays)
+	result := s.db.Model(&models.SupportIssue{}).
+		Where("status IN ?", []string{SupportIssueStatusResolved, SupportIssueStatusClosed}).
+		Where(
+			"(resolved_at IS NOT NULL AND resolved_at < ?) OR (resolved_at IS NULL AND updated_at < ?)",
+			cutoff,
+			cutoff,
+		).
+		Where(
+			"(screenshot_data_url <> '' AND screenshot_data_url IS NOT NULL) OR (screenshots IS NOT NULL AND screenshots::text NOT IN ('null', '[]', ''))",
+		).
+		Updates(map[string]interface{}{
+			"screenshot_data_url":     "",
+			"screenshot_name":         "",
+			"screenshot_content_type": "",
+			"screenshots":             json.RawMessage("[]"),
+			"updated_at":              time.Now(),
+		})
+	return result.RowsAffected, result.Error
+}
+
+// StartScreenshotRetentionCleanup runs daily cleanup of old support screenshots.
+func (s *SupportIssueService) StartScreenshotRetentionCleanup(ctx context.Context) {
+	run := func() {
+		if count, err := s.CleanupOldSupportScreenshots(); err != nil {
+			log.Printf("support screenshot retention cleanup failed: %v", err)
+		} else if count > 0 {
+			log.Printf("cleared screenshots from %d closed support issue(s)", count)
+		}
+	}
+
+	run()
+
+	ticker := time.NewTicker(24 * time.Hour)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}()
 }
