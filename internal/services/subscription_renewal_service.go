@@ -278,13 +278,23 @@ func (s *SubscriptionRenewalService) applyPaidSelection(restaurant *models.Resta
 	}
 	restaurant.SubscriptionConfig = configJSON
 
-	base := time.Now()
-	if billingCycle == "annual" {
-		restaurant.SubscriptionEnd = base.AddDate(1, 0, 0)
-	} else {
-		restaurant.SubscriptionEnd = base.AddDate(0, 1, 0)
-	}
+	restaurant.SubscriptionEnd = NextSubscriptionEnd(restaurant.SubscriptionEnd, billingCycle)
 	return nil
+}
+
+// NextSubscriptionEnd returns the new paid period end.
+// If the current subscription is still active, unused days are preserved
+// (extend from subscription_end). If already expired (or never set), the
+// period starts from payment/activation time.
+func NextSubscriptionEnd(currentEnd time.Time, billingCycle string) time.Time {
+	base := time.Now()
+	if !currentEnd.IsZero() && currentEnd.After(base) {
+		base = currentEnd
+	}
+	if strings.EqualFold(strings.TrimSpace(billingCycle), "annual") {
+		return base.AddDate(1, 0, 0)
+	}
+	return base.AddDate(0, 1, 0)
 }
 
 func (s *SubscriptionRenewalService) VerifyRenewalPayment(restaurantID string, req VerifyRenewalPaymentRequest) (*VerifyRenewalPaymentResult, error) {

@@ -298,6 +298,7 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 
 		restock := protected.Group("")
 		restock.Use(middleware.RoleMiddleware("admin", "manager", "chef", "staff"))
+		restock.POST("/restock", ingredientHandler.RestockIngredients)
 		restock.POST("/:ingredient_id/restock", ingredientHandler.RestockIngredient)
 
 		write := protected.Group("")

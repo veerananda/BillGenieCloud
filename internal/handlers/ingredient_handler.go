@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"restaurant-api/internal/models"
 	"restaurant-api/internal/services"
@@ -32,6 +35,18 @@ type UpdateIngredientRequest struct {
 
 type RestockIngredientRequest struct {
 	Quantity float64 `json:"quantity" binding:"required,gt=0"`
+}
+
+// RestockItem is one line in a bulk restock request.
+type RestockItem struct {
+	IngredientID string  `json:"ingredient_id" binding:"required"`
+	Quantity     float64 `json:"quantity" binding:"required,gt=0"`
+}
+
+// RestockIngredientsRequest refills multiple ingredients in one call.
+// Zero / missing quantities should be filtered out by the client before sending.
+type RestockIngredientsRequest struct {
+	Items []RestockItem `json:"items" binding:"required,min=1,dive"`
 }
 
 // NewIngredientHandler creates a new ingredient handler
@@ -275,7 +290,65 @@ func userCanRestockFromContext(c *gin.Context, db *gorm.DB) bool {
 	return services.UserCanRestockInventory(&user)
 }
 
-// RestockIngredient adds quantity to current_stock (refill).
+var (
+	errNoValidRestockQuantities = errors.New("no valid restock quantities")
+	errIngredientNotFound       = errors.New("ingredient not found")
+)
+
+// applyRestockItems adds stock for each item in a single transaction and returns updated rows.
+func (h *IngredientHandler) applyRestockItems(restaurantID string, items []RestockItem) ([]models.Ingredient, error) {
+	type qtyLine struct {
+		id  string
+		qty float64
+	}
+	ordered := make([]qtyLine, 0, len(items))
+	indexByID := make(map[string]int, len(items))
+	for _, item := range items {
+		id := item.IngredientID
+		if id == "" || item.Quantity <= 0 {
+			continue
+		}
+		if idx, ok := indexByID[id]; ok {
+			ordered[idx].qty += item.Quantity
+			continue
+		}
+		indexByID[id] = len(ordered)
+		ordered = append(ordered, qtyLine{id: id, qty: item.Quantity})
+	}
+	if len(ordered) == 0 {
+		return nil, errNoValidRestockQuantities
+	}
+
+	updated := make([]models.Ingredient, 0, len(ordered))
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		for _, line := range ordered {
+			var ingredient models.Ingredient
+			if err := tx.Where("id = ? AND restaurant_id = ?", line.id, restaurantID).
+				First(&ingredient).Error; err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return fmt.Errorf("%w: %s", errIngredientNotFound, line.id)
+				}
+				return err
+			}
+			if err := tx.Model(&ingredient).
+				Update("current_stock", gorm.Expr("current_stock + ?", line.qty)).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id = ?", line.id).First(&ingredient).Error; err != nil {
+				return err
+			}
+			updated = append(updated, ingredient)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// RestockIngredient adds quantity to current_stock (refill) for one ingredient.
+// Prefer POST /ingredients/restock for bulk refills.
 func (h *IngredientHandler) RestockIngredient(c *gin.Context) {
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
@@ -295,29 +368,24 @@ func (h *IngredientHandler) RestockIngredient(c *gin.Context) {
 		return
 	}
 
-	var ingredient models.Ingredient
-	if err := h.db.Where("id = ? AND restaurant_id = ?", ingredientID, restaurantID).
-		First(&ingredient).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "ingredient not found"})
+	updated, err := h.applyRestockItems(restaurantID.(string), []RestockItem{
+		{IngredientID: ingredientID, Quantity: req.Quantity},
+	})
+	if err != nil {
+		log.Printf("❌ Ingredient restock failed: %v", err)
+		if errors.Is(err, errIngredientNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	if err := h.db.Model(&ingredient).
-		Update("current_stock", gorm.Expr("current_stock + ?", req.Quantity)).Error; err != nil {
-		log.Printf("❌ Ingredient restock failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if len(updated) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no stock updated"})
 		return
 	}
 
-	if err := h.db.Where("id = ?", ingredientID).First(&ingredient).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
+	ingredient := updated[0]
 	log.Printf("✅ Ingredient restocked: %s +%.3f %s (now %.3f)",
 		ingredient.Name, req.Quantity, ingredient.Unit, ingredient.CurrentStock)
 
@@ -326,8 +394,59 @@ func (h *IngredientHandler) RestockIngredient(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":    "Stock added successfully",
-		"ingredient": ingredient,
-		"added":      req.Quantity,
+		"message":      "Stock added successfully",
+		"ingredient":   ingredient,
+		"ingredients":  updated,
+		"added":        req.Quantity,
+		"updated":      len(updated),
+	})
+}
+
+// RestockIngredients bulk-refills multiple ingredients in one request.
+func (h *IngredientHandler) RestockIngredients(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	if !userCanRestockFromContext(c, h.db) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you do not have permission to restock inventory"})
+		return
+	}
+
+	var req RestockIngredientsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	updated, err := h.applyRestockItems(restaurantID.(string), req.Items)
+	if err != nil {
+		log.Printf("❌ Bulk ingredient restock failed: %v", err)
+		if errors.Is(err, errNoValidRestockQuantities) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, errIngredientNotFound) || strings.Contains(err.Error(), "ingredient not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("✅ Bulk restock: %d ingredients updated for restaurant %s", len(updated), restaurantID)
+
+	if globalHub != nil {
+		for _, ingredient := range updated {
+			BroadcastIngredientInventoryUpdate(globalHub, restaurantID.(string), ingredient)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Stock added successfully",
+		"ingredients": updated,
+		"updated":     len(updated),
 	})
 }
