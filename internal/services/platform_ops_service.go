@@ -212,12 +212,9 @@ func (s *PlatformOpsService) GrantSubscription(restaurantID string, req GrantSub
 		return nil, err
 	}
 
+	// applyPaidSelection already preserves unused days; only override when an explicit duration is requested.
 	if req.DurationDays > 0 {
 		restaurant.SubscriptionEnd = time.Now().AddDate(0, 0, req.DurationDays)
-	} else if billingCycle == "annual" {
-		restaurant.SubscriptionEnd = time.Now().AddDate(1, 0, 0)
-	} else {
-		restaurant.SubscriptionEnd = time.Now().AddDate(0, 1, 0)
 	}
 
 	if err := s.db.Save(&restaurant).Error; err != nil {
@@ -418,6 +415,7 @@ func (s *PlatformOpsService) sendApprovalEmail(restaurant *models.Restaurant) {
 }
 
 // DeleteRestaurant permanently removes a tenant and all related rows.
+// Trial eligibility (email/phone) is retained so a deleted account cannot claim another free trial.
 func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRestaurantRequest, actor string) error {
 	reason := strings.TrimSpace(req.Reason)
 	if reason == "" {
@@ -529,9 +527,8 @@ func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRes
 	if err := deleteWhere(&models.SubscriptionRenewal{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete subscription renewals: %w", err)
 	}
-	if err := deleteWhere(&models.TrialEligibility{}, "restaurant_id = ?", restaurantID); err != nil {
-		return fmt.Errorf("delete trial eligibilities: %w", err)
-	}
+	// Keep trial_eligibilities rows so the same email/phone cannot claim another free trial
+	// after the restaurant is deleted.
 	if err := deleteWhere(&models.SupportIssue{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete support issues: %w", err)
 	}

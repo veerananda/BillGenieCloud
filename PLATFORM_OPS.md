@@ -61,7 +61,9 @@ Update add-ons without changing subscription end date.
 ```
 
 ### `DELETE /platform/restaurants/:id`
-Permanently deletes the restaurant and **all** related data (users, orders, menu, inventory, tables, audit logs, etc.). Irreversible.
+Permanently deletes the restaurant and related data (users, orders, menu, inventory, tables, audit logs, etc.). Irreversible.
+
+**Retained:** `trial_eligibilities` for the account email/phone so the same identity cannot claim another free trial after re-registration. They must use paid signup (`Subscribe now`).
 
 ```json
 {
