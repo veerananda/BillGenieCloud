@@ -668,9 +668,10 @@ type SupportIssue struct {
 	Category              string     `json:"category" gorm:"type:varchar(32);default:problem"`
 	Title                 string     `json:"title" gorm:"type:varchar(160);not null"`
 	Description           string     `json:"description" gorm:"type:text;not null"`
-	ScreenshotDataURL     string     `json:"screenshot_data_url,omitempty" gorm:"type:text"`
-	ScreenshotName        string     `json:"screenshot_name,omitempty" gorm:"type:varchar(255)"`
-	ScreenshotContentType string     `json:"screenshot_content_type,omitempty" gorm:"type:varchar(80)"`
+	ScreenshotDataURL     string          `json:"screenshot_data_url,omitempty" gorm:"type:text"`
+	ScreenshotName        string          `json:"screenshot_name,omitempty" gorm:"type:varchar(255)"`
+	ScreenshotContentType string          `json:"screenshot_content_type,omitempty" gorm:"type:varchar(80)"`
+	Screenshots           json.RawMessage `json:"screenshots,omitempty" gorm:"type:jsonb"`
 	Status                string     `json:"status" gorm:"type:varchar(32);default:open;index"`
 	ResolutionNote        string     `json:"resolution_note,omitempty" gorm:"type:text"`
 	ResolvedBy            string     `json:"resolved_by,omitempty" gorm:"type:varchar(120)"`

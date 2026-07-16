@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -17,15 +18,23 @@ const (
 	SupportIssueStatusClosed     = "closed"
 
 	maxSupportScreenshotChars = 3 * 1024 * 1024
+	maxSupportScreenshots     = 5
 )
 
+type SupportIssueScreenshot struct {
+	DataURL     string `json:"data_url"`
+	Name        string `json:"name"`
+	ContentType string `json:"content_type"`
+}
+
 type CreateSupportIssueRequest struct {
-	Category              string `json:"category"`
-	Title                 string `json:"title"`
-	Description           string `json:"description"`
-	ScreenshotDataURL     string `json:"screenshot_data_url"`
-	ScreenshotName        string `json:"screenshot_name"`
-	ScreenshotContentType string `json:"screenshot_content_type"`
+	Category              string                   `json:"category"`
+	Title                 string                   `json:"title"`
+	Description           string                   `json:"description"`
+	Screenshots           []SupportIssueScreenshot `json:"screenshots"`
+	ScreenshotDataURL     string                   `json:"screenshot_data_url"`
+	ScreenshotName        string                   `json:"screenshot_name"`
+	ScreenshotContentType string                   `json:"screenshot_content_type"`
 }
 
 type UpdateSupportIssueRequest struct {
@@ -44,9 +53,11 @@ type SupportIssueSummary struct {
 	Category              string     `json:"category"`
 	Title                 string     `json:"title"`
 	Description           string     `json:"description"`
-	ScreenshotDataURL     string     `json:"screenshot_data_url,omitempty"`
-	ScreenshotName        string     `json:"screenshot_name,omitempty"`
-	ScreenshotContentType string     `json:"screenshot_content_type,omitempty"`
+	ScreenshotCount       int        `json:"screenshot_count"`
+	ScreenshotDataURL     string                   `json:"screenshot_data_url,omitempty"`
+	ScreenshotName        string                   `json:"screenshot_name,omitempty"`
+	ScreenshotContentType string                   `json:"screenshot_content_type,omitempty"`
+	Screenshots           []SupportIssueScreenshot `json:"screenshots,omitempty"`
 	Status                string     `json:"status"`
 	ResolutionNote        string     `json:"resolution_note,omitempty"`
 	ResolvedBy            string     `json:"resolved_by,omitempty"`
@@ -81,18 +92,9 @@ func (s *SupportIssueService) CreateIssue(restaurantID, userID, role string, req
 	}
 
 	category := normalizeSupportCategory(req.Category)
-	screenshot := strings.TrimSpace(req.ScreenshotDataURL)
-	contentType := strings.TrimSpace(req.ScreenshotContentType)
-	if screenshot != "" {
-		if len(screenshot) > maxSupportScreenshotChars {
-			return nil, errors.New("screenshot must be smaller than 3 MB")
-		}
-		if !strings.HasPrefix(screenshot, "data:image/") {
-			return nil, errors.New("screenshot must be an image data URL")
-		}
-		if contentType == "" {
-			contentType = inferDataURLContentType(screenshot)
-		}
+	screenshots, err := normalizeSupportScreenshots(req)
+	if err != nil {
+		return nil, err
 	}
 
 	reporterName := ""
@@ -114,10 +116,15 @@ func (s *SupportIssueService) CreateIssue(restaurantID, userID, role string, req
 		Category:              category,
 		Title:                 title,
 		Description:           description,
-		ScreenshotDataURL:     screenshot,
-		ScreenshotName:        strings.TrimSpace(req.ScreenshotName),
-		ScreenshotContentType: contentType,
 		Status:                SupportIssueStatusOpen,
+	}
+	if len(screenshots) > 0 {
+		issue.ScreenshotDataURL = screenshots[0].DataURL
+		issue.ScreenshotName = screenshots[0].Name
+		issue.ScreenshotContentType = screenshots[0].ContentType
+		if raw, err := json.Marshal(screenshots); err == nil {
+			issue.Screenshots = raw
+		}
 	}
 
 	if err := s.db.Create(&issue).Error; err != nil {
@@ -165,6 +172,28 @@ func (s *SupportIssueService) GetIssue(issueID string) (*SupportIssueSummary, er
 	}
 	summary := buildSupportIssueSummary(issue)
 	return &summary, nil
+}
+
+func (s *SupportIssueService) GetRestaurantIssueScreenshots(restaurantID, issueID string) ([]SupportIssueScreenshot, error) {
+	var issue models.SupportIssue
+	if err := s.db.Where("id = ? AND restaurant_id = ?", issueID, restaurantID).First(&issue).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("support issue not found")
+		}
+		return nil, err
+	}
+	return parseIssueScreenshots(issue), nil
+}
+
+func (s *SupportIssueService) GetPlatformIssueScreenshots(issueID string) ([]SupportIssueScreenshot, error) {
+	var issue models.SupportIssue
+	if err := s.db.Where("id = ?", issueID).First(&issue).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("support issue not found")
+		}
+		return nil, err
+	}
+	return parseIssueScreenshots(issue), nil
 }
 
 func (s *SupportIssueService) UpdateIssue(issueID string, req UpdateSupportIssueRequest, actor string) (*SupportIssueSummary, error) {
@@ -222,7 +251,7 @@ func (s *SupportIssueService) list(query *gorm.DB, limit, offset int) ([]Support
 
 	items := make([]SupportIssueSummary, 0, len(issues))
 	for _, issue := range issues {
-		items = append(items, buildSupportIssueSummary(issue))
+		items = append(items, buildSupportIssueListSummary(issue))
 	}
 	return items, total, nil
 }
@@ -266,25 +295,162 @@ func inferDataURLContentType(value string) string {
 	return "image/jpeg"
 }
 
+func normalizeSupportScreenshots(req CreateSupportIssueRequest) ([]SupportIssueScreenshot, error) {
+	screenshots := make([]SupportIssueScreenshot, 0, len(req.Screenshots)+1)
+	for _, item := range req.Screenshots {
+		normalized, err := validateSupportScreenshot(item.DataURL, item.Name, item.ContentType)
+		if err != nil {
+			return nil, err
+		}
+		if normalized.DataURL != "" {
+			screenshots = append(screenshots, normalized)
+		}
+	}
+
+	legacyScreenshot := strings.TrimSpace(req.ScreenshotDataURL)
+	if legacyScreenshot != "" {
+		normalized, err := validateSupportScreenshot(legacyScreenshot, req.ScreenshotName, req.ScreenshotContentType)
+		if err != nil {
+			return nil, err
+		}
+		if normalized.DataURL != "" {
+			alreadyIncluded := false
+			for _, existing := range screenshots {
+				if existing.DataURL == normalized.DataURL {
+					alreadyIncluded = true
+					break
+				}
+			}
+			if !alreadyIncluded {
+				screenshots = append(screenshots, normalized)
+			}
+		}
+	}
+
+	if len(screenshots) > maxSupportScreenshots {
+		return nil, errors.New("you can attach up to 5 screenshots")
+	}
+	return screenshots, nil
+}
+
+func validateSupportScreenshot(dataURL, name, contentType string) (SupportIssueScreenshot, error) {
+	dataURL = strings.TrimSpace(dataURL)
+	if dataURL == "" {
+		return SupportIssueScreenshot{}, nil
+	}
+	if len(dataURL) > maxSupportScreenshotChars {
+		return SupportIssueScreenshot{}, errors.New("each screenshot must be smaller than 3 MB")
+	}
+	if !strings.HasPrefix(dataURL, "data:image/") {
+		return SupportIssueScreenshot{}, errors.New("screenshots must be image data URLs")
+	}
+
+	contentType = strings.TrimSpace(contentType)
+	if contentType == "" {
+		contentType = inferDataURLContentType(dataURL)
+	}
+
+	screenshotName := strings.TrimSpace(name)
+	if screenshotName == "" {
+		screenshotName = "support-screenshot.jpg"
+	}
+
+	return SupportIssueScreenshot{
+		DataURL:     dataURL,
+		Name:        screenshotName,
+		ContentType: contentType,
+	}, nil
+}
+
+func parseIssueScreenshots(issue models.SupportIssue) []SupportIssueScreenshot {
+	if len(issue.Screenshots) > 0 {
+		var screenshots []SupportIssueScreenshot
+		if err := json.Unmarshal(issue.Screenshots, &screenshots); err == nil && len(screenshots) > 0 {
+			return screenshots
+		}
+	}
+
+	if strings.TrimSpace(issue.ScreenshotDataURL) != "" {
+		return []SupportIssueScreenshot{{
+			DataURL:     issue.ScreenshotDataURL,
+			Name:        issue.ScreenshotName,
+			ContentType: issue.ScreenshotContentType,
+		}}
+	}
+
+	return nil
+}
+
 func buildSupportIssueSummary(issue models.SupportIssue) SupportIssueSummary {
+	screenshots := parseIssueScreenshots(issue)
 	summary := SupportIssueSummary{
-		ID:                    issue.ID,
-		RestaurantID:          issue.RestaurantID,
-		UserID:                issue.UserID,
-		ReporterName:          issue.ReporterName,
-		ReporterRole:          issue.ReporterRole,
-		Category:              issue.Category,
-		Title:                 issue.Title,
-		Description:           issue.Description,
-		ScreenshotDataURL:     issue.ScreenshotDataURL,
-		ScreenshotName:        issue.ScreenshotName,
-		ScreenshotContentType: issue.ScreenshotContentType,
-		Status:                issue.Status,
-		ResolutionNote:        issue.ResolutionNote,
-		ResolvedBy:            issue.ResolvedBy,
-		ResolvedAt:            issue.ResolvedAt,
-		CreatedAt:             issue.CreatedAt,
-		UpdatedAt:             issue.UpdatedAt,
+		ID:           issue.ID,
+		RestaurantID: issue.RestaurantID,
+		UserID:       issue.UserID,
+		ReporterName: issue.ReporterName,
+		ReporterRole: issue.ReporterRole,
+		Category:     issue.Category,
+		Title:        issue.Title,
+		Description:  issue.Description,
+		ScreenshotCount: func() int {
+			if screenshots == nil {
+				return 0
+			}
+			return len(screenshots)
+		}(),
+		Screenshots:  screenshots,
+		Status:       issue.Status,
+		ResolutionNote: issue.ResolutionNote,
+		ResolvedBy:     issue.ResolvedBy,
+		ResolvedAt:     issue.ResolvedAt,
+		CreatedAt:      issue.CreatedAt,
+		UpdatedAt:      issue.UpdatedAt,
+	}
+	if len(screenshots) > 0 {
+		summary.ScreenshotDataURL = screenshots[0].DataURL
+		summary.ScreenshotName = screenshots[0].Name
+		summary.ScreenshotContentType = screenshots[0].ContentType
+	}
+	if issue.Restaurant != nil {
+		summary.RestaurantName = issue.Restaurant.Name
+		summary.RestaurantCode = issue.Restaurant.RestaurantCode
+	}
+	return summary
+}
+
+func countIssueScreenshots(issue models.SupportIssue) int {
+	if len(issue.Screenshots) > 0 {
+		var screenshots []SupportIssueScreenshot
+		if err := json.Unmarshal(issue.Screenshots, &screenshots); err == nil {
+			return len(screenshots)
+		}
+	}
+	if strings.TrimSpace(issue.ScreenshotDataURL) != "" {
+		return 1
+	}
+	return 0
+}
+
+// buildSupportIssueListSummary intentionally omits screenshot data URLs to keep list responses small.
+func buildSupportIssueListSummary(issue models.SupportIssue) SupportIssueSummary {
+	count := countIssueScreenshots(issue)
+	summary := SupportIssueSummary{
+		ID:              issue.ID,
+		RestaurantID:    issue.RestaurantID,
+		UserID:          issue.UserID,
+		ReporterName:    issue.ReporterName,
+		ReporterRole:    issue.ReporterRole,
+		Category:        issue.Category,
+		Title:           issue.Title,
+		Description:     issue.Description,
+		ScreenshotCount: count,
+		Status:          issue.Status,
+		ResolutionNote:  issue.ResolutionNote,
+		ResolvedBy:      issue.ResolvedBy,
+		ResolvedAt:      issue.ResolvedAt,
+		CreatedAt:       issue.CreatedAt,
+		UpdatedAt:       issue.UpdatedAt,
+		// ScreenshotDataURL / Screenshots are left empty to enable lazy loading.
 	}
 	if issue.Restaurant != nil {
 		summary.RestaurantName = issue.Restaurant.Name
