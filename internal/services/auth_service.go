@@ -370,6 +370,9 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 			return nil, errors.New("please verify your email before signing in. Check your inbox for the verification link sent during registration")
 		}
 	}
+	if !restaurant.IsApproved {
+		return nil, errors.New("your email is verified. Your restaurant is pending BillGenie approval — we'll email you as soon as you're approved and can sign in")
+	}
 
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {

@@ -136,6 +136,24 @@ func (h *PlatformHandler) SetActive(c *gin.Context) {
 	})
 }
 
+// ApproveRestaurant approves a verified restaurant so it can sign in.
+func (h *PlatformHandler) ApproveRestaurant(c *gin.Context) {
+	var req services.SetApprovedRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	restaurant, err := h.ops.ApproveRestaurant(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Restaurant approved",
+		"restaurant": h.ops.BuildSummaryPublic(restaurant),
+	})
+}
+
 // DeleteRestaurant permanently removes a tenant and all related data.
 func (h *PlatformHandler) DeleteRestaurant(c *gin.Context) {
 	var req services.DeleteRestaurantRequest
