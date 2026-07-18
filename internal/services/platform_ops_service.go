@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -31,10 +32,16 @@ type PlatformRestaurantSummary struct {
 	IsEmailVerified   bool      `json:"is_email_verified"`
 	IsApproved        bool      `json:"is_approved"`
 	MonthlyPrice      int       `json:"monthly_price"`
-	AdminCount        int64     `json:"admin_count"`
-	StaffCount        int64     `json:"staff_count"`
-	TableCount        int64     `json:"table_count"`
-	CreatedAt         time.Time `json:"created_at"`
+	// MonthlyPriceWithGST is the subscription price including 18% GST, as charged at checkout.
+	MonthlyPriceWithGST int   `json:"monthly_price_with_gst"`
+	AdminCount          int64 `json:"admin_count"`
+	StaffCount          int64 `json:"staff_count"`
+	TableCount          int64 `json:"table_count"`
+	// MonthOrders counts dine-in + counter orders billed this calendar month.
+	MonthOrders int64 `json:"month_orders"`
+	// MonthRevenue is this month's billed revenue including GST (sum of order totals).
+	MonthRevenue float64   `json:"month_revenue"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type PlatformRestaurantDetail struct {
@@ -566,28 +573,65 @@ func (s *PlatformOpsService) buildSummary(r *models.Restaurant) PlatformRestaura
 	_ = s.db.Model(&models.User{}).Where("restaurant_id = ? AND role IN ? AND is_active = ?", r.ID, []string{"manager", "staff", "chef"}, true).Count(&staffCount).Error
 	_ = s.db.Model(&models.RestaurantTable{}).Where("restaurant_id = ?", r.ID).Count(&tableCount).Error
 
+	monthOrders, monthRevenue := s.monthOrderStats(r.ID)
+
 	return PlatformRestaurantSummary{
-		ID:                r.ID,
-		RestaurantCode:    r.RestaurantCode,
-		Name:              r.Name,
-		OwnerName:         r.OwnerName,
-		Email:             r.Email,
-		Phone:             r.Phone,
-		City:              r.City,
-		SubscriptionPlan:  r.SubscriptionPlan,
-		SubscriptionPhase: cfg.Phase,
-		SubscriptionEnd:   r.SubscriptionEnd,
-		DaysRemaining:     daysRemaining,
-		IsActive:          r.IsActive,
-		IsAccessBlocked:   IsSubscriptionAccessBlocked(r),
-		IsEmailVerified:   r.IsEmailVerified,
-		IsApproved:        r.IsApproved,
-		MonthlyPrice:      r.SubscriptionMonthlyPrice,
-		AdminCount:        adminCount,
-		StaffCount:        staffCount,
-		TableCount:        tableCount,
-		CreatedAt:         r.CreatedAt,
+		ID:                  r.ID,
+		RestaurantCode:      r.RestaurantCode,
+		Name:                r.Name,
+		OwnerName:           r.OwnerName,
+		Email:               r.Email,
+		Phone:               r.Phone,
+		City:                r.City,
+		SubscriptionPlan:    r.SubscriptionPlan,
+		SubscriptionPhase:   cfg.Phase,
+		SubscriptionEnd:     r.SubscriptionEnd,
+		DaysRemaining:       daysRemaining,
+		IsActive:            r.IsActive,
+		IsAccessBlocked:     IsSubscriptionAccessBlocked(r),
+		IsEmailVerified:     r.IsEmailVerified,
+		IsApproved:          r.IsApproved,
+		MonthlyPrice:        r.SubscriptionMonthlyPrice,
+		MonthlyPriceWithGST: SubscriptionPriceWithGST(r.SubscriptionMonthlyPrice),
+		AdminCount:          adminCount,
+		StaffCount:          staffCount,
+		TableCount:          tableCount,
+		MonthOrders:         monthOrders,
+		MonthRevenue:        monthRevenue,
+		CreatedAt:           r.CreatedAt,
 	}
+}
+
+// SubscriptionPriceWithGST returns the subscription amount including the 18% GST
+// applied at checkout (see subscriptionGSTPercent in subscription_renewal_service.go).
+func SubscriptionPriceWithGST(subtotal int) int {
+	if subtotal <= 0 {
+		return 0
+	}
+	gst := int(math.Round(float64(subtotal) * subscriptionGSTPercent / 100))
+	return subtotal + gst
+}
+
+// monthOrderStats aggregates this calendar month's billed orders (dine-in and counter
+// combined) using the same filter as tenant sales reports; revenue includes GST.
+func (s *PlatformOpsService) monthOrderStats(restaurantID string) (int64, float64) {
+	now := time.Now().In(RestaurantLocation())
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+
+	var result struct {
+		MonthOrders  int64
+		MonthRevenue float64
+	}
+	err := s.db.Model(&models.Order{}).
+		Where("restaurant_id = ?", restaurantID).
+		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
+		Where(historyActivityAtSQL+" >= ?", monthStart).
+		Select("COUNT(*) AS month_orders, COALESCE(SUM(total), 0) AS month_revenue").
+		Scan(&result).Error
+	if err != nil {
+		return 0, 0
+	}
+	return result.MonthOrders, result.MonthRevenue
 }
 
 func (s *PlatformOpsService) loadUsage(restaurantID string) (SubscriptionUsage, error) {
