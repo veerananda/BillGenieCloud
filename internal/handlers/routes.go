@@ -68,6 +68,7 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("", orderHandler.CreateOrder)
 		protected.GET("/summary", orderHandler.ListOrdersSummary)
 		protected.GET("/sales-summary", orderHandler.GetSalesSummary)
+		protected.GET("/sales-analytics", orderHandler.GetSalesAnalytics)
 		protected.GET("/history", orderHandler.ListOrderHistory)
 		protected.GET("/counter/next-ticket", orderHandler.GetNextCounterTicket)
 		protected.GET("/counter/today", orderHandler.ListCounterOrdersToday)
