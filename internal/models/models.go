@@ -513,10 +513,14 @@ type UserSession struct {
 	UserID       string    `json:"user_id" gorm:"index;not null"`
 	RestaurantID string    `json:"restaurant_id" gorm:"index;not null"`
 	AccessToken  string    `json:"access_token" gorm:"type:text;not null"`
-	LoginTime    time.Time `json:"login_time" gorm:"autoCreateTime"`
-	LastActivity time.Time `json:"last_activity" gorm:"autoUpdateTime"`
-	DeviceInfo   string    `json:"device_info"` // Optional: device/app info
-	IsActive     bool      `json:"is_active" gorm:"default:true"`
+	// PreviousAccessToken is kept briefly after refresh so in-flight requests
+	// that still carry the pre-rotation JWT are not treated as "another device".
+	PreviousAccessToken           string     `json:"-" gorm:"type:text"`
+	PreviousAccessTokenValidUntil *time.Time `json:"-"`
+	LoginTime                     time.Time  `json:"login_time" gorm:"autoCreateTime"`
+	LastActivity                  time.Time  `json:"last_activity" gorm:"autoUpdateTime"`
+	DeviceInfo                    string     `json:"device_info"` // Optional: device/app info
+	IsActive                      bool       `json:"is_active" gorm:"default:true"`
 
 	// Relations
 	User       *User       `json:"-" gorm:"foreignKey:UserID"`

@@ -313,13 +313,30 @@ func (s *AuthService) GetEmailVerificationStatus(restaurantID, email string) (bo
 	return restaurant.IsEmailVerified, nil
 }
 
-// ResendVerificationEmail resends verification email
-func (s *AuthService) ResendVerificationEmail(restaurantID, email string) (string, error) {
+// ResendVerificationEmail resends verification email only when restaurant_id + email match.
+// Does not return the verification link to the client.
+func (s *AuthService) ResendVerificationEmail(restaurantID, email string) error {
+	restaurantID = strings.TrimSpace(restaurantID)
+	email = strings.TrimSpace(email)
+	if restaurantID == "" || email == "" {
+		return errors.New("restaurant_id and email are required")
+	}
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ? AND email = ?", restaurantID, email).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return errors.New("restaurant not found for that email")
+		}
+		return err
+	}
+
 	// Invalidate old tokens
 	s.db.Model(&models.EmailVerification{}).Where("restaurant_id = ? AND email = ? AND is_used = false", restaurantID, email).Update("is_used", true)
 
-	// Send new verification email
-	return s.SendVerificationEmail(restaurantID, email)
+	if _, err := s.SendVerificationEmail(restaurantID, email); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Login authenticates user and returns tokens.
@@ -507,9 +524,14 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 		return nil, err
 	}
 
+	// Keep the previous token valid briefly so concurrent in-flight requests
+	// that still use the old JWT are not treated as a foreign-device login.
+	graceUntil := time.Now().Add(60 * time.Second)
 	if err := s.db.Model(&activeSession).Updates(map[string]interface{}{
-		"access_token":  newAccessToken,
-		"last_activity": time.Now(),
+		"previous_access_token":             activeSession.AccessToken,
+		"previous_access_token_valid_until": graceUntil,
+		"access_token":                      newAccessToken,
+		"last_activity":                     time.Now(),
 	}).Error; err != nil {
 		return nil, fmt.Errorf("failed to update session: %w", err)
 	}
@@ -560,17 +582,28 @@ func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 }
 
 // ValidateUserSession checks if a user has an active session matching the access token.
+// After a refresh, the previous access token remains valid for a short grace window
+// so in-flight requests are not mistaken for a login from another device.
 func (s *AuthService) ValidateUserSession(userID string, accessToken string) (bool, error) {
 	var session models.UserSession
 
-	if err := s.db.Where("user_id = ? AND access_token = ? AND is_active = true", userID, accessToken).First(&session).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return false, errors.New("session invalidated. Another device has logged in with your account")
-		}
+	if err := s.db.Where("user_id = ? AND access_token = ? AND is_active = true", userID, accessToken).First(&session).Error; err == nil {
+		return true, nil
+	} else if err != gorm.ErrRecordNotFound {
 		return false, err
 	}
 
-	return true, nil
+	now := time.Now()
+	if err := s.db.Where(
+		"user_id = ? AND previous_access_token = ? AND is_active = true AND previous_access_token_valid_until > ?",
+		userID, accessToken, now,
+	).First(&session).Error; err == nil {
+		return true, nil
+	} else if err != gorm.ErrRecordNotFound {
+		return false, err
+	}
+
+	return false, errors.New("session invalidated. Another device has logged in with your account")
 }
 
 // RevokeAllSessionsForUser deactivates sessions and invalidates refresh tokens for a user.
@@ -591,11 +624,13 @@ func (s *AuthService) RevokeAllSessionsForUser(userID string) error {
 // CreateUserSession records a new active session for the user.
 func (s *AuthService) CreateUserSession(user *models.User, accessToken string) error {
 	session := &models.UserSession{
-		ID:           uuid.New().String(),
-		UserID:       user.ID,
-		RestaurantID: user.RestaurantID,
-		AccessToken:  accessToken,
-		IsActive:     true,
+		ID:                            uuid.New().String(),
+		UserID:                        user.ID,
+		RestaurantID:                  user.RestaurantID,
+		AccessToken:                   accessToken,
+		PreviousAccessToken:           "",
+		PreviousAccessTokenValidUntil: nil,
+		IsActive:                      true,
 	}
 	return s.db.Create(session).Error
 }
