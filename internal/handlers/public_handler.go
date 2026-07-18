@@ -75,6 +75,10 @@ func (h *PublicHandler) GetPublicMenu(c *gin.Context) {
 
 	log.Printf("✅ Public menu retrieved: %d items for restaurant %s", len(items), restaurantID)
 
+	for i := range items {
+		items[i].CostPrice = 0
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"items":  items,
 		"total":  total,
@@ -118,6 +122,7 @@ func (h *PublicHandler) GetPublicMenuItem(c *gin.Context) {
 
 	log.Printf("✅ Public menu item retrieved: %s", item.Name)
 
+	item.CostPrice = 0
 	c.JSON(http.StatusOK, item)
 }
 

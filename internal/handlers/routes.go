@@ -14,7 +14,7 @@ import (
 func getAuthService(db *gorm.DB) *services.AuthService {
 	secret := appJWTSecret
 	if secret == "" {
-		secret = "your-secret-key-change-this"
+		log.Fatal("JWT secret is not configured — set JWT_SECRET before starting the server")
 	}
 	return services.NewAuthService(db, secret)
 }
@@ -67,9 +67,9 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 	{
 		protected.POST("", orderHandler.CreateOrder)
 		protected.GET("/summary", orderHandler.ListOrdersSummary)
-		protected.GET("/sales-summary", orderHandler.GetSalesSummary)
-		protected.GET("/sales-analytics", orderHandler.GetSalesAnalytics)
-		protected.GET("/history", orderHandler.ListOrderHistory)
+		protected.GET("/sales-summary", middleware.RoleMiddleware("admin"), orderHandler.GetSalesSummary)
+		protected.GET("/sales-analytics", middleware.RoleMiddleware("admin"), orderHandler.GetSalesAnalytics)
+		protected.GET("/history", middleware.RoleMiddleware("admin", "manager"), orderHandler.ListOrderHistory)
 		protected.GET("/counter/next-ticket", orderHandler.GetNextCounterTicket)
 		protected.GET("/counter/today", orderHandler.ListCounterOrdersToday)
 		protected.GET("", orderHandler.ListOrders)
@@ -161,7 +161,7 @@ func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
 	protected.Use(withSubscription(db))
 	{
 		protected.GET("/profile", restaurantHandler.GetRestaurantProfile)
-		protected.PUT("/profile", restaurantHandler.UpdateRestaurantProfile)
+		protected.PUT("/profile", middleware.RoleMiddleware("admin", "manager"), restaurantHandler.UpdateRestaurantProfile)
 	}
 
 	log.Println("✅ Restaurant routes registered")

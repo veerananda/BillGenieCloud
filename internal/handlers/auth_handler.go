@@ -442,17 +442,18 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 		return
 	}
 
-	verificationLink, err := h.authService.ResendVerificationEmail(restaurantID, email)
-	if err != nil {
+	if err := h.authService.ResendVerificationEmail(restaurantID, email); err != nil {
 		log.Printf("❌ Resend verification email error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to resend verification email"})
+		// Avoid account enumeration: same message whether restaurant/email match or not.
+		c.JSON(http.StatusOK, gin.H{
+			"message": "If that restaurant email is registered, a verification link has been sent",
+		})
 		return
 	}
 
 	log.Printf("✅ Verification email resent to %s", email)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Verification email resent successfully",
-		"link":    verificationLink, // For testing only, remove in production
+		"message": "If that restaurant email is registered, a verification link has been sent",
 	})
 }

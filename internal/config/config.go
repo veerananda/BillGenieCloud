@@ -70,10 +70,10 @@ func LoadConfig() *Config {
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 
 		// JWT
-		JWTSecret:          getEnv("JWT_SECRET", "your-secret-key-change-this"),
+		JWTSecret:          getEnv("JWT_SECRET", defaultJWTSecret),
 		JWTExpiry:          parseDuration(getEnv("JWT_EXPIRY", "24h")),
 		RefreshTokenExpiry: parseDuration(getEnv("REFRESH_TOKEN_EXPIRY", "7d")),
-		RefreshJWTSecret:   getEnv("REFRESH_JWT_SECRET", "your-refresh-secret-key"),
+		RefreshJWTSecret:   getEnv("REFRESH_JWT_SECRET", defaultRefreshJWTSecret),
 
 		// WebSocket
 		WebSocketPort:     getEnv("WEBSOCKET_PORT", "3001"),
@@ -95,8 +95,37 @@ func LoadConfig() *Config {
 		EnableLogging:   getBoolEnv("ENABLE_LOGGING", environment != "production"),
 	}
 
+	validateJWTSecrets(cfg)
+
 	log.Printf("✅ Configuration loaded (Environment: %s)", cfg.Environment)
 	return cfg
+}
+
+const (
+	defaultJWTSecret        = "your-secret-key-change-this"
+	defaultRefreshJWTSecret = "your-refresh-secret-key"
+)
+
+func validateJWTSecrets(cfg *Config) {
+	weakJWT := cfg.JWTSecret == "" || cfg.JWTSecret == defaultJWTSecret
+	weakRefresh := cfg.RefreshJWTSecret == "" || cfg.RefreshJWTSecret == defaultRefreshJWTSecret
+
+	if cfg.Environment == "production" {
+		if weakJWT || weakRefresh {
+			log.Fatal("JWT_SECRET and REFRESH_JWT_SECRET must be set to strong unique values in production (not the default placeholders)")
+		}
+		if len(cfg.JWTSecret) < 32 || len(cfg.RefreshJWTSecret) < 32 {
+			log.Fatal("JWT_SECRET and REFRESH_JWT_SECRET must be at least 32 characters in production")
+		}
+		return
+	}
+
+	if weakJWT {
+		log.Println("⚠️  JWT_SECRET is using the insecure default — set JWT_SECRET before deploying")
+	}
+	if weakRefresh {
+		log.Println("⚠️  REFRESH_JWT_SECRET is using the insecure default — set REFRESH_JWT_SECRET before deploying")
+	}
 }
 
 func getEnv(key, defaultValue string) string {
