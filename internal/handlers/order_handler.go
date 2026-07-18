@@ -605,7 +605,7 @@ func (h *OrderHandler) GetSalesAnalytics(c *gin.Context) {
 	period := c.DefaultQuery("period", "week")
 	analytics, err := h.orderService.GetSalesAnalytics(restaurantID.(string), period)
 	if err != nil {
-		if err.Error() == "period must be week or month" {
+		if err.Error() == "period must be week, last_week, or month" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
