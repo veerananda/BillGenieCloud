@@ -823,6 +823,43 @@ type SalesSummary struct {
 	Period            string  `json:"period"`
 }
 
+// SalesDayPoint is one day's revenue in a sales chart series.
+type SalesDayPoint struct {
+	Date    string  `json:"date"` // YYYY-MM-DD
+	Label   string  `json:"label"`
+	Revenue float64 `json:"revenue"`
+	Orders  int64   `json:"orders"`
+}
+
+// SalesComparison compares the selected period with the previous one.
+type SalesComparison struct {
+	PreviousRevenue   float64 `json:"previous_revenue"`
+	PreviousOrders    int64   `json:"previous_orders"`
+	RevenueChangePct  float64 `json:"revenue_change_pct"`
+	OrdersChangePct   float64 `json:"orders_change_pct"`
+	Direction         string  `json:"direction"` // up | down | flat
+}
+
+// TopSellingItem is a ranked menu item by quantity sold.
+type TopSellingItem struct {
+	Name     string  `json:"name"`
+	Quantity int64   `json:"quantity"`
+	Revenue  float64 `json:"revenue"`
+}
+
+// SalesAnalytics is the full sales chart payload for week/month views.
+type SalesAnalytics struct {
+	Period            string           `json:"period"`
+	From              string           `json:"from"`
+	To                string           `json:"to"`
+	TotalRevenue      float64          `json:"total_revenue"`
+	TotalOrders       int64            `json:"total_orders"`
+	AverageOrderValue float64          `json:"average_order_value"`
+	Series            []SalesDayPoint  `json:"series"`
+	Comparison        SalesComparison  `json:"comparison"`
+	TopItems          []TopSellingItem `json:"top_items"`
+}
+
 // ListOrdersSummary returns orders with minimal item fields (no heavy menu preload).
 func (s *OrderService) ListOrdersSummary(restaurantID string, status string, limit int) ([]OrderSummary, int64, error) {
 	var orders []models.Order
@@ -953,6 +990,203 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 		AverageOrderValue: avg,
 		Period:            label,
 	}, nil
+}
+
+// GetSalesAnalytics returns daily sales, previous-period comparison, and top-selling items.
+// period must be "week" or "month".
+func (s *OrderService) GetSalesAnalytics(restaurantID string, period string) (*SalesAnalytics, error) {
+	loc := RestaurantLocation()
+	now := time.Now().In(loc)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	toEnd := todayStart.Add(24 * time.Hour)
+
+	var currentStart, previousStart, previousEnd time.Time
+	label := period
+	switch period {
+	case "month":
+		currentStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+		previousStart = currentStart.AddDate(0, -1, 0)
+		previousEnd = currentStart
+		label = "month"
+	case "week":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday → 7 so Monday is start
+		}
+		currentStart = todayStart.AddDate(0, 0, -(weekday - 1))
+		previousStart = currentStart.AddDate(0, 0, -7)
+		previousEnd = currentStart
+		label = "week"
+	default:
+		return nil, errors.New("period must be week or month")
+	}
+
+	series, err := s.dailySalesSeries(restaurantID, currentStart, toEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	currentRevenue, currentOrders, err := s.salesTotals(restaurantID, currentStart, toEnd)
+	if err != nil {
+		return nil, err
+	}
+	previousRevenue, previousOrders, err := s.salesTotals(restaurantID, previousStart, previousEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	avg := float64(0)
+	if currentOrders > 0 {
+		avg = currentRevenue / float64(currentOrders)
+	}
+
+	revenueChangePct := pctChange(currentRevenue, previousRevenue)
+	ordersChangePct := pctChange(float64(currentOrders), float64(previousOrders))
+	direction := "flat"
+	if revenueChangePct > 0.5 {
+		direction = "up"
+	} else if revenueChangePct < -0.5 {
+		direction = "down"
+	}
+
+	topItems, err := s.topSellingItems(restaurantID, currentStart, toEnd, 10)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SalesAnalytics{
+		Period:            label,
+		From:              currentStart.Format("2006-01-02"),
+		To:                todayStart.Format("2006-01-02"),
+		TotalRevenue:      currentRevenue,
+		TotalOrders:       currentOrders,
+		AverageOrderValue: avg,
+		Series:            series,
+		Comparison: SalesComparison{
+			PreviousRevenue:  previousRevenue,
+			PreviousOrders:   previousOrders,
+			RevenueChangePct: revenueChangePct,
+			OrdersChangePct:  ordersChangePct,
+			Direction:        direction,
+		},
+		TopItems: topItems,
+	}, nil
+}
+
+func pctChange(current, previous float64) float64 {
+	if previous == 0 {
+		if current == 0 {
+			return 0
+		}
+		return 100
+	}
+	return ((current - previous) / previous) * 100
+}
+
+func (s *OrderService) salesTotals(restaurantID string, from, toEnd time.Time) (float64, int64, error) {
+	var result struct {
+		TotalOrders  int64
+		TotalRevenue float64
+	}
+	err := s.db.Model(&models.Order{}).
+		Where("restaurant_id = ?", restaurantID).
+		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
+		Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", from, toEnd).
+		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+		Scan(&result).Error
+	return result.TotalRevenue, result.TotalOrders, err
+}
+
+func (s *OrderService) dailySalesSeries(restaurantID string, from, toEnd time.Time) ([]SalesDayPoint, error) {
+	loc := RestaurantLocation()
+	tz := loc.String()
+
+	type dayRow struct {
+		Day     time.Time
+		Orders  int64
+		Revenue float64
+	}
+
+	// Convert activity timestamp into the restaurant local calendar date.
+	daySQL := fmt.Sprintf("((%s AT TIME ZONE '%s')::date)", historyActivityAtSQL, tz)
+
+	var rows []dayRow
+	err := s.db.Model(&models.Order{}).
+		Select(daySQL+" AS day, COUNT(*) AS orders, COALESCE(SUM(total), 0) AS revenue").
+		Where("restaurant_id = ?", restaurantID).
+		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
+		Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", from, toEnd).
+		Group(daySQL).
+		Order("day ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	byDate := make(map[string]dayRow, len(rows))
+	for _, row := range rows {
+		key := row.Day.In(loc).Format("2006-01-02")
+		// Postgres date scan can arrive as UTC midnight; format via date components.
+		if row.Day.Location() == time.UTC {
+			key = time.Date(row.Day.Year(), row.Day.Month(), row.Day.Day(), 0, 0, 0, 0, loc).Format("2006-01-02")
+		}
+		byDate[key] = row
+	}
+
+	series := make([]SalesDayPoint, 0)
+	for d := from; d.Before(toEnd); d = d.AddDate(0, 0, 1) {
+		key := d.Format("2006-01-02")
+		row := byDate[key]
+		label := d.Format("Mon")
+		if toEnd.Sub(from) > 8*24*time.Hour {
+			label = d.Format("2")
+		}
+		series = append(series, SalesDayPoint{
+			Date:    key,
+			Label:   label,
+			Revenue: row.Revenue,
+			Orders:  row.Orders,
+		})
+	}
+	return series, nil
+}
+
+func (s *OrderService) topSellingItems(restaurantID string, from, toEnd time.Time, limit int) ([]TopSellingItem, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	type itemRow struct {
+		Name     string
+		Quantity int64
+		Revenue  float64
+	}
+
+	var rows []itemRow
+	err := s.db.Table("order_items AS oi").
+		Select("COALESCE(mi.name, 'Unknown item') AS name, COALESCE(SUM(oi.quantity), 0) AS quantity, COALESCE(SUM(oi.total), 0) AS revenue").
+		Joins("JOIN orders AS o ON o.id = oi.order_id").
+		Joins("LEFT JOIN menu_items AS mi ON mi.id = oi.menu_id").
+		Where("o.restaurant_id = ?", restaurantID).
+		Where("(o.status = ? OR (o.order_type = ? AND o.payment_method <> ''))", "completed", "counter").
+		Where("COALESCE(o.completed_at, o.created_at) >= ? AND COALESCE(o.completed_at, o.created_at) < ?", from, toEnd).
+		Group("mi.name").
+		Order("quantity DESC, revenue DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TopSellingItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, TopSellingItem{
+			Name:     row.Name,
+			Quantity: row.Quantity,
+			Revenue:  row.Revenue,
+		})
+	}
+	return items, nil
 }
 
 // ListOrderHistory returns completed/paid orders within a date range for order history screens.

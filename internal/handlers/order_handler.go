@@ -594,6 +594,28 @@ func (h *OrderHandler) GetSalesSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, summary)
 }
 
+// GetSalesAnalytics returns daily sales series, previous-period comparison, and top-selling items.
+func (h *OrderHandler) GetSalesAnalytics(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	period := c.DefaultQuery("period", "week")
+	analytics, err := h.orderService.GetSalesAnalytics(restaurantID.(string), period)
+	if err != nil {
+		if err.Error() == "period must be week or month" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, analytics)
+}
+
 // ListOrderHistory returns completed/paid orders for a date range (order history).
 func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 	restaurantID, exists := c.Get("restaurant_id")
