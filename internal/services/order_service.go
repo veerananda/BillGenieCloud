@@ -843,6 +843,7 @@ type SalesComparison struct {
 // TopSellingItem is a ranked menu item by quantity sold.
 type TopSellingItem struct {
 	Name     string  `json:"name"`
+	Category string  `json:"category"`
 	Quantity int64   `json:"quantity"`
 	Revenue  float64 `json:"revenue"`
 }
@@ -993,40 +994,49 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 }
 
 // GetSalesAnalytics returns daily sales, previous-period comparison, and top-selling items.
-// period must be "week" or "month".
+// period must be "week", "last_week", or "month".
 func (s *OrderService) GetSalesAnalytics(restaurantID string, period string) (*SalesAnalytics, error) {
 	loc := RestaurantLocation()
 	now := time.Now().In(loc)
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	toEnd := todayStart.Add(24 * time.Hour)
 
-	var currentStart, previousStart, previousEnd time.Time
+	weekday := int(now.Weekday())
+	if weekday == 0 {
+		weekday = 7 // Sunday → 7 so Monday is start of week
+	}
+	thisWeekStart := todayStart.AddDate(0, 0, -(weekday - 1))
+
+	var currentStart, currentEnd, previousStart, previousEnd time.Time
 	label := period
 	switch period {
 	case "month":
 		currentStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+		currentEnd = todayStart.Add(24 * time.Hour)
 		previousStart = currentStart.AddDate(0, -1, 0)
 		previousEnd = currentStart
 		label = "month"
-	case "week":
-		weekday := int(now.Weekday())
-		if weekday == 0 {
-			weekday = 7 // Sunday → 7 so Monday is start
-		}
-		currentStart = todayStart.AddDate(0, 0, -(weekday - 1))
+	case "last_week":
+		currentStart = thisWeekStart.AddDate(0, 0, -7)
+		currentEnd = thisWeekStart
 		previousStart = currentStart.AddDate(0, 0, -7)
 		previousEnd = currentStart
+		label = "last_week"
+	case "week":
+		currentStart = thisWeekStart
+		currentEnd = todayStart.Add(24 * time.Hour)
+		previousStart = thisWeekStart.AddDate(0, 0, -7)
+		previousEnd = thisWeekStart
 		label = "week"
 	default:
-		return nil, errors.New("period must be week or month")
+		return nil, errors.New("period must be week, last_week, or month")
 	}
 
-	series, err := s.dailySalesSeries(restaurantID, currentStart, toEnd)
+	series, err := s.dailySalesSeries(restaurantID, currentStart, currentEnd)
 	if err != nil {
 		return nil, err
 	}
 
-	currentRevenue, currentOrders, err := s.salesTotals(restaurantID, currentStart, toEnd)
+	currentRevenue, currentOrders, err := s.salesTotals(restaurantID, currentStart, currentEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -1049,15 +1059,16 @@ func (s *OrderService) GetSalesAnalytics(restaurantID string, period string) (*S
 		direction = "down"
 	}
 
-	topItems, err := s.topSellingItems(restaurantID, currentStart, toEnd, 10)
+	topItems, err := s.topSellingItems(restaurantID, currentStart, currentEnd, 10)
 	if err != nil {
 		return nil, err
 	}
 
+	toInclusive := currentEnd.Add(-24 * time.Hour)
 	return &SalesAnalytics{
 		Period:            label,
 		From:              currentStart.Format("2006-01-02"),
-		To:                todayStart.Format("2006-01-02"),
+		To:                toInclusive.Format("2006-01-02"),
 		TotalRevenue:      currentRevenue,
 		TotalOrders:       currentOrders,
 		AverageOrderValue: avg,
@@ -1158,19 +1169,20 @@ func (s *OrderService) topSellingItems(restaurantID string, from, toEnd time.Tim
 
 	type itemRow struct {
 		Name     string
+		Category string
 		Quantity int64
 		Revenue  float64
 	}
 
 	var rows []itemRow
 	err := s.db.Table("order_items AS oi").
-		Select("COALESCE(mi.name, 'Unknown item') AS name, COALESCE(SUM(oi.quantity), 0) AS quantity, COALESCE(SUM(oi.total), 0) AS revenue").
+		Select("COALESCE(mi.name, 'Unknown item') AS name, COALESCE(mi.category, '') AS category, COALESCE(SUM(oi.quantity), 0) AS quantity, COALESCE(SUM(oi.total), 0) AS revenue").
 		Joins("JOIN orders AS o ON o.id = oi.order_id").
 		Joins("LEFT JOIN menu_items AS mi ON mi.id = oi.menu_id").
 		Where("o.restaurant_id = ?", restaurantID).
 		Where("(o.status = ? OR (o.order_type = ? AND o.payment_method <> ''))", "completed", "counter").
 		Where("COALESCE(o.completed_at, o.created_at) >= ? AND COALESCE(o.completed_at, o.created_at) < ?", from, toEnd).
-		Group("mi.name").
+		Group("mi.name, mi.category").
 		Order("quantity DESC, revenue DESC").
 		Limit(limit).
 		Scan(&rows).Error
@@ -1182,6 +1194,7 @@ func (s *OrderService) topSellingItems(restaurantID string, from, toEnd time.Tim
 	for _, row := range rows {
 		items = append(items, TopSellingItem{
 			Name:     row.Name,
+			Category: row.Category,
 			Quantity: row.Quantity,
 			Revenue:  row.Revenue,
 		})
