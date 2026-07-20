@@ -1322,12 +1322,42 @@ func (h *OrderHandler) AdjustOrderItemQuantity(c *gin.Context) {
 		NotifyAssistanceUpdateByOrder(h.orderService.GetDB(), h.orderService, updatedOrder)
 	}
 
+	// Order.Items is json:"-" on the model — build an explicit payload so clients keep line items.
+	var tableIDValue interface{}
+	if updatedOrder != nil && updatedOrder.TableID != nil {
+		tableIDValue = *updatedOrder.TableID
+	}
+	orderPayload := gin.H{}
+	if updatedOrder != nil {
+		orderPayload = gin.H{
+			"id":              updatedOrder.ID,
+			"restaurant_id":   updatedOrder.RestaurantID,
+			"table_number":    updatedOrder.TableNumber,
+			"table_id":        tableIDValue,
+			"customer_name":   updatedOrder.CustomerName,
+			"customer_phone":  updatedOrder.CustomerPhone,
+			"order_number":    updatedOrder.OrderNumber,
+			"ticket_number":   updatedOrder.TicketNumber,
+			"order_type":      updatedOrder.OrderType,
+			"service_mode":    updatedOrder.ServiceMode,
+			"is_self_service": updatedOrder.OrderType == "counter",
+			"status":          updatedOrder.Status,
+			"sub_total":       updatedOrder.SubTotal,
+			"tax_amount":      updatedOrder.TaxAmount,
+			"discount_amount": updatedOrder.DiscountAmount,
+			"total":           updatedOrder.Total,
+			"created_at":      updatedOrder.CreatedAt,
+			"updated_at":      updatedOrder.UpdatedAt,
+			"items":           updatedOrder.Items,
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "Order item quantity updated",
 		"item_id":  itemID,
 		"order_id": orderID,
 		"quantity": *input.Quantity,
-		"order":    updatedOrder,
+		"order":    orderPayload,
 	})
 }
 
