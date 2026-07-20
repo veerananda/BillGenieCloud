@@ -358,6 +358,15 @@ func UserCanCancelOrders(user *models.User) bool {
 	}
 }
 
+// UserCanAdjustOrderItems reports whether a user may remove or reduce line items on an active order.
+// Owner (admin) and manager only — not staff even with can_cancel_orders.
+func UserCanAdjustOrderItems(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	return user.Role == "admin" || user.Role == "manager"
+}
+
 // UserCanRestockInventory reports whether a user may add stock refills.
 func UserCanRestockInventory(user *models.User) bool {
 	if user == nil {
