@@ -1200,7 +1200,7 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	log.Printf("   New status: %s", input.Status)
 
 	// Validate status
-	validStatuses := []string{"pending", "cooking", "ready", "served"}
+	validStatuses := []string{"pending", "cooking", "ready", "served", "cancelled"}
 	isValid := false
 	for _, s := range validStatuses {
 		if input.Status == s {
@@ -1209,13 +1209,26 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 		}
 	}
 	if !isValid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status. Must be: pending, cooking, ready, or served"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status. Must be: pending, cooking, ready, served, or cancelled"})
 		return
 	}
 
 	if err := services.EnforceKitchenUpdate(h.orderService.GetDB(), restaurantID.(string), orderID); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Kitchen item cancel is dine-in (Orders & Billing) only — not counter orders.
+	if input.Status == "cancelled" {
+		orderForCancel, getErr := h.orderService.GetOrderByID(restaurantID.(string), orderID)
+		if getErr != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": getErr.Error()})
+			return
+		}
+		if orderForCancel.OrderType == "counter" || services.IsLegacyCounterOrder(orderForCancel) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "kitchen cancel is only allowed for dine-in orders"})
+			return
+		}
 	}
 
 	err := h.orderService.UpdateOrderItemStatus(restaurantID.(string), orderID, itemID, input.Status)
@@ -1283,7 +1296,7 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 	}
 
 	// Validate status
-	validStatuses := []string{"pending", "cooking", "ready", "served"}
+	validStatuses := []string{"pending", "cooking", "ready", "served", "cancelled"}
 	isValid := false
 	for _, s := range validStatuses {
 		if input.Status == s {
@@ -1292,13 +1305,25 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 		}
 	}
 	if !isValid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status. Must be: pending, cooking, ready, or served"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status. Must be: pending, cooking, ready, served, or cancelled"})
 		return
 	}
 
 	if err := services.EnforceKitchenUpdate(h.orderService.GetDB(), restaurantID.(string), orderID); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
+	}
+
+	if input.Status == "cancelled" {
+		orderForCancel, getErr := h.orderService.GetOrderByID(restaurantID.(string), orderID)
+		if getErr != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": getErr.Error()})
+			return
+		}
+		if orderForCancel.OrderType == "counter" || services.IsLegacyCounterOrder(orderForCancel) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "kitchen cancel is only allowed for dine-in orders"})
+			return
+		}
 	}
 
 	err := h.orderService.UpdateOrderItemsByMenuID(restaurantID.(string), orderID, menuItemID, input.Status)

@@ -55,6 +55,9 @@ func BuildBillURL(token string) string {
 func orderItemsGross(items []models.OrderItem) float64 {
 	var gross float64
 	for _, item := range items {
+		if item.Status == "cancelled" {
+			continue
+		}
 		gross += item.Total
 	}
 	return gross
@@ -93,6 +96,9 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 
 	items := make([]BillItemView, 0, len(order.Items))
 	for _, item := range order.Items {
+		if item.Status == "cancelled" {
+			continue
+		}
 		items = append(items, BillItemView{
 			Name:     resolveBillItemName(item),
 			Quantity: item.Quantity,

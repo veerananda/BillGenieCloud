@@ -63,8 +63,12 @@ func IsCounterOrderForTracking(order *models.Order) bool {
 
 func BuildTrackingStatus(order *models.Order, restaurantName string) TrackingStatus {
 	readyCount := 0
-	totalCount := len(order.Items)
+	totalCount := 0
 	for _, item := range order.Items {
+		if item.Status == "cancelled" {
+			continue
+		}
+		totalCount++
 		if item.Status == "ready" || item.Status == "served" {
 			readyCount++
 		}
@@ -72,10 +76,13 @@ func BuildTrackingStatus(order *models.Order, restaurantName string) TrackingSta
 
 	color := "red"
 	message := "Preparing your order"
-	if readyCount > 0 && readyCount < totalCount {
+	if totalCount == 0 {
+		color = "green"
+		message = "Order updated"
+	} else if readyCount > 0 && readyCount < totalCount {
 		color = "orange"
 		message = "Almost ready"
-	} else if totalCount > 0 && readyCount >= totalCount {
+	} else if readyCount >= totalCount {
 		color = "green"
 		message = "Ready for pickup"
 	}
