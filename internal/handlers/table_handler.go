@@ -343,21 +343,53 @@ func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 		return
 	}
 
-	if table.CurrentOrderID == nil || *table.CurrentOrderID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No active order for this table"})
-		return
+	var order models.Order
+	inactive := []string{"completed", "cancelled"}
+
+	// Prefer the table's linked order when it is still active.
+	if table.CurrentOrderID != nil && strings.TrimSpace(*table.CurrentOrderID) != "" {
+		err := h.db.Where(
+			"id = ? AND restaurant_id = ? AND status NOT IN ?",
+			*table.CurrentOrderID,
+			restaurantID,
+			inactive,
+		).First(&order).Error
+		if err != nil {
+			order = models.Order{}
+		}
 	}
 
-	var order models.Order
-	if err := h.db.Where(
-		"id = ? AND restaurant_id = ? AND table_id = ? AND status NOT IN ?",
-		*table.CurrentOrderID,
-		restaurantID,
-		table.ID,
-		[]string{"completed", "cancelled"},
-	).First(&order).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Active order not found for this table"})
-		return
+	// Fallback: resolve the latest active dine-in order for this table (covers auto-occupy races).
+	if order.ID == "" {
+		if err := h.db.Where(
+			"restaurant_id = ? AND table_id = ? AND status NOT IN ?",
+			restaurantID,
+			table.ID,
+			inactive,
+		).Order("created_at DESC").First(&order).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No active order for this table"})
+			return
+		}
+	}
+
+	// Keep table occupancy linked to the resolved order so later QR/calls succeed.
+	needsRepair := !table.IsOccupied ||
+		table.CurrentOrderID == nil ||
+		*table.CurrentOrderID != order.ID
+	if needsRepair {
+		orderID := order.ID
+		if err := h.db.Model(&table).Updates(map[string]interface{}{
+			"is_occupied":      true,
+			"current_order_id": orderID,
+		}).Error; err != nil {
+			log.Printf("⚠️ GetAssistanceQR: could not repair table link: %v", err)
+		} else {
+			table.IsOccupied = true
+			table.CurrentOrderID = &orderID
+			if globalHub != nil {
+				BroadcastTableUpdate(globalHub, restaurantID, &table)
+			}
+		}
 	}
 
 	if err := services.EnsureOrderAssistanceToken(h.db, &order); err != nil {
