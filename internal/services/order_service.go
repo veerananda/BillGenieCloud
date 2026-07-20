@@ -522,6 +522,20 @@ func (s *OrderService) CompleteOrder(restaurantID string, orderID string) (*mode
 		return nil, err
 	}
 
+	if order.OrderType != "counter" && order.TableID != nil && strings.TrimSpace(*order.TableID) != "" {
+		if err := tx.Model(&models.RestaurantTable{}).
+			Where("id = ? AND restaurant_id = ?", *order.TableID, restaurantID).
+			Updates(map[string]interface{}{
+				"is_occupied":             false,
+				"current_order_id":        nil,
+				"assistance_requested_at": nil,
+			}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		log.Printf("✅ Table released after order complete: %s", *order.TableID)
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
@@ -620,6 +634,21 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 		tx.Rollback()
 		log.Printf("❌ [CompleteOrderWithPayment] Update failed: %v", err)
 		return nil, err
+	}
+
+	// Dine-in checkout frees the table (same as cancel) so clients can't leave it occupied.
+	if !isCounter && order.TableID != nil && strings.TrimSpace(*order.TableID) != "" {
+		if err := tx.Model(&models.RestaurantTable{}).
+			Where("id = ? AND restaurant_id = ?", *order.TableID, restaurantID).
+			Updates(map[string]interface{}{
+				"is_occupied":             false,
+				"current_order_id":        nil,
+				"assistance_requested_at": nil,
+			}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		log.Printf("✅ Table released after checkout: %s", *order.TableID)
 	}
 
 	if err := tx.Commit().Error; err != nil {
