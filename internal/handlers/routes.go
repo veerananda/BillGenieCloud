@@ -156,7 +156,7 @@ func SetupMenuItemIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 // SetupRestaurantRoutes registers restaurant endpoints
 func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
 	authService := getAuthService(db)
-	restaurantHandler := NewRestaurantHandler(db)
+	restaurantHandler := NewRestaurantHandler(db, authService)
 
 	protected := router.Group("/restaurants")
 	protected.Use(middleware.AuthMiddleware(authService))
@@ -164,6 +164,7 @@ func SetupRestaurantRoutes(router *gin.Engine, db *gorm.DB) {
 	{
 		protected.GET("/profile", restaurantHandler.GetRestaurantProfile)
 		protected.PUT("/profile", middleware.RoleMiddleware("admin", "manager"), restaurantHandler.UpdateRestaurantProfile)
+		protected.POST("/logout-all-devices", middleware.RoleMiddleware("admin"), restaurantHandler.LogoutAllDevices)
 	}
 
 	log.Println("✅ Restaurant routes registered")

@@ -204,6 +204,20 @@ func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
+		// Closed / holiday mode — admins keep operating; everyone else is blocked.
+		if restaurant.IsClosed {
+			roleVal, _ := c.Get("role")
+			role, _ := roleVal.(string)
+			if role != "admin" {
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":   "restaurant_closed",
+					"message": "Restaurant is closed. Contact the owner to reopen.",
+				})
+				c.Abort()
+				return
+			}
+		}
+
 		// Check if subscription has expired or payment is pending
 		if services.IsSubscriptionAccessBlocked(&restaurant) {
 			cfg := services.ParseStoredSubscriptionConfig(&restaurant)
