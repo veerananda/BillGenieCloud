@@ -1318,6 +1318,139 @@ func (s *OrderService) UpdateOrderItemStatus(restaurantID string, orderID string
 	return nil
 }
 
+// AdjustOrderItemQuantity lets admin/manager remove a line (quantity 0) or reduce its qty on an active order.
+// Restores menu + ingredient stock for the removed quantity and recalculates order totals (excluding cancelled lines).
+func (s *OrderService) AdjustOrderItemQuantity(
+	restaurantID string,
+	orderID string,
+	itemID string,
+	newQuantity int,
+) (*models.Order, []models.Ingredient, error) {
+	if newQuantity < 0 {
+		return nil, nil, errors.New("quantity cannot be negative")
+	}
+
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	var order models.Order
+	if err := tx.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+		First(&order).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil, errors.New("order not found")
+		}
+		return nil, nil, err
+	}
+
+	if order.Status == "completed" || order.Status == "cancelled" {
+		tx.Rollback()
+		return nil, nil, errors.New("cannot adjust items on a completed or cancelled order")
+	}
+
+	var item models.OrderItem
+	if err := tx.Where("id = ? AND order_id = ?", itemID, orderID).First(&item).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil, errors.New("order item not found")
+		}
+		return nil, nil, err
+	}
+
+	if item.Status == "cancelled" {
+		tx.Rollback()
+		return nil, nil, errors.New("kitchen-cancelled items must be dismissed, not adjusted")
+	}
+
+	if newQuantity > item.Quantity {
+		tx.Rollback()
+		return nil, nil, errors.New("cannot increase quantity here — use add items")
+	}
+	if newQuantity == item.Quantity {
+		tx.Rollback()
+		existing, err := s.GetOrderByID(restaurantID, orderID)
+		return existing, nil, err
+	}
+
+	removedQty := item.Quantity - newQuantity
+
+	if newQuantity == 0 {
+		if err := tx.Where("id = ? AND order_id = ?", itemID, orderID).Delete(&models.OrderItem{}).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, err
+		}
+	} else {
+		newTotal := item.UnitRate * float64(newQuantity)
+		if err := tx.Model(&item).Updates(map[string]interface{}{
+			"quantity": newQuantity,
+			"total":    newTotal,
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, err
+		}
+	}
+
+	if err := tx.Model(&models.Inventory{}).
+		Where("restaurant_id = ? AND menu_item_id = ?", restaurantID, item.MenuID).
+		Update("quantity", gorm.Expr("quantity + ?", removedQty)).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, err
+	}
+
+	restoredIngredients, restoreErr := RestoreIngredientsForMenuItems(tx, restaurantID, []MenuItemQuantity{
+		{MenuItemID: item.MenuID, Quantity: removedQty},
+	})
+	if restoreErr != nil {
+		tx.Rollback()
+		return nil, nil, restoreErr
+	}
+
+	var restaurant models.Restaurant
+	if err := tx.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, err
+	}
+
+	var allItems []models.OrderItem
+	if err := tx.Where("order_id = ?", orderID).Find(&allItems).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, err
+	}
+	grossTotal := 0.0
+	for _, line := range allItems {
+		if line.Status == "cancelled" {
+			continue
+		}
+		grossTotal += line.Total
+	}
+	subTotal, taxAmount, total := CalculateOrderTax(grossTotal, order.DiscountAmount, restaurant.PricesIncludeGST)
+	if err := tx.Model(&order).Updates(map[string]interface{}{
+		"sub_total":  subTotal,
+		"tax_amount": taxAmount,
+		"total":      total,
+	}).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, nil, err
+	}
+
+	updated, err := s.GetOrderByID(restaurantID, orderID)
+	if err != nil {
+		return nil, restoredIngredients, err
+	}
+
+	log.Printf("✅ Adjusted order item %s on order %s: qty %d -> %d (restored %d)", itemID, orderID, item.Quantity, newQuantity, removedQty)
+	return updated, restoredIngredients, nil
+}
+
 // DeleteCancelledOrderItem permanently removes a kitchen-cancelled line after waiter dismisses it.
 func (s *OrderService) DeleteCancelledOrderItem(restaurantID string, orderID string, itemID string) error {
 	var order models.Order

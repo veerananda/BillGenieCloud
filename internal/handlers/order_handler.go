@@ -1263,6 +1263,74 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	})
 }
 
+// AdjustOrderItemQuantity removes or reduces a line item (admin/manager only).
+func (h *OrderHandler) AdjustOrderItemQuantity(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	user, err := h.authService.GetUserByID(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+	if !services.UserCanAdjustOrderItems(user) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only managers can remove or reduce order items"})
+		return
+	}
+
+	orderID := c.Param("order_id")
+	itemID := c.Param("item_id")
+
+	var input struct {
+		Quantity *int `json:"quantity" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil || input.Quantity == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "quantity is required (0 to remove the item)"})
+		return
+	}
+
+	updatedOrder, restoredIngredients, err := h.orderService.AdjustOrderItemQuantity(
+		restaurantID.(string),
+		orderID,
+		itemID,
+		*input.Quantity,
+	)
+	if err != nil {
+		log.Printf("❌ Adjust order item quantity failed: %v", err)
+		status := http.StatusBadRequest
+		msg := err.Error()
+		if msg == "order not found" || msg == "order item not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+
+	if globalHub != nil && updatedOrder != nil {
+		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_updated", updatedOrder)
+		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), restoredIngredients)
+		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
+		NotifyAssistanceUpdateByOrder(h.orderService.GetDB(), h.orderService, updatedOrder)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Order item quantity updated",
+		"item_id":  itemID,
+		"order_id": orderID,
+		"quantity": *input.Quantity,
+		"order":    updatedOrder,
+	})
+}
+
 // DeleteCancelledOrderItem dismisses a kitchen-cancelled line from a dine-in order.
 func (h *OrderHandler) DeleteCancelledOrderItem(c *gin.Context) {
 	restaurantID, exists := c.Get("restaurant_id")

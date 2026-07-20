@@ -81,6 +81,7 @@ func SetupOrderRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("/:order_id/checkout/cancel", orderHandler.CancelCheckout)
 		protected.PUT("/:order_id/cancel", orderHandler.CancelOrder)
 		protected.PUT("/:order_id/items/:item_id/status", orderHandler.UpdateOrderItemStatus)
+		protected.PUT("/:order_id/items/:item_id/quantity", orderHandler.AdjustOrderItemQuantity)
 		protected.DELETE("/:order_id/items/:item_id", orderHandler.DeleteCancelledOrderItem)
 		protected.PUT("/:order_id/menu-items/:menu_id/status", orderHandler.UpdateOrderItemsByMenuID)
 		protected.POST("/:order_id/bill-share", orderHandler.CreateBillShare)
