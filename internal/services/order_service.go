@@ -1316,6 +1316,44 @@ func (s *OrderService) UpdateOrderItemStatus(restaurantID string, orderID string
 	return nil
 }
 
+// DeleteCancelledOrderItem permanently removes a kitchen-cancelled line after waiter dismisses it.
+func (s *OrderService) DeleteCancelledOrderItem(restaurantID string, orderID string, itemID string) error {
+	var order models.Order
+	if err := s.db.Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
+		First(&order).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return errors.New("order not found")
+		}
+		return err
+	}
+
+	if order.OrderType == "counter" || IsLegacyCounterOrder(&order) {
+		return errors.New("dismissing cancelled items is only allowed for dine-in orders")
+	}
+
+	var item models.OrderItem
+	if err := s.db.Where("id = ? AND order_id = ?", itemID, orderID).First(&item).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return errors.New("order item not found")
+		}
+		return err
+	}
+	if item.Status != "cancelled" {
+		return errors.New("only kitchen-cancelled items can be dismissed")
+	}
+
+	result := s.db.Where("id = ? AND order_id = ?", itemID, orderID).Delete(&models.OrderItem{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("order item not found")
+	}
+
+	log.Printf("✅ Dismissed kitchen-cancelled order item %s from order %s", itemID, orderID)
+	return nil
+}
+
 // UpdateOrderItemsByMenuID updates all items with a specific menu item ID to a new status
 func (s *OrderService) UpdateOrderItemsByMenuID(restaurantID string, orderID string, menuItemID string, status string) error {
 	// First verify the order belongs to the restaurant

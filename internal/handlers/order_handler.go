@@ -1263,6 +1263,41 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 	})
 }
 
+// DeleteCancelledOrderItem dismisses a kitchen-cancelled line from a dine-in order.
+func (h *OrderHandler) DeleteCancelledOrderItem(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	orderID := c.Param("order_id")
+	itemID := c.Param("item_id")
+
+	err := h.orderService.DeleteCancelledOrderItem(restaurantID.(string), orderID, itemID)
+	if err != nil {
+		log.Printf("❌ Dismiss cancelled item failed: %v", err)
+		status := http.StatusBadRequest
+		if err.Error() == "order not found" || err.Error() == "order item not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	updatedOrder, fetchErr := h.orderService.GetOrderByID(restaurantID.(string), orderID)
+	if fetchErr == nil && globalHub != nil {
+		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_updated", updatedOrder)
+		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Cancelled item dismissed",
+		"item_id":  itemID,
+		"order_id": orderID,
+	})
+}
+
 // UpdateOrderItemsByMenuID updates all items with a specific menu item ID
 // @Summary Update order items by menu item ID
 // @Description Update status of all items in an order with a specific menu item ID (for bulk updates)
