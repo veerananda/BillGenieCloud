@@ -903,19 +903,14 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 		readyCount := 0
 		items := make([]OrderSummaryItem, 0, len(order.Items))
 		for _, item := range order.Items {
-			if item.Status == "cancelled" {
-				continue
-			}
-			itemCount += item.Quantity
-			if item.Status == "ready" {
-				readyCount += item.Quantity
-			}
 			name := "Unknown Item"
 			isVeg := false
 			if item.MenuItem != nil {
 				name = item.MenuItem.Name
 				isVeg = item.MenuItem.IsVeg
 			}
+			// Keep cancelled lines in the summary so Orders tiles can prioritize
+			// "cancelled" over "ready" until the waiter opens the table.
 			items = append(items, OrderSummaryItem{
 				ID:        item.ID,
 				MenuID:    item.MenuID,
@@ -928,6 +923,13 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 				Notes:     item.Notes,
 				CreatedAt: item.CreatedAt,
 			})
+			if item.Status == "cancelled" {
+				continue
+			}
+			itemCount += item.Quantity
+			if item.Status == "ready" {
+				readyCount += item.Quantity
+			}
 		}
 
 		summaries = append(summaries, OrderSummary{
