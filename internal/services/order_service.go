@@ -903,6 +903,9 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 		readyCount := 0
 		items := make([]OrderSummaryItem, 0, len(order.Items))
 		for _, item := range order.Items {
+			if item.Status == "cancelled" {
+				continue
+			}
 			itemCount += item.Quantity
 			if item.Status == "ready" {
 				readyCount += item.Quantity
@@ -1259,7 +1262,8 @@ func (s *OrderService) TryCompleteCounterOrderAfterKitchen(restaurantID, orderID
 	}
 
 	for _, item := range order.Items {
-		if item.Status != "ready" && item.Status != "served" {
+		// cancelled = kitchen voided the line; treat as finished for counter completion
+		if item.Status != "ready" && item.Status != "served" && item.Status != "cancelled" {
 			return &order, false, nil
 		}
 	}

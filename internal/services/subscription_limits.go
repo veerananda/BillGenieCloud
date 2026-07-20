@@ -287,6 +287,11 @@ func isLegacyCounterOrder(order *models.Order) bool {
 	return false
 }
 
+// IsLegacyCounterOrder reports whether an order is treated as counter/self-service.
+func IsLegacyCounterOrder(order *models.Order) bool {
+	return isLegacyCounterOrder(order)
+}
+
 func EnforceKitchenUpdate(db *gorm.DB, restaurantID, orderID string) error {
 	var restaurant models.Restaurant
 	if err := db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
