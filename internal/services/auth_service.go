@@ -378,6 +378,10 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	if !restaurant.IsActive {
 		return nil, errors.New("restaurant account is suspended. Contact BillGenie support")
 	}
+	// Holiday / closed mode: only the owner (admin) may sign in and operate.
+	if restaurant.IsClosed && user.Role != "admin" {
+		return nil, errors.New("restaurant is closed. Contact the owner to reopen")
+	}
 	if !restaurant.IsEmailVerified {
 		var verificationCount int64
 		if err := s.db.Model(&models.EmailVerification{}).Where("restaurant_id = ?", restaurant.ID).Count(&verificationCount).Error; err != nil {
@@ -619,6 +623,88 @@ func (s *AuthService) RevokeAllSessionsForUser(userID string) error {
 		}
 		return nil
 	})
+}
+
+// RevokeRestaurantSessionsExceptCurrent kicks every active session in the restaurant
+// except the caller's current access token. Returns user IDs that had sessions revoked.
+func (s *AuthService) RevokeRestaurantSessionsExceptCurrent(
+	restaurantID string,
+	keepUserID string,
+	keepAccessToken string,
+) ([]string, error) {
+	var sessions []models.UserSession
+	if err := s.db.Where("restaurant_id = ? AND is_active = true", restaurantID).
+		Find(&sessions).Error; err != nil {
+		return nil, err
+	}
+
+	revokedUsers := make(map[string]struct{})
+	for _, session := range sessions {
+		if session.UserID == keepUserID && session.AccessToken == keepAccessToken {
+			continue
+		}
+		revokedUsers[session.UserID] = struct{}{}
+	}
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		q := tx.Model(&models.UserSession{}).
+			Where("restaurant_id = ? AND is_active = true", restaurantID)
+		if keepAccessToken != "" {
+			q = q.Where("access_token <> ?", keepAccessToken)
+		}
+		if err := q.Update("is_active", false).Error; err != nil {
+			return err
+		}
+
+		// Drop refresh tokens for every user in the restaurant except keep-user (they re-auth next).
+		var userIDs []string
+		if err := tx.Model(&models.User{}).
+			Where("restaurant_id = ?", restaurantID).
+			Pluck("id", &userIDs).Error; err != nil {
+			return err
+		}
+		for _, uid := range userIDs {
+			if uid == keepUserID {
+				// Still wipe other devices' refresh tokens for this admin by deleting all then...
+				// Simpler: delete all refresh tokens for restaurant users; current access JWT still works until expiry.
+				continue
+			}
+			if err := tx.Where("user_id = ?", uid).Delete(&models.RefreshToken{}).Error; err != nil {
+				return err
+			}
+		}
+		// Also clear refresh tokens for keep user so only the current access session remains usable for refresh.
+		if err := tx.Where("user_id = ?", keepUserID).Delete(&models.RefreshToken{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(revokedUsers))
+	for uid := range revokedUsers {
+		out = append(out, uid)
+	}
+	return out, nil
+}
+
+// RevokeNonAdminSessionsForRestaurant kicks staff/manager/chef sessions (used when closing).
+func (s *AuthService) RevokeNonAdminSessionsForRestaurant(restaurantID string) ([]string, error) {
+	var users []models.User
+	if err := s.db.Where("restaurant_id = ? AND role <> ?", restaurantID, "admin").
+		Find(&users).Error; err != nil {
+		return nil, err
+	}
+	revoked := make([]string, 0, len(users))
+	for _, u := range users {
+		if err := s.RevokeAllSessionsForUser(u.ID); err != nil {
+			return revoked, err
+		}
+		revoked = append(revoked, u.ID)
+	}
+	return revoked, nil
 }
 
 // CreateUserSession records a new active session for the user.

@@ -62,6 +62,7 @@ type Restaurant struct {
 	SubscriptionMonthlyPrice int             `json:"subscription_monthly_price" gorm:"default:799"`
 	SubscriptionConfig       json.RawMessage `json:"subscription_config" gorm:"type:jsonb"`
 	IsActive                 bool            `json:"is_active" gorm:"default:true"`
+	IsClosed                 bool            `json:"is_closed" gorm:"default:false"` // Admin holiday/closed — blocks non-admin login/API
 	IsSelfService            bool            `json:"is_self_service" gorm:"default:false"`                       // True for self-service, False for dine-in
 	IsEmailVerified          bool            `json:"is_email_verified" gorm:"default:false"`                     // Email verification status
 	IsApproved               bool            `json:"is_approved" gorm:"default:false"`                           // BillGenie staff approval status
