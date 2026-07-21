@@ -395,7 +395,7 @@ type InventoryEventData struct {
 	Unit         string  `json:"unit,omitempty"`
 	Quantity     float64 `json:"quantity"`
 	FullStock    float64 `json:"full_stock,omitempty"`
-	AlertQuantity float64 `json:"alert_quantity,omitempty"`
+	AlertQuantity float64 `json:"alert_quantity"`
 	IsLow        bool    `json:"is_low"`
 	MinLevel     float64 `json:"min_level,omitempty"`
 }
