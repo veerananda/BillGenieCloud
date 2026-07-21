@@ -395,6 +395,7 @@ type InventoryEventData struct {
 	Unit         string  `json:"unit,omitempty"`
 	Quantity     float64 `json:"quantity"`
 	FullStock    float64 `json:"full_stock,omitempty"`
+	AlertQuantity float64 `json:"alert_quantity,omitempty"`
 	IsLow        bool    `json:"is_low"`
 	MinLevel     float64 `json:"min_level,omitempty"`
 }
@@ -405,10 +406,11 @@ type Ingredient struct {
 	RestaurantID string    `json:"restaurant_id" gorm:"index" validate:"required"`
 	Name         string    `json:"name" gorm:"not null"`
 	Unit         string    `json:"unit" gorm:"type:varchar(50)"` // pieces, grams, ml, liters, kg, etc.
-	CurrentStock float64   `json:"current_stock" gorm:"type:numeric(10,2);default:0"`
-	FullStock    float64   `json:"full_stock" gorm:"type:numeric(10,2);default:0"`
-	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	CurrentStock  float64   `json:"current_stock" gorm:"type:numeric(10,2);default:0"`
+	FullStock     float64   `json:"full_stock" gorm:"type:numeric(10,2);default:0"`
+	AlertQuantity float64   `json:"alert_quantity" gorm:"type:numeric(10,2);default:0"`
+	CreatedAt     time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt     time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
