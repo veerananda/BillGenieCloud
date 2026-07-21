@@ -135,6 +135,12 @@ func MigrateDatabase(db *gorm.DB) {
 
 	log.Println("✅ Database migrations completed")
 
+	if err := migrations.BackfillIngredientAlertQuantity(db); err != nil {
+		log.Printf("⚠️  Migration BackfillIngredientAlertQuantity skipped or failed: %v", err)
+	} else {
+		log.Println("✅ BackfillIngredientAlertQuantity migration completed")
+	}
+
 	// Enforce NOT NULL constraint on restaurant_code column after fixing nulls
 	if err := migrations.EnforceRestaurantCodeNotNull(db); err != nil {
 		log.Printf("⚠️  Migration EnforceRestaurantCodeNotNull failed: %v", err)

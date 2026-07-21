@@ -309,6 +309,7 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 		write.Use(middleware.RoleMiddleware("admin"))
 		write.POST("/sync-from-recipes", ingredientHandler.SyncFromRecipes)
 		write.POST("", ingredientHandler.CreateIngredient)
+		write.PUT("/bulk", ingredientHandler.BulkUpdateIngredients)
 		write.PUT("/:ingredient_id", ingredientHandler.UpdateIngredient)
 		write.DELETE("/:ingredient_id", ingredientHandler.DeleteIngredient)
 	}

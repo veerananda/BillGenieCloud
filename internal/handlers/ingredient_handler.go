@@ -20,17 +20,29 @@ type IngredientHandler struct {
 }
 
 type CreateIngredientRequest struct {
-	Name         string  `json:"name" binding:"required"`
-	Unit         string  `json:"unit" binding:"required"`
-	CurrentStock float64 `json:"current_stock"`
-	FullStock    float64 `json:"full_stock"`
+	Name          string  `json:"name" binding:"required"`
+	Unit          string  `json:"unit" binding:"required"`
+	CurrentStock  float64 `json:"current_stock"`
+	FullStock     float64 `json:"full_stock"`
+	AlertQuantity float64 `json:"alert_quantity"`
 }
 
 type UpdateIngredientRequest struct {
-	Name         string  `json:"name"`
-	Unit         string  `json:"unit"`
-	CurrentStock float64 `json:"current_stock"`
-	FullStock    float64 `json:"full_stock"`
+	Name          *string  `json:"name"`
+	Unit          *string  `json:"unit"`
+	CurrentStock  *float64 `json:"current_stock"`
+	FullStock     *float64 `json:"full_stock"`
+	AlertQuantity *float64 `json:"alert_quantity"`
+}
+
+type BulkUpdateIngredientItem struct {
+	IngredientID  string   `json:"ingredient_id" binding:"required"`
+	AlertQuantity *float64 `json:"alert_quantity"`
+	FullStock     *float64 `json:"full_stock"`
+}
+
+type BulkUpdateIngredientsRequest struct {
+	Items []BulkUpdateIngredientItem `json:"items" binding:"required,min=1,dive"`
 }
 
 type RestockIngredientRequest struct {
@@ -108,12 +120,13 @@ func (h *IngredientHandler) CreateIngredient(c *gin.Context) {
 	}
 
 	ingredient := &models.Ingredient{
-		ID:           uuid.New().String(),
-		RestaurantID: restaurantID.(string),
-		Name:         req.Name,
-		Unit:         req.Unit,
-		CurrentStock: req.CurrentStock,
-		FullStock:    req.FullStock,
+		ID:            uuid.New().String(),
+		RestaurantID:  restaurantID.(string),
+		Name:          req.Name,
+		Unit:          req.Unit,
+		CurrentStock:  req.CurrentStock,
+		FullStock:     req.FullStock,
+		AlertQuantity: req.AlertQuantity,
 	}
 
 	if err := h.db.Create(ingredient).Error; err != nil {
@@ -171,15 +184,40 @@ func (h *IngredientHandler) UpdateIngredient(c *gin.Context) {
 		return
 	}
 
-	// Update fields
-	if req.Name != "" {
-		ingredient.Name = req.Name
+	// Update fields (omit unset pointer fields so stock refill / alert edits stay independent)
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name != "" {
+			ingredient.Name = name
+		}
 	}
-	if req.Unit != "" {
-		ingredient.Unit = req.Unit
+	if req.Unit != nil {
+		unit := strings.TrimSpace(*req.Unit)
+		if unit != "" {
+			ingredient.Unit = unit
+		}
 	}
-	ingredient.CurrentStock = req.CurrentStock
-	ingredient.FullStock = req.FullStock
+	if req.CurrentStock != nil {
+		if *req.CurrentStock < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "current_stock must be >= 0"})
+			return
+		}
+		ingredient.CurrentStock = *req.CurrentStock
+	}
+	if req.FullStock != nil {
+		if *req.FullStock < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "full_stock must be >= 0"})
+			return
+		}
+		ingredient.FullStock = *req.FullStock
+	}
+	if req.AlertQuantity != nil {
+		if *req.AlertQuantity < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "alert_quantity must be >= 0"})
+			return
+		}
+		ingredient.AlertQuantity = *req.AlertQuantity
+	}
 
 	if err := h.db.Save(&ingredient).Error; err != nil {
 		log.Printf("❌ Ingredient update failed: %v", err)
@@ -200,6 +238,85 @@ func (h *IngredientHandler) UpdateIngredient(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Ingredient updated successfully",
 		"ingredient": ingredient,
+	})
+}
+
+// BulkUpdateIngredients updates alert (and optional full) quantities for many ingredients.
+// @Summary Bulk update ingredients
+// @Description Update alert_quantity (and optionally full_stock) for multiple ingredients
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body BulkUpdateIngredientsRequest true "Bulk update payload"
+// @Success 200 {object} map[string]interface{}
+// @Router /ingredients/bulk [put]
+func (h *IngredientHandler) BulkUpdateIngredients(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	var req BulkUpdateIngredientsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	updated := make([]models.Ingredient, 0, len(req.Items))
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range req.Items {
+			if item.AlertQuantity == nil && item.FullStock == nil {
+				return fmt.Errorf("ingredient %s: provide alert_quantity and/or full_stock", item.IngredientID)
+			}
+			if item.AlertQuantity != nil && *item.AlertQuantity < 0 {
+				return fmt.Errorf("ingredient %s: alert_quantity must be >= 0", item.IngredientID)
+			}
+			if item.FullStock != nil && *item.FullStock < 0 {
+				return fmt.Errorf("ingredient %s: full_stock must be >= 0", item.IngredientID)
+			}
+
+			var ingredient models.Ingredient
+			if err := tx.Where("id = ? AND restaurant_id = ?", item.IngredientID, restaurantID).
+				First(&ingredient).Error; err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return fmt.Errorf("ingredient not found: %s", item.IngredientID)
+				}
+				return err
+			}
+
+			updates := map[string]interface{}{}
+			if item.AlertQuantity != nil {
+				updates["alert_quantity"] = *item.AlertQuantity
+				ingredient.AlertQuantity = *item.AlertQuantity
+			}
+			if item.FullStock != nil {
+				updates["full_stock"] = *item.FullStock
+				ingredient.FullStock = *item.FullStock
+			}
+
+			if err := tx.Model(&ingredient).Updates(updates).Error; err != nil {
+				return err
+			}
+			updated = append(updated, ingredient)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("❌ Bulk ingredient update failed: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if globalHub != nil {
+		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), updated)
+	}
+
+	log.Printf("✅ Bulk updated %d ingredients for restaurant %s", len(updated), restaurantID)
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Ingredients updated successfully",
+		"ingredients": updated,
+		"total":       len(updated),
 	})
 }
 

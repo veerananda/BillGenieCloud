@@ -460,24 +460,25 @@ func BroadcastInventoryUpdate(hub *WebSocketHub, restaurantID string, itemName s
 	log.Printf("📤 Broadcast inventory update: %s (Qty: %.2f) to room %s", itemName, quantity, restaurantID)
 }
 
-func ingredientIsLowStock(currentStock, fullStock float64) bool {
-	if fullStock <= 0 {
+func ingredientIsLowStock(currentStock, alertQuantity float64) bool {
+	if alertQuantity <= 0 {
 		return false
 	}
-	return (currentStock/fullStock)*100 <= 15
+	return currentStock <= alertQuantity
 }
 
 // BroadcastIngredientInventoryUpdate broadcasts raw ingredient stock changes.
 func BroadcastIngredientInventoryUpdate(hub *WebSocketHub, restaurantID string, ingredient models.Ingredient) {
 	_ = hub
 	data := models.InventoryEventData{
-		Kind:         "ingredient",
-		IngredientID: ingredient.ID,
-		ItemName:     ingredient.Name,
-		Unit:         ingredient.Unit,
-		Quantity:     ingredient.CurrentStock,
-		FullStock:    ingredient.FullStock,
-		IsLow:        ingredientIsLowStock(ingredient.CurrentStock, ingredient.FullStock),
+		Kind:          "ingredient",
+		IngredientID:  ingredient.ID,
+		ItemName:      ingredient.Name,
+		Unit:          ingredient.Unit,
+		Quantity:      ingredient.CurrentStock,
+		FullStock:     ingredient.FullStock,
+		AlertQuantity: ingredient.AlertQuantity,
+		IsLow:         ingredientIsLowStock(ingredient.CurrentStock, ingredient.AlertQuantity),
 	}
 	publishEvent(restaurantID, "inventory_updated", data)
 	log.Printf("📤 Broadcast ingredient inventory: %s (stock: %.2f %s) to room %s",
