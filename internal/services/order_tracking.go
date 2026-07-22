@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ type TrackingStatus struct {
 	RestaurantName string `json:"restaurant_name,omitempty"`
 	ServiceMode    string `json:"service_mode,omitempty"`
 	Color          string `json:"color"`   // red | orange | green
-	Message        string `json:"message"` // Preparing | Almost ready | Ready for pickup
+	Message        string `json:"message"` // Preparing | N of M items ready | Ready for pickup
 	ReadyCount     int    `json:"ready_count"`
 	TotalCount     int    `json:"total_count"`
 	Status         string `json:"status"` // order status
@@ -81,7 +82,7 @@ func BuildTrackingStatus(order *models.Order, restaurantName string) TrackingSta
 		message = "Order updated"
 	} else if readyCount > 0 && readyCount < totalCount {
 		color = "orange"
-		message = "Almost ready"
+		message = fmt.Sprintf("%d of %d items ready", readyCount, totalCount)
 	} else if readyCount >= totalCount {
 		color = "green"
 		message = "Ready for pickup"
