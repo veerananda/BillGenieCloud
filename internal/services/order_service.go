@@ -695,6 +695,13 @@ func (s *OrderService) CancelOrder(restaurantID string, orderID string) ([]model
 	}
 
 	for _, item := range items {
+		if item.Status == "served" {
+			tx.Rollback()
+			return nil, errors.New("cannot cancel order with served items")
+		}
+	}
+
+	for _, item := range items {
 		if err := tx.Model(&models.Inventory{}).
 			Where("restaurant_id = ? AND menu_item_id = ?", restaurantID, item.MenuID).
 			Update("quantity", gorm.Expr("quantity + ?", item.Quantity)).Error; err != nil {
@@ -1394,6 +1401,11 @@ func (s *OrderService) AdjustOrderItemQuantity(
 	if item.Status == "cancelled" {
 		tx.Rollback()
 		return nil, nil, errors.New("kitchen-cancelled items must be dismissed, not adjusted")
+	}
+
+	if item.Status == "served" {
+		tx.Rollback()
+		return nil, nil, errors.New("cannot adjust served items")
 	}
 
 	if newQuantity > item.Quantity {
