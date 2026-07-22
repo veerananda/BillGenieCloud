@@ -1162,6 +1162,26 @@ func (s *OrderService) salesTotals(restaurantID string, from, toEnd time.Time) (
 	return result.TotalRevenue, result.TotalOrders, err
 }
 
+// SalesStatsForRange returns revenue, order count, AOV, and top-selling items for [from, toEnd).
+func (s *OrderService) SalesStatsForRange(restaurantID string, from, toEnd time.Time, topN int) (float64, int64, float64, []TopSellingItem, error) {
+	revenue, orders, err := s.salesTotals(restaurantID, from, toEnd)
+	if err != nil {
+		return 0, 0, 0, nil, err
+	}
+	avg := float64(0)
+	if orders > 0 {
+		avg = revenue / float64(orders)
+	}
+	if topN <= 0 {
+		topN = 5
+	}
+	topItems, err := s.topSellingItems(restaurantID, from, toEnd, topN)
+	if err != nil {
+		return 0, 0, 0, nil, err
+	}
+	return revenue, orders, avg, topItems, nil
+}
+
 func (s *OrderService) dailySalesSeries(restaurantID string, from, toEnd time.Time) ([]SalesDayPoint, error) {
 	loc := RestaurantLocation()
 	tz := loc.String()

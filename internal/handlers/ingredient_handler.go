@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"restaurant-api/internal/models"
 	"restaurant-api/internal/services"
@@ -49,20 +51,30 @@ type BulkUpdateIngredientsRequest struct {
 
 type RestockIngredientRequest struct {
 	Quantity float64 `json:"quantity" binding:"required,gt=0"`
-	Unit     string  `json:"unit,omitempty"` // optional; defaults to ingredient inventory unit
+	Unit     string  `json:"unit,omitempty"`  // optional; defaults to ingredient inventory unit
+	Price    float64 `json:"price,omitempty"` // optional purchase cost for this refill line
 }
 
 // RestockItem is one line in a bulk restock request.
 type RestockItem struct {
 	IngredientID string  `json:"ingredient_id" binding:"required"`
 	Quantity     float64 `json:"quantity" binding:"required,gt=0"`
-	Unit         string  `json:"unit,omitempty"` // optional; defaults to ingredient inventory unit
+	Unit         string  `json:"unit,omitempty"`  // optional; defaults to ingredient inventory unit
+	Price        float64 `json:"price,omitempty"` // optional purchase cost for this refill line
 }
 
 // RestockIngredientsRequest refills multiple ingredients in one call.
 // Zero / missing quantities should be filtered out by the client before sending.
 type RestockIngredientsRequest struct {
 	Items []RestockItem `json:"items" binding:"required,min=1,dive"`
+}
+
+// DeductIngredientRequest removes stock (e.g. expired items). Admin/manager only.
+type DeductIngredientRequest struct {
+	IngredientID string  `json:"ingredient_id" binding:"required"`
+	Quantity     float64 `json:"quantity" binding:"required,gt=0"`
+	Unit         string  `json:"unit,omitempty"`
+	Reason       string  `json:"reason,omitempty"` // default: expired
 }
 
 // NewIngredientHandler creates a new ingredient handler
@@ -532,11 +544,32 @@ var (
 	errIngredientNotFound       = errors.New("ingredient not found")
 )
 
+func istLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		return time.FixedZone("IST", 5*60*60+30*60)
+	}
+	return loc
+}
+
+func contextUserID(c *gin.Context) string {
+	if v, ok := c.Get("user_id"); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 // applyRestockItems adds stock for each item in a single transaction and returns updated rows.
-func (h *IngredientHandler) applyRestockItems(restaurantID string, items []RestockItem) ([]models.Ingredient, error) {
+// Optional Price on each item is recorded as stock expenditure for monthly totals.
+func (h *IngredientHandler) applyRestockItems(restaurantID, createdBy string, items []RestockItem) ([]models.Ingredient, float64, error) {
 	type qtyLine struct {
-		id  string
-		qty float64
+		id    string
+		qty   float64
+		price float64
+		name  string
+		unit  string
 	}
 
 	// Load ingredients first so we can convert entry units → inventory units.
@@ -553,7 +586,7 @@ func (h *IngredientHandler) applyRestockItems(restaurantID string, items []Resto
 	var found []models.Ingredient
 	if len(ids) > 0 {
 		if err := h.db.Where("restaurant_id = ? AND id IN ?", restaurantID, ids).Find(&found).Error; err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	byID := make(map[string]models.Ingredient, len(found))
@@ -570,7 +603,7 @@ func (h *IngredientHandler) applyRestockItems(restaurantID string, items []Resto
 		}
 		ing, ok := byID[id]
 		if !ok {
-			return nil, fmt.Errorf("%w: %s", errIngredientNotFound, id)
+			return nil, 0, fmt.Errorf("%w: %s", errIngredientNotFound, id)
 		}
 		entryUnit := strings.TrimSpace(item.Unit)
 		if entryUnit == "" {
@@ -578,20 +611,32 @@ func (h *IngredientHandler) applyRestockItems(restaurantID string, items []Resto
 		}
 		qty, err := units.Convert(item.Quantity, entryUnit, ing.Unit)
 		if err != nil {
-			return nil, fmt.Errorf("ingredient %s: %w", id, err)
+			return nil, 0, fmt.Errorf("ingredient %s: %w", id, err)
+		}
+		price := item.Price
+		if price < 0 {
+			price = 0
 		}
 		if idx, exists := indexByID[id]; exists {
 			ordered[idx].qty += qty
+			ordered[idx].price += price
 			continue
 		}
 		indexByID[id] = len(ordered)
-		ordered = append(ordered, qtyLine{id: id, qty: qty})
+		ordered = append(ordered, qtyLine{
+			id:    id,
+			qty:   qty,
+			price: price,
+			name:  ing.Name,
+			unit:  ing.Unit,
+		})
 	}
 	if len(ordered) == 0 {
-		return nil, errNoValidRestockQuantities
+		return nil, 0, errNoValidRestockQuantities
 	}
 
 	updated := make([]models.Ingredient, 0, len(ordered))
+	var expenditureAdded float64
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		for _, line := range ordered {
 			var ingredient models.Ingredient
@@ -610,13 +655,31 @@ func (h *IngredientHandler) applyRestockItems(restaurantID string, items []Resto
 				return err
 			}
 			updated = append(updated, ingredient)
+
+			if line.price > 0 {
+				ingID := line.id
+				entry := models.StockExpenditure{
+					RestaurantID:   restaurantID,
+					IngredientID:   &ingID,
+					IngredientName: line.name,
+					Amount:         line.price,
+					Quantity:       line.qty,
+					Unit:           line.unit,
+					Source:         "restock",
+					CreatedBy:      createdBy,
+				}
+				if err := tx.Create(&entry).Error; err != nil {
+					return err
+				}
+				expenditureAdded += line.price
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return updated, nil
+	return updated, expenditureAdded, nil
 }
 
 // RestockIngredient adds quantity to current_stock (refill) for one ingredient.
@@ -640,8 +703,8 @@ func (h *IngredientHandler) RestockIngredient(c *gin.Context) {
 		return
 	}
 
-	updated, err := h.applyRestockItems(restaurantID.(string), []RestockItem{
-		{IngredientID: ingredientID, Quantity: req.Quantity, Unit: req.Unit},
+	updated, expenditureAdded, err := h.applyRestockItems(restaurantID.(string), contextUserID(c), []RestockItem{
+		{IngredientID: ingredientID, Quantity: req.Quantity, Unit: req.Unit, Price: req.Price},
 	})
 	if err != nil {
 		log.Printf("❌ Ingredient restock failed: %v", err)
@@ -666,11 +729,12 @@ func (h *IngredientHandler) RestockIngredient(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "Stock added successfully",
-		"ingredient":   ingredient,
-		"ingredients":  updated,
-		"added":        req.Quantity,
-		"updated":      len(updated),
+		"message":            "Stock added successfully",
+		"ingredient":         ingredient,
+		"ingredients":        updated,
+		"added":              req.Quantity,
+		"updated":            len(updated),
+		"expenditure_added":  expenditureAdded,
 	})
 }
 
@@ -693,7 +757,7 @@ func (h *IngredientHandler) RestockIngredients(c *gin.Context) {
 		return
 	}
 
-	updated, err := h.applyRestockItems(restaurantID.(string), req.Items)
+	updated, expenditureAdded, err := h.applyRestockItems(restaurantID.(string), contextUserID(c), req.Items)
 	if err != nil {
 		log.Printf("❌ Bulk ingredient restock failed: %v", err)
 		if errors.Is(err, errNoValidRestockQuantities) {
@@ -708,7 +772,8 @@ func (h *IngredientHandler) RestockIngredients(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ Bulk restock: %d ingredients updated for restaurant %s", len(updated), restaurantID)
+	log.Printf("✅ Bulk restock: %d ingredients updated for restaurant %s (expenditure +%.2f)",
+		len(updated), restaurantID, expenditureAdded)
 
 	if globalHub != nil {
 		for _, ingredient := range updated {
@@ -717,8 +782,148 @@ func (h *IngredientHandler) RestockIngredients(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":     "Stock added successfully",
-		"ingredients": updated,
-		"updated":     len(updated),
+		"message":           "Stock added successfully",
+		"ingredients":       updated,
+		"updated":           len(updated),
+		"expenditure_added": expenditureAdded,
+	})
+}
+
+// DeductIngredient removes quantity from current_stock (e.g. expired waste).
+// Admin and manager only.
+func (h *IngredientHandler) DeductIngredient(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	var req DeductIngredientRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var ingredient models.Ingredient
+	if err := h.db.Where("id = ? AND restaurant_id = ?", req.IngredientID, restaurantID.(string)).
+		First(&ingredient).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ingredient not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	entryUnit := strings.TrimSpace(req.Unit)
+	if entryUnit == "" {
+		entryUnit = ingredient.Unit
+	}
+	qty, err := units.Convert(req.Quantity, entryUnit, ingredient.Unit)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if qty <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "quantity must be greater than 0"})
+		return
+	}
+	if qty > ingredient.CurrentStock {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":           "insufficient stock",
+			"current_stock":   ingredient.CurrentStock,
+			"requested":       qty,
+			"unit":            ingredient.Unit,
+		})
+		return
+	}
+
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "expired"
+	}
+
+	if err := h.db.Model(&ingredient).
+		Update("current_stock", gorm.Expr("current_stock - ?", qty)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.db.Where("id = ?", ingredient.ID).First(&ingredient).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("✅ Ingredient deducted (%s): %s -%.3f %s (now %.3f) by %s",
+		reason, ingredient.Name, qty, ingredient.Unit, ingredient.CurrentStock, contextUserID(c))
+
+	if globalHub != nil {
+		BroadcastIngredientInventoryUpdate(globalHub, restaurantID.(string), ingredient)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Stock deducted successfully",
+		"ingredient":  ingredient,
+		"deducted":    qty,
+		"unit":        ingredient.Unit,
+		"reason":      reason,
+	})
+}
+
+// GetMonthlyExpenditure returns total stock-refill spend for a calendar month (IST).
+// Query: ?year=2026&month=7 — defaults to current IST month. Admin/manager only.
+func (h *IngredientHandler) GetMonthlyExpenditure(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	loc := istLocation()
+	now := time.Now().In(loc)
+	year := now.Year()
+	month := int(now.Month())
+
+	if y := strings.TrimSpace(c.Query("year")); y != "" {
+		parsed, err := strconv.Atoi(y)
+		if err != nil || parsed < 2000 || parsed > 2100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid year"})
+			return
+		}
+		year = parsed
+	}
+	if m := strings.TrimSpace(c.Query("month")); m != "" {
+		parsed, err := strconv.Atoi(m)
+		if err != nil || parsed < 1 || parsed > 12 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid month"})
+			return
+		}
+		month = parsed
+	}
+
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
+	end := start.AddDate(0, 1, 0)
+
+	var total float64
+	if err := h.db.Model(&models.StockExpenditure{}).
+		Where("restaurant_id = ? AND created_at >= ? AND created_at < ?", restaurantID.(string), start.UTC(), end.UTC()).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var count int64
+	_ = h.db.Model(&models.StockExpenditure{}).
+		Where("restaurant_id = ? AND created_at >= ? AND created_at < ?", restaurantID.(string), start.UTC(), end.UTC()).
+		Count(&count).Error
+
+	c.JSON(http.StatusOK, gin.H{
+		"year":             year,
+		"month":            month,
+		"total":            total,
+		"entries":          count,
+		"currency":         "INR",
+		"period_start":     start.Format(time.RFC3339),
+		"period_end":       end.Format(time.RFC3339),
 	})
 }

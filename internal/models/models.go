@@ -433,6 +433,58 @@ func (i *Ingredient) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// StockExpenditure logs purchase cost when ingredients are restocked.
+// Monthly totals are summed from these rows for a restaurant.
+type StockExpenditure struct {
+	ID             string    `gorm:"primaryKey" json:"id"`
+	RestaurantID   string    `json:"restaurant_id" gorm:"index;not null"`
+	IngredientID   *string   `json:"ingredient_id,omitempty" gorm:"index"`
+	IngredientName string    `json:"ingredient_name" gorm:"type:varchar(255)"`
+	Amount         float64   `json:"amount" gorm:"type:numeric(12,2);not null"`
+	Quantity       float64   `json:"quantity" gorm:"type:numeric(10,3);default:0"`
+	Unit           string    `json:"unit" gorm:"type:varchar(50)"`
+	Source         string    `json:"source" gorm:"type:varchar(50);default:'restock'"` // restock
+	CreatedBy      string    `json:"created_by" gorm:"type:varchar(36)"`
+	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime;index"`
+
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+}
+
+func (StockExpenditure) TableName() string {
+	return "stock_expenditures"
+}
+
+func (e *StockExpenditure) BeforeCreate(tx *gorm.DB) error {
+	if e.ID == "" {
+		e.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// Expense is a manually logged restaurant cost (rent, utilities, etc.).
+// Combined with StockExpenditure for monthly total spend.
+type Expense struct {
+	ID           string    `gorm:"primaryKey" json:"id"`
+	RestaurantID string    `json:"restaurant_id" gorm:"index;not null"`
+	Name         string    `json:"name" gorm:"type:varchar(255);not null"`
+	Amount       float64   `json:"amount" gorm:"type:numeric(12,2);not null"`
+	CreatedBy    string    `json:"created_by" gorm:"type:varchar(36)"`
+	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime;index"`
+
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+}
+
+func (Expense) TableName() string {
+	return "expenses"
+}
+
+func (e *Expense) BeforeCreate(tx *gorm.DB) error {
+	if e.ID == "" {
+		e.ID = uuid.New().String()
+	}
+	return nil
+}
+
 // MenuItemIngredient links a menu item to raw ingredients used in its recipe (BOM).
 type MenuItemIngredient struct {
 	ID           string    `gorm:"primaryKey" json:"id"`

@@ -115,6 +115,8 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.MenuItem{},
 		&models.Inventory{},
 		&models.Ingredient{},
+		&models.StockExpenditure{},
+		&models.Expense{},
 		&models.MenuItemIngredient{},
 		&models.Transaction{},
 		&models.AuditLog{},
