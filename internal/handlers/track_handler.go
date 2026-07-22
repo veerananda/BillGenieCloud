@@ -350,8 +350,8 @@ func renderTrackPageWithKitchenHTML(token string, status services.TrackingStatus
       box.style.background = c.bg;
       box.style.borderColor = c.border;
       document.getElementById('status-message').textContent = data.message;
-      const sub = data.total_count > 0 && data.color === 'orange'
-        ? data.ready_count + ' of ' + data.total_count + ' items ready'
+      const sub = data.color === 'orange'
+        ? "We're preparing the rest of your order"
         : (data.color === 'green' ? 'Please collect your order' : 'Kitchen is working on your order');
       document.getElementById('status-sub').textContent = sub;
     }
@@ -371,10 +371,7 @@ func subTextForStatus(status services.TrackingStatus) string {
 	case "green":
 		return "Please collect your order"
 	case "orange":
-		if status.TotalCount > 0 {
-			return fmt.Sprintf("%d of %d items ready", status.ReadyCount, status.TotalCount)
-		}
-		return "Some items are ready"
+		return "We're preparing the rest of your order"
 	default:
 		return "Kitchen is working on your order"
 	}
