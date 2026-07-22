@@ -106,6 +106,10 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 		summary.CustomerName != "Self Service" {
 		customerLine = fmt.Sprintf(`<p class="customer">Customer: %s</p>`, escapeBillHTML(summary.CustomerName))
 	}
+	attendedLine := ""
+	if summary.AttendedByName != "" {
+		attendedLine = fmt.Sprintf(`<p class="customer">Attended by: %s</p>`, escapeBillHTML(summary.AttendedByName))
+	}
 
 	return fmt.Sprintf(`<div class="page">
     <div class="sheet">
@@ -137,7 +141,7 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 		escapeBillHTML(title),
 		meta,
 		dateLineHTML(dateLine),
-		customerLine,
+		customerLine+attendedLine,
 		itemRows.String(),
 		subtotalRow,
 		taxRow,

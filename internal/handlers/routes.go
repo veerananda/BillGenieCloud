@@ -254,6 +254,14 @@ func SetupUserRoutes(router *gin.Engine, db *gorm.DB) {
 	userService := services.NewUserService(db)
 	userHandler := NewUserHandler(userService)
 
+	attendants := router.Group("/users")
+	attendants.Use(middleware.AuthMiddleware(authService))
+	attendants.Use(withSubscription(db))
+	attendants.Use(middleware.RoleMiddleware("admin", "manager", "staff"))
+	{
+		attendants.GET("/attendants", userHandler.ListAttendants)
+	}
+
 	protected := router.Group("/users")
 	protected.Use(middleware.AuthMiddleware(authService))
 	protected.Use(withSubscription(db))

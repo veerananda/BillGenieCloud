@@ -200,6 +200,38 @@ func (s *UserService) ListUsers(restaurantID string, filters map[string]interfac
 	return users, nil
 }
 
+// ListAttendants returns active admin/manager/staff for checkout attribution pickers.
+func (s *UserService) ListAttendants(restaurantID string) ([]models.User, error) {
+	var users []models.User
+	err := s.db.Where(
+		"restaurant_id = ? AND is_active = ? AND role IN ('admin', 'manager', 'staff')",
+		restaurantID,
+		true,
+	).Order("name ASC").Find(&users).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list attendants: %w", err)
+	}
+	return users, nil
+}
+
+// ValidateAttendant ensures the user can be assigned as attended-by on an order.
+func (s *UserService) ValidateAttendant(restaurantID, userID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return errors.New("attended_by_user_id is required")
+	}
+	user, err := s.GetUser(userID)
+	if err != nil {
+		return errors.New("attended by user not found")
+	}
+	if user.RestaurantID != restaurantID || !user.IsActive {
+		return errors.New("attended by user not found")
+	}
+	if user.Role != "admin" && user.Role != "manager" && user.Role != "staff" {
+		return errors.New("attended by user must be admin, manager, or staff")
+	}
+	return nil
+}
+
 // GetUser retrieves a specific user by ID
 func (s *UserService) GetUser(userID string) (*models.User, error) {
 	var user models.User
@@ -435,6 +467,12 @@ func (s *UserService) DeleteUser(userID string, restaurantID string) error {
 		tx.Rollback()
 		log.Printf("❌ Failed to update orders: %v", err)
 		return fmt.Errorf("failed to update orders: %w", err)
+	}
+
+	if err := tx.Model(&models.Order{}).Where("attended_by_user_id = ?", userID).Update("attended_by_user_id", nil).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Failed to update attended_by on orders: %v", err)
+		return fmt.Errorf("failed to update attended_by on orders: %w", err)
 	}
 
 	// 2. Set UserID to NULL in audit_logs table (keep audit trail)

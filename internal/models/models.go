@@ -130,6 +130,7 @@ type Order struct {
 	BillPreviewDiscount float64    `json:"bill_preview_discount,omitempty" gorm:"type:numeric(10,2);default:0"`
 	Notes               string     `json:"notes" gorm:"type:text"`
 	CreatedByUserID     string     `json:"created_by_user_id"`
+	AttendedByUserID    string     `json:"attended_by_user_id" gorm:"index"`
 	CreatedAt           time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
 	UpdatedAt           time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 	CompletedAt         *time.Time `json:"completed_at"`
@@ -138,6 +139,7 @@ type Order struct {
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
 	Items      []OrderItem `json:"-" gorm:"foreignKey:OrderID;cascade:delete"`
 	CreatedBy  *User       `json:"-" gorm:"foreignKey:CreatedByUserID"`
+	AttendedBy *User       `json:"-" gorm:"foreignKey:AttendedByUserID"`
 }
 
 // TableName specifies the table name
