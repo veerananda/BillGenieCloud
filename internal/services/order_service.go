@@ -1670,7 +1670,7 @@ func AttendedByName(order *models.Order) string {
 	if order.AttendedBy != nil && order.AttendedBy.Name != "" {
 		return order.AttendedBy.Name
 	}
-	if order.AttendedByUserID == "" {
+	if order.AttendedByUserID == nil || *order.AttendedByUserID == "" {
 		return ""
 	}
 	return ""
