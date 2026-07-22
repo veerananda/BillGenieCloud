@@ -141,12 +141,6 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Println("✅ BackfillIngredientAlertQuantity migration completed")
 	}
 
-	if err := migrations.CanonicalizeIngredientUnits(db); err != nil {
-		log.Printf("⚠️  Migration CanonicalizeIngredientUnits skipped or failed: %v", err)
-	} else {
-		log.Println("✅ CanonicalizeIngredientUnits migration completed")
-	}
-
 	if err := migrations.NullEmptyAttendedByUserID(db); err != nil {
 		log.Printf("⚠️  Migration NullEmptyAttendedByUserID skipped or failed: %v", err)
 	} else {
