@@ -33,6 +33,7 @@ type BillSummaryView struct {
 	TicketNumber     int            `json:"ticket_number,omitempty"`
 	ServiceMode      string         `json:"service_mode,omitempty"`
 	CustomerName     string         `json:"customer_name,omitempty"`
+	AttendedByName   string         `json:"attended_by_name,omitempty"`
 	Items            []BillItemView `json:"items"`
 	SubTotal         float64        `json:"sub_total"`
 	TaxAmount        float64        `json:"tax_amount"`
@@ -132,6 +133,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 		TicketNumber:     ticketNumber,
 		ServiceMode:      order.ServiceMode,
 		CustomerName:     order.CustomerName,
+		AttendedByName:   AttendedByName(order),
 		Items:            items,
 		SubTotal:         subTotal,
 		TaxAmount:        taxAmount,
@@ -186,6 +188,7 @@ func (s *OrderService) CreateBillShare(restaurantID, orderID string, discountAmo
 func (s *OrderService) GetOrderByBillToken(token string) (*models.Order, *models.Restaurant, error) {
 	var order models.Order
 	err := s.db.Preload("Items.MenuItem").
+		Preload("AttendedBy").
 		Where("bill_token = ?", token).
 		First(&order).Error
 	if err != nil {

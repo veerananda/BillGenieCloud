@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"restaurant-api/internal/models"
@@ -329,8 +330,10 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			"amount_received": order.AmountReceived,
 			"change_returned": order.ChangeReturned,
 			"cash_amount":     order.CashAmount,
-			"upi_amount":      order.UpiAmount,
-			"notes":           order.Notes,
+			"upi_amount":           order.UpiAmount,
+			"attended_by_user_id":  order.AttendedByUserID,
+			"attended_by_name":     services.AttendedByName(order),
+			"notes":                order.Notes,
 			"created_at":      order.CreatedAt,
 			"updated_at":      order.UpdatedAt,
 			"completed_at":    order.CompletedAt,
@@ -860,11 +863,12 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 	orderID := c.Param("order_id")
 
 	var input struct {
-		PaymentMethod  string  `json:"payment_method" binding:"required"` // cash | upi | split
-		AmountReceived float64 `json:"amount_received,omitempty"`
-		ChangeReturned float64 `json:"change_returned,omitempty"`
-		CashAmount     float64 `json:"cash_amount,omitempty"`
-		UpiAmount      float64 `json:"upi_amount,omitempty"`
+		PaymentMethod      string  `json:"payment_method" binding:"required"` // cash | upi | split
+		AmountReceived     float64 `json:"amount_received,omitempty"`
+		ChangeReturned     float64 `json:"change_returned,omitempty"`
+		CashAmount         float64 `json:"cash_amount,omitempty"`
+		UpiAmount          float64 `json:"upi_amount,omitempty"`
+		AttendedByUserID   string  `json:"attended_by_user_id,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -897,16 +901,26 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 
 	log.Printf("   → Calling service.CompleteOrderWithPayment...")
 
+	attendedByUserID := strings.TrimSpace(input.AttendedByUserID)
+	if attendedByUserID == "" {
+		if userIDVal, ok := c.Get("user_id"); ok {
+			if userID, ok := userIDVal.(string); ok {
+				attendedByUserID = userID
+			}
+		}
+	}
+
 	// Complete the order with payment details
 	order, err := h.orderService.CompleteOrderWithPayment(
 		restaurantID.(string),
 		orderID,
 		services.OrderPaymentDetails{
-			PaymentMethod:  input.PaymentMethod,
-			AmountReceived: input.AmountReceived,
-			ChangeReturned: input.ChangeReturned,
-			CashAmount:     input.CashAmount,
-			UpiAmount:      input.UpiAmount,
+			PaymentMethod:    input.PaymentMethod,
+			AmountReceived:   input.AmountReceived,
+			ChangeReturned:   input.ChangeReturned,
+			CashAmount:       input.CashAmount,
+			UpiAmount:        input.UpiAmount,
+			AttendedByUserID: attendedByUserID,
 		},
 	)
 
@@ -959,8 +973,10 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 			"amount_received": order.AmountReceived,
 			"change_returned": order.ChangeReturned,
 			"cash_amount":     order.CashAmount,
-			"upi_amount":      order.UpiAmount,
-			"completed_at":    order.CompletedAt,
+			"upi_amount":          order.UpiAmount,
+			"attended_by_user_id": order.AttendedByUserID,
+			"attended_by_name":    services.AttendedByName(order),
+			"completed_at":        order.CompletedAt,
 		},
 	}
 	if order.OrderType == "counter" && order.TrackingToken != "" {

@@ -77,6 +77,40 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	log.Printf("✅ Listed %d staff members for restaurant %s", len(users), restaurantID)
 }
 
+// ListAttendants returns active admin/manager/staff for checkout attribution.
+func (h *UserHandler) ListAttendants(c *gin.Context) {
+	restaurantID, exists := c.Get("restaurant_id")
+	if !exists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "restaurant_id not found in context"})
+		return
+	}
+
+	users, err := h.userService.ListAttendants(restaurantID.(string))
+	if err != nil {
+		log.Printf("❌ Error listing attendants: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	type attendantView struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Role string `json:"role"`
+	}
+	attendants := make([]attendantView, 0, len(users))
+	for _, user := range users {
+		attendants = append(attendants, attendantView{
+			ID:   user.ID,
+			Name: user.Name,
+			Role: user.Role,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"attendants": attendants,
+	})
+}
+
 // CreateUser creates a new staff or manager user (Admin only)
 // @Summary Create staff user
 // @Description Create a new staff or manager user for the restaurant

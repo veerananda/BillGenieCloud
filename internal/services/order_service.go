@@ -483,6 +483,7 @@ func (s *OrderService) reloadOrderWithItems(orderID, restaurantID string) (*mode
 	var order models.Order
 	if err := s.db.Preload("Items").
 		Preload("Items.MenuItem").
+		Preload("AttendedBy").
 		Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
 		First(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -548,11 +549,12 @@ func (s *OrderService) CompleteOrder(restaurantID string, orderID string) (*mode
 
 // OrderPaymentDetails captures cash/UPI/split payment completion.
 type OrderPaymentDetails struct {
-	PaymentMethod  string
-	AmountReceived float64
-	ChangeReturned float64
-	CashAmount     float64
-	UpiAmount      float64
+	PaymentMethod     string
+	AmountReceived    float64
+	ChangeReturned    float64
+	CashAmount        float64
+	UpiAmount         float64
+	AttendedByUserID  string
 }
 
 // CompleteOrderWithPayment completes order with payment details
@@ -562,6 +564,12 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 	changeReturned := payment.ChangeReturned
 	cashAmount := payment.CashAmount
 	upiAmount := payment.UpiAmount
+	attendedByUserID := payment.AttendedByUserID
+	if attendedByUserID != "" {
+		if err := s.validateAttendant(restaurantID, attendedByUserID); err != nil {
+			return nil, err
+		}
+	}
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -611,6 +619,9 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 		"cash_amount":     cashAmount,
 		"upi_amount":      upiAmount,
 		"updated_at":      now,
+	}
+	if attendedByUserID != "" {
+		updates["attended_by_user_id"] = attendedByUserID
 	}
 
 	if isCounter {
@@ -757,6 +768,7 @@ func (s *OrderService) GetOrderByID(restaurantID string, orderID string) (*model
 	var order models.Order
 	if err := s.db.Preload("Items").
 		Preload("Items.MenuItem").
+		Preload("AttendedBy").
 		Where("id = ? AND restaurant_id = ?", orderID, restaurantID).
 		First(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -1634,4 +1646,32 @@ func applyDineInOnlyFilter(query *gorm.DB) *gorm.DB {
 		`(COALESCE(order_type, '') = '' OR order_type = 'dine_in')
 		AND NOT (customer_name IN ('Self Service','Takeaway','Counter') OR (table_id IS NOT NULL AND table_id LIKE 'self-service-%'))`,
 	)
+}
+
+func (s *OrderService) validateAttendant(restaurantID, userID string) error {
+	var user models.User
+	if err := s.db.Where(
+		"id = ? AND restaurant_id = ? AND is_active = ? AND role IN ('admin', 'manager', 'staff')",
+		userID, restaurantID, true,
+	).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("attended by user not found")
+		}
+		return err
+	}
+	return nil
+}
+
+// AttendedByName returns the display name for who served the order.
+func AttendedByName(order *models.Order) string {
+	if order == nil {
+		return ""
+	}
+	if order.AttendedBy != nil && order.AttendedBy.Name != "" {
+		return order.AttendedBy.Name
+	}
+	if order.AttendedByUserID == "" {
+		return ""
+	}
+	return ""
 }
