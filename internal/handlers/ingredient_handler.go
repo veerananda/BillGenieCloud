@@ -9,6 +9,7 @@ import (
 
 	"restaurant-api/internal/models"
 	"restaurant-api/internal/services"
+	"restaurant-api/internal/units"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -39,6 +40,7 @@ type BulkUpdateIngredientItem struct {
 	IngredientID  string   `json:"ingredient_id" binding:"required"`
 	AlertQuantity *float64 `json:"alert_quantity"`
 	FullStock     *float64 `json:"full_stock"`
+	Unit          string   `json:"unit,omitempty"` // optional entry unit for alert/full values
 }
 
 type BulkUpdateIngredientsRequest struct {
@@ -47,12 +49,14 @@ type BulkUpdateIngredientsRequest struct {
 
 type RestockIngredientRequest struct {
 	Quantity float64 `json:"quantity" binding:"required,gt=0"`
+	Unit     string  `json:"unit,omitempty"` // optional; defaults to ingredient inventory unit
 }
 
 // RestockItem is one line in a bulk restock request.
 type RestockItem struct {
 	IngredientID string  `json:"ingredient_id" binding:"required"`
 	Quantity     float64 `json:"quantity" binding:"required,gt=0"`
+	Unit         string  `json:"unit,omitempty"` // optional; defaults to ingredient inventory unit
 }
 
 // RestockIngredientsRequest refills multiple ingredients in one call.
@@ -119,14 +123,85 @@ func (h *IngredientHandler) CreateIngredient(c *gin.Context) {
 		return
 	}
 
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+
+	canonical := units.CanonicalUnit(req.Unit)
+	currentStock, err := units.Convert(req.CurrentStock, req.Unit, canonical)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	fullStock, err := units.Convert(req.FullStock, req.Unit, canonical)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	alertQty, err := units.Convert(req.AlertQuantity, req.Unit, canonical)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	restaurantIDStr := restaurantID.(string)
+
+	// One inventory row per name within a unit family (e.g. onions grams/kg → onions kg).
+	existing, findErr := findIngredientByNameFamily(h.db, restaurantIDStr, name, req.Unit)
+	if findErr == nil {
+		updates := map[string]interface{}{}
+		if units.NormalizeUnit(existing.Unit) != canonical {
+			updates["unit"] = canonical
+			existing.Unit = canonical
+		}
+		if currentStock > 0 {
+			existing.CurrentStock += currentStock
+			updates["current_stock"] = existing.CurrentStock
+		}
+		if fullStock > existing.FullStock {
+			existing.FullStock = fullStock
+			updates["full_stock"] = fullStock
+		}
+		if alertQty > existing.AlertQuantity {
+			existing.AlertQuantity = alertQty
+			updates["alert_quantity"] = alertQty
+		}
+		if len(updates) > 0 {
+			if err := h.db.Model(&existing).Updates(updates).Error; err != nil {
+				log.Printf("❌ Ingredient merge update failed: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			_ = syncRecipeDenormalizedNames(h.db, restaurantIDStr, existing.ID, existing.Name, existing.Unit)
+		}
+
+		log.Printf("✅ Ingredient reused (no duplicate): %s [%s] (ID: %s)", existing.Name, existing.Unit, existing.ID)
+		if globalHub != nil {
+			BroadcastIngredientInventoryUpdate(globalHub, restaurantIDStr, existing)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message":    fmt.Sprintf("%s already exists in inventory (tracked as %s); duplicate not created", existing.Name, existing.Unit),
+			"ingredient": existing,
+			"reused":     true,
+		})
+		return
+	}
+	if findErr != gorm.ErrRecordNotFound {
+		log.Printf("❌ Ingredient lookup failed: %v", findErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": findErr.Error()})
+		return
+	}
+
 	ingredient := &models.Ingredient{
 		ID:            uuid.New().String(),
-		RestaurantID:  restaurantID.(string),
-		Name:          req.Name,
-		Unit:          req.Unit,
-		CurrentStock:  req.CurrentStock,
-		FullStock:     req.FullStock,
-		AlertQuantity: req.AlertQuantity,
+		RestaurantID:  restaurantIDStr,
+		Name:          name,
+		Unit:          canonical,
+		CurrentStock:  currentStock,
+		FullStock:     fullStock,
+		AlertQuantity: alertQty,
 	}
 
 	if err := h.db.Create(ingredient).Error; err != nil {
@@ -138,12 +213,13 @@ func (h *IngredientHandler) CreateIngredient(c *gin.Context) {
 	log.Printf("✅ Ingredient created: %s (ID: %s)", ingredient.Name, ingredient.ID)
 
 	if globalHub != nil {
-		BroadcastIngredientInventoryUpdate(globalHub, restaurantID.(string), *ingredient)
+		BroadcastIngredientInventoryUpdate(globalHub, restaurantIDStr, *ingredient)
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":    "Ingredient created successfully",
 		"ingredient": ingredient,
+		"reused":     false,
 	})
 }
 
@@ -194,7 +270,22 @@ func (h *IngredientHandler) UpdateIngredient(c *gin.Context) {
 	if req.Unit != nil {
 		unit := strings.TrimSpace(*req.Unit)
 		if unit != "" {
-			ingredient.Unit = unit
+			newCanonical := units.CanonicalUnit(unit)
+			oldUnit := ingredient.Unit
+			if units.NormalizeUnit(oldUnit) != newCanonical {
+				if units.SameFamily(oldUnit, newCanonical) {
+					if converted, convErr := units.Convert(ingredient.CurrentStock, oldUnit, newCanonical); convErr == nil {
+						ingredient.CurrentStock = converted
+					}
+					if converted, convErr := units.Convert(ingredient.FullStock, oldUnit, newCanonical); convErr == nil {
+						ingredient.FullStock = converted
+					}
+					if converted, convErr := units.Convert(ingredient.AlertQuantity, oldUnit, newCanonical); convErr == nil {
+						ingredient.AlertQuantity = converted
+					}
+				}
+				ingredient.Unit = newCanonical
+			}
 		}
 	}
 	if req.CurrentStock != nil {
@@ -217,6 +308,23 @@ func (h *IngredientHandler) UpdateIngredient(c *gin.Context) {
 			return
 		}
 		ingredient.AlertQuantity = *req.AlertQuantity
+	}
+
+	// Block rename/unit change that would duplicate another row in the same unit family.
+	conflict, conflictErr := findIngredientByNameFamily(h.db, restaurantID.(string), ingredient.Name, ingredient.Unit)
+	if conflictErr == nil && conflict.ID != ingredient.ID {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf(
+				"%s already exists in inventory (tracked as %s); cannot create a duplicate under another unit in the same family",
+				conflict.Name,
+				conflict.Unit,
+			),
+		})
+		return
+	}
+	if conflictErr != nil && conflictErr != gorm.ErrRecordNotFound {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": conflictErr.Error()})
+		return
 	}
 
 	if err := h.db.Save(&ingredient).Error; err != nil {
@@ -286,13 +394,25 @@ func (h *IngredientHandler) BulkUpdateIngredients(c *gin.Context) {
 			}
 
 			updates := map[string]interface{}{}
+			entryUnit := strings.TrimSpace(item.Unit)
+			if entryUnit == "" {
+				entryUnit = ingredient.Unit
+			}
 			if item.AlertQuantity != nil {
-				updates["alert_quantity"] = *item.AlertQuantity
-				ingredient.AlertQuantity = *item.AlertQuantity
+				alertQty, convErr := units.Convert(*item.AlertQuantity, entryUnit, ingredient.Unit)
+				if convErr != nil {
+					return fmt.Errorf("ingredient %s: %w", item.IngredientID, convErr)
+				}
+				updates["alert_quantity"] = alertQty
+				ingredient.AlertQuantity = alertQty
 			}
 			if item.FullStock != nil {
-				updates["full_stock"] = *item.FullStock
-				ingredient.FullStock = *item.FullStock
+				fullStock, convErr := units.Convert(*item.FullStock, entryUnit, ingredient.Unit)
+				if convErr != nil {
+					return fmt.Errorf("ingredient %s: %w", item.IngredientID, convErr)
+				}
+				updates["full_stock"] = fullStock
+				ingredient.FullStock = fullStock
 			}
 
 			if err := tx.Model(&ingredient).Updates(updates).Error; err != nil {
@@ -418,6 +538,29 @@ func (h *IngredientHandler) applyRestockItems(restaurantID string, items []Resto
 		id  string
 		qty float64
 	}
+
+	// Load ingredients first so we can convert entry units → inventory units.
+	idSet := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item.IngredientID != "" {
+			idSet[item.IngredientID] = struct{}{}
+		}
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	var found []models.Ingredient
+	if len(ids) > 0 {
+		if err := h.db.Where("restaurant_id = ? AND id IN ?", restaurantID, ids).Find(&found).Error; err != nil {
+			return nil, err
+		}
+	}
+	byID := make(map[string]models.Ingredient, len(found))
+	for _, ing := range found {
+		byID[ing.ID] = ing
+	}
+
 	ordered := make([]qtyLine, 0, len(items))
 	indexByID := make(map[string]int, len(items))
 	for _, item := range items {
@@ -425,12 +568,24 @@ func (h *IngredientHandler) applyRestockItems(restaurantID string, items []Resto
 		if id == "" || item.Quantity <= 0 {
 			continue
 		}
-		if idx, ok := indexByID[id]; ok {
-			ordered[idx].qty += item.Quantity
+		ing, ok := byID[id]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", errIngredientNotFound, id)
+		}
+		entryUnit := strings.TrimSpace(item.Unit)
+		if entryUnit == "" {
+			entryUnit = ing.Unit
+		}
+		qty, err := units.Convert(item.Quantity, entryUnit, ing.Unit)
+		if err != nil {
+			return nil, fmt.Errorf("ingredient %s: %w", id, err)
+		}
+		if idx, exists := indexByID[id]; exists {
+			ordered[idx].qty += qty
 			continue
 		}
 		indexByID[id] = len(ordered)
-		ordered = append(ordered, qtyLine{id: id, qty: item.Quantity})
+		ordered = append(ordered, qtyLine{id: id, qty: qty})
 	}
 	if len(ordered) == 0 {
 		return nil, errNoValidRestockQuantities
@@ -486,7 +641,7 @@ func (h *IngredientHandler) RestockIngredient(c *gin.Context) {
 	}
 
 	updated, err := h.applyRestockItems(restaurantID.(string), []RestockItem{
-		{IngredientID: ingredientID, Quantity: req.Quantity},
+		{IngredientID: ingredientID, Quantity: req.Quantity, Unit: req.Unit},
 	})
 	if err != nil {
 		log.Printf("❌ Ingredient restock failed: %v", err)

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/units"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -18,6 +19,40 @@ type RecipeIngredientInput struct {
 	QuantityUsed float64 `json:"quantity_used"`
 }
 
+func findIngredientByNameFamily(db *gorm.DB, restaurantID, name, unit string) (models.Ingredient, error) {
+	name = strings.TrimSpace(name)
+	canonical := units.CanonicalUnit(unit)
+	family := units.FamilyOf(canonical)
+
+	var existing models.Ingredient
+	if family == units.FamilyOther {
+		err := db.Where(
+			"restaurant_id = ? AND LOWER(name) = ? AND LOWER(unit) = ?",
+			restaurantID,
+			strings.ToLower(name),
+			strings.ToLower(canonical),
+		).First(&existing).Error
+		return existing, err
+	}
+
+	members := units.FamilyMemberUnits(family)
+	err := db.Where(
+		"restaurant_id = ? AND LOWER(name) = ? AND LOWER(unit) IN ?",
+		restaurantID,
+		strings.ToLower(name),
+		lowerStrings(members),
+	).Order("updated_at DESC").First(&existing).Error
+	return existing, err
+}
+
+func lowerStrings(vals []string) []string {
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		out[i] = strings.ToLower(v)
+	}
+	return out
+}
+
 func findOrCreateIngredient(db *gorm.DB, restaurantID, name, unit string) (models.Ingredient, error) {
 	name = strings.TrimSpace(name)
 	unit = strings.TrimSpace(unit)
@@ -25,14 +60,16 @@ func findOrCreateIngredient(db *gorm.DB, restaurantID, name, unit string) (model
 		return models.Ingredient{}, errors.New("ingredient name and unit are required")
 	}
 
-	var existing models.Ingredient
-	err := db.Where(
-		"restaurant_id = ? AND LOWER(name) = ? AND unit = ?",
-		restaurantID,
-		strings.ToLower(name),
-		unit,
-	).First(&existing).Error
+	canonical := units.CanonicalUnit(unit)
+	existing, err := findIngredientByNameFamily(db, restaurantID, name, unit)
 	if err == nil {
+		if units.NormalizeUnit(existing.Unit) != canonical {
+			existing.Unit = canonical
+			if saveErr := db.Save(&existing).Error; saveErr != nil {
+				return models.Ingredient{}, saveErr
+			}
+			_ = syncRecipeDenormalizedNames(db, restaurantID, existing.ID, existing.Name, existing.Unit)
+		}
 		return existing, nil
 	}
 	if err != gorm.ErrRecordNotFound {
@@ -43,7 +80,7 @@ func findOrCreateIngredient(db *gorm.DB, restaurantID, name, unit string) (model
 		ID:           uuid.New().String(),
 		RestaurantID: restaurantID,
 		Name:         name,
-		Unit:         unit,
+		Unit:         canonical,
 	}
 	if err := db.Create(&ingredient).Error; err != nil {
 		return models.Ingredient{}, err
@@ -51,9 +88,14 @@ func findOrCreateIngredient(db *gorm.DB, restaurantID, name, unit string) (model
 	return ingredient, nil
 }
 
-func ingredientNameUnitChanged(ing models.Ingredient, name, unit string) bool {
-	return !strings.EqualFold(strings.TrimSpace(ing.Name), strings.TrimSpace(name)) ||
-		strings.TrimSpace(ing.Unit) != strings.TrimSpace(unit)
+func ingredientIdentityChanged(ing models.Ingredient, name, unit string) bool {
+	if !strings.EqualFold(strings.TrimSpace(ing.Name), strings.TrimSpace(name)) {
+		return true
+	}
+	if units.SameFamily(ing.Unit, unit) && units.FamilyOf(unit) != units.FamilyOther {
+		return false
+	}
+	return units.NormalizeUnit(ing.Unit) != units.NormalizeUnit(unit)
 }
 
 // resolveIngredientForRecipeLine picks or creates the canonical inventory row for a recipe line.
@@ -78,7 +120,14 @@ func resolveIngredientForRecipeLine(db *gorm.DB, restaurantID string, input Reci
 			unit = existing.Unit
 		}
 
-		if !ingredientNameUnitChanged(existing, name, unit) {
+		if !ingredientIdentityChanged(existing, name, unit) {
+			canonical := units.CanonicalUnit(existing.Unit)
+			if units.NormalizeUnit(existing.Unit) != canonical {
+				existing.Unit = canonical
+				if err := db.Save(&existing).Error; err != nil {
+					return models.Ingredient{}, err
+				}
+			}
 			return existing, nil
 		}
 
@@ -91,7 +140,7 @@ func resolveIngredientForRecipeLine(db *gorm.DB, restaurantID string, input Reci
 
 		if refCount == 0 {
 			existing.Name = name
-			existing.Unit = unit
+			existing.Unit = units.CanonicalUnit(unit)
 			if err := db.Save(&existing).Error; err != nil {
 				return models.Ingredient{}, err
 			}
@@ -102,6 +151,14 @@ func resolveIngredientForRecipeLine(db *gorm.DB, restaurantID string, input Reci
 	}
 
 	return findOrCreateIngredient(db, restaurantID, name, unit)
+}
+
+// recipeQuantityInInventoryUnit converts a recipe line qty into the inventory row unit.
+func recipeQuantityInInventoryUnit(qty float64, fromUnit string, inventoryUnit string) (float64, error) {
+	if fromUnit == "" {
+		fromUnit = inventoryUnit
+	}
+	return units.Convert(qty, fromUnit, inventoryUnit)
 }
 
 func syncRecipeDenormalizedNames(db *gorm.DB, restaurantID, ingredientID, name, unit string) error {
@@ -141,9 +198,18 @@ func backfillMenuItemIngredientIDs(db *gorm.DB) error {
 		if err != nil {
 			return err
 		}
+		qty := row.QuantityUsed
+		if converted, convErr := recipeQuantityInInventoryUnit(row.QuantityUsed, row.Unit, ingredient.Unit); convErr == nil {
+			qty = converted
+		}
 		if err := db.Model(&models.MenuItemIngredient{}).
 			Where("id = ?", row.ID).
-			Update("ingredient_id", ingredient.ID).Error; err != nil {
+			Updates(map[string]interface{}{
+				"ingredient_id": ingredient.ID,
+				"name":          ingredient.Name,
+				"unit":          ingredient.Unit,
+				"quantity_used": qty,
+			}).Error; err != nil {
 			return err
 		}
 	}
