@@ -41,6 +41,7 @@ type BillSummaryView struct {
 	IsPaid           bool           `json:"is_paid"`
 	PaymentMethod    string         `json:"payment_method,omitempty"`
 	PricesIncludeGST bool           `json:"prices_include_gst"`
+	CompositeScheme  bool           `json:"composite_scheme"`
 	CreatedAt        time.Time      `json:"created_at"`
 }
 
@@ -53,14 +54,8 @@ func BuildBillURL(token string) string {
 }
 
 func orderItemsGross(items []models.OrderItem) float64 {
-	var gross float64
-	for _, item := range items {
-		if item.Status == "cancelled" {
-			continue
-		}
-		gross += item.Total
-	}
-	return gross
+	taxable, nonTaxable := orderItemsGrossSplit(items)
+	return taxable + nonTaxable
 }
 
 func resolveBillItemName(item models.OrderItem) string {
@@ -72,18 +67,19 @@ func resolveBillItemName(item models.OrderItem) string {
 
 // BuildBillSummary builds the customer-facing bill totals and line items.
 func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSummaryView {
-	gross := orderItemsGross(order.Items)
 	discount := order.BillPreviewDiscount
 	if order.Status == "completed" {
 		discount = order.DiscountAmount
 	}
 
 	pricesIncludeGST := false
+	compositeScheme := false
 	restaurantName := ""
 	address := ""
 	contact := ""
 	if restaurant != nil {
 		pricesIncludeGST = restaurant.PricesIncludeGST
+		compositeScheme = restaurant.CompositeScheme
 		restaurantName = restaurant.Name
 		address = restaurant.Address
 		contact = restaurant.ContactNumber
@@ -92,7 +88,16 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 		}
 	}
 
-	subTotal, taxAmount, total := CalculateOrderTax(gross, discount, pricesIncludeGST)
+	taxableGross, nonTaxableGross := orderItemsGrossSplit(order.Items)
+	subTotal, taxAmount, total := CalculateRestaurantOrderTax(
+		taxableGross,
+		nonTaxableGross,
+		discount,
+		RestaurantTaxSettings{
+			CompositeScheme:  compositeScheme,
+			PricesIncludeGST: pricesIncludeGST,
+		},
+	)
 
 	items := make([]BillItemView, 0, len(order.Items))
 	for _, item := range order.Items {
@@ -135,6 +140,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 		IsPaid:           isPaid,
 		PaymentMethod:    paymentMethod,
 		PricesIncludeGST: pricesIncludeGST,
+		CompositeScheme:  compositeScheme,
 		CreatedAt:        order.CreatedAt,
 	}
 }

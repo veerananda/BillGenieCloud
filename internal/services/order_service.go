@@ -203,7 +203,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	log.Printf("✅ [CreateOrder] Order created with ID: %s (RowsAffected: %d)", order.ID, createResult.RowsAffected)
 
 	// Create order items (inventory deduction is now optional)
-	subTotal := 0.0
+	var taxableGross, nonTaxableGross float64
 	batchSubID := uuid.New().String()
 	log.Printf("🔵 [CreateOrder] KOT batch sub_id: %s", batchSubID)
 	log.Printf("🔵 [CreateOrder] Processing %d items for order #%d", len(req.Items), orderNumber)
@@ -245,7 +245,11 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		}
 		log.Printf("✅ [CreateOrder] Item %d: Created with ID: %s", i+1, orderItem.ID)
 
-		subTotal += orderItem.Total
+		if menuItem.IsTaxable {
+			taxableGross += orderItem.Total
+		} else {
+			nonTaxableGross += orderItem.Total
+		}
 
 		// Attempt to deduct inventory if it exists
 		if inventory, ok := inventoryByMenuID[menuItem.ID]; ok {
@@ -273,10 +277,10 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		tx.Rollback()
 		return nil, nil, err
 	}
-	subTotal, taxAmount, total := CalculateOrderTax(subTotal, 0, restaurant.PricesIncludeGST)
+	subTotal, taxAmount, total := CalculateRestaurantOrderTax(taxableGross, nonTaxableGross, 0, SettingsFromRestaurant(&restaurant))
 
 	// Update order totals
-	log.Printf("🔵 [CreateOrder] Updating order totals - SubTotal: ₹%.2f, Tax: ₹%.2f, Total: ₹%.2f (prices_include_gst=%v)", subTotal, taxAmount, total, restaurant.PricesIncludeGST)
+	log.Printf("🔵 [CreateOrder] Updating order totals - SubTotal: ₹%.2f, Tax: ₹%.2f, Total: ₹%.2f (composite=%v, prices_include_gst=%v)", subTotal, taxAmount, total, restaurant.CompositeScheme, restaurant.PricesIncludeGST)
 	if err := tx.Model(order).Updates(map[string]interface{}{
 		"sub_total":  subTotal,
 		"tax_amount": taxAmount,
@@ -418,15 +422,12 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 	}
 
 	var allItems []models.OrderItem
-	if err := tx.Where("order_id = ?", orderID).Find(&allItems).Error; err != nil {
+	if err := tx.Preload("MenuItem").Where("order_id = ?", orderID).Find(&allItems).Error; err != nil {
 		tx.Rollback()
 		return nil, nil, err
 	}
-	grossTotal := 0.0
-	for _, item := range allItems {
-		grossTotal += item.Total
-	}
-	subTotal, taxAmount, total := CalculateOrderTax(grossTotal, order.DiscountAmount, restaurant.PricesIncludeGST)
+	taxableGross, nonTaxableGross := orderItemsGrossSplit(allItems)
+	subTotal, taxAmount, total := CalculateRestaurantOrderTax(taxableGross, nonTaxableGross, order.DiscountAmount, SettingsFromRestaurant(&restaurant))
 	order.SubTotal = subTotal
 	order.TaxAmount = taxAmount
 	order.Total = total
@@ -1458,18 +1459,12 @@ func (s *OrderService) AdjustOrderItemQuantity(
 	}
 
 	var allItems []models.OrderItem
-	if err := tx.Where("order_id = ?", orderID).Find(&allItems).Error; err != nil {
+	if err := tx.Preload("MenuItem").Where("order_id = ?", orderID).Find(&allItems).Error; err != nil {
 		tx.Rollback()
 		return nil, nil, err
 	}
-	grossTotal := 0.0
-	for _, line := range allItems {
-		if line.Status == "cancelled" {
-			continue
-		}
-		grossTotal += line.Total
-	}
-	subTotal, taxAmount, total := CalculateOrderTax(grossTotal, order.DiscountAmount, restaurant.PricesIncludeGST)
+	taxableGross, nonTaxableGross := orderItemsGrossSplit(allItems)
+	subTotal, taxAmount, total := CalculateRestaurantOrderTax(taxableGross, nonTaxableGross, order.DiscountAmount, SettingsFromRestaurant(&restaurant))
 	if err := tx.Model(&order).Updates(map[string]interface{}{
 		"sub_total":  subTotal,
 		"tax_amount": taxAmount,
