@@ -509,6 +509,12 @@ func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRes
 	if err := deleteWhere(&models.MenuItem{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete menu items: %w", err)
 	}
+	if err := deleteWhere(&models.StockExpenditure{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete stock expenditures: %w", err)
+	}
+	if err := deleteWhere(&models.Expense{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete expenses: %w", err)
+	}
 	if err := deleteWhere(&models.Ingredient{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete ingredients: %w", err)
 	}

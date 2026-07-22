@@ -95,6 +95,7 @@ func main() {
 	handlers.SetupTableRoutes(router, db)
 	handlers.SetupUserRoutes(router, db)
 	handlers.SetupIngredientRoutes(router, db)
+	handlers.SetupExpenseRoutes(router, db)
 	handlers.SetupPublicRoutes(router, db)
 	handlers.SetupTrackRoutes(router, db)
 	handlers.SetupBillRoutes(router, db)
