@@ -26,6 +26,7 @@ type CreateMenuItemRequest struct {
 	CostPrice   float64 `json:"cost_price"`
 	IsVeg            bool `json:"is_veg"`
 	ReadilyAvailable bool `json:"readily_available"`
+	IsTaxable        *bool `json:"is_taxable"`
 }
 
 type UpdateMenuItemRequest struct {
@@ -37,6 +38,7 @@ type UpdateMenuItemRequest struct {
 	IsVeg            *bool `json:"is_veg"`
 	IsAvailable      *bool `json:"is_available"`
 	ReadilyAvailable *bool `json:"readily_available"`
+	IsTaxable        *bool `json:"is_taxable"`
 }
 
 // NewMenuHandler creates a new menu handler
@@ -64,7 +66,8 @@ func isAvailabilityOnlyUpdate(req UpdateMenuItemRequest) bool {
 		req.Price <= 0 &&
 		req.CostPrice <= 0 &&
 		req.IsVeg == nil &&
-		req.ReadilyAvailable == nil
+		req.ReadilyAvailable == nil &&
+		req.IsTaxable == nil
 }
 
 // CreateMenuItem creates a new menu item
@@ -107,6 +110,10 @@ func (h *MenuHandler) CreateMenuItem(c *gin.Context) {
 		IsVeg:            req.IsVeg,
 		IsAvailable:      true,
 		ReadilyAvailable: req.ReadilyAvailable,
+		IsTaxable:        true,
+	}
+	if req.IsTaxable != nil {
+		menuItem.IsTaxable = *req.IsTaxable
 	}
 
 	if err := h.db.Create(menuItem).Error; err != nil {
@@ -301,6 +308,9 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 	}
 	if req.ReadilyAvailable != nil {
 		updates["readily_available"] = *req.ReadilyAvailable
+	}
+	if req.IsTaxable != nil {
+		updates["is_taxable"] = *req.IsTaxable
 	}
 
 	if err := h.db.Model(&item).Updates(updates).Error; err != nil {

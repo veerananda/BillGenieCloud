@@ -78,12 +78,12 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 	}
 
 	subtotalRow := ""
-	if summary.SubTotal > 0 {
+	if summary.SubTotal > 0 && !summary.CompositeScheme {
 		subtotalRow = fmt.Sprintf(`<div class="row"><span>%s</span><span>%s</span></div>`,
 			subtotalLabelBill(summary.PricesIncludeGST), formatBillCurrency(summary.SubTotal))
 	}
 	taxRow := ""
-	if summary.TaxAmount > 0 {
+	if summary.TaxAmount > 0 && !summary.CompositeScheme {
 		taxRow = fmt.Sprintf(`<div class="row"><span>GST (5%%)</span><span>%s</span></div>`,
 			formatBillCurrency(summary.TaxAmount))
 	}

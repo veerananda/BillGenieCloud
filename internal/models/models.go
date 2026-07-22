@@ -68,6 +68,7 @@ type Restaurant struct {
 	IsApproved               bool            `json:"is_approved" gorm:"default:false"`                           // BillGenie staff approval status
 	CounterServiceModes      string          `json:"counter_service_modes" gorm:"type:varchar(20);default:both"` // both | eat_here | takeaway
 	PricesIncludeGST         bool            `json:"prices_include_gst" gorm:"default:false"`
+	CompositeScheme          bool            `json:"composite_scheme" gorm:"default:false"` // GST composition scheme — no tax on bills
 	Settings                 json.RawMessage `json:"settings" gorm:"type:jsonb"` // Customizable settings
 	// Restaurant Profile fields
 	ContactNumber string    `json:"contact_number"`
@@ -195,6 +196,7 @@ type MenuItem struct {
 	IsVeg            bool      `json:"is_veg" gorm:"default:false"`
 	IsAvailable      bool      `json:"is_available" gorm:"default:true"`
 	ReadilyAvailable bool      `json:"readily_available" gorm:"default:false"` // skip kitchen (e.g. water, packaged items)
+	IsTaxable        bool      `json:"is_taxable" gorm:"default:true"`         // false for MRP items already taxed (e.g. water bottle)
 	CreatedAt        time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt        time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 

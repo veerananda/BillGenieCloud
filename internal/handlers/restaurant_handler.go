@@ -63,6 +63,7 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"is_closed":                  restaurant.IsClosed,
 		"counter_service_modes":      counterModes,
 		"prices_include_gst":         restaurant.PricesIncludeGST,
+		"composite_scheme":           restaurant.CompositeScheme,
 		"subscription_end":           restaurant.SubscriptionEnd,
 		"subscription_plan":          restaurant.SubscriptionPlan,
 		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
@@ -99,6 +100,7 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 		IsClosed            *bool   `json:"is_closed"`
 		CounterServiceModes string  `json:"counter_service_modes"`
 		PricesIncludeGST    *bool   `json:"prices_include_gst"`
+		CompositeScheme     *bool   `json:"composite_scheme"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -154,7 +156,10 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 			return
 		}
 	}
-	if input.PricesIncludeGST != nil {
+	if input.CompositeScheme != nil {
+		restaurant.CompositeScheme = *input.CompositeScheme
+	}
+	if input.PricesIncludeGST != nil && !restaurant.CompositeScheme {
 		restaurant.PricesIncludeGST = *input.PricesIncludeGST
 	}
 
