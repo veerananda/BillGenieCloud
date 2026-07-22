@@ -100,6 +100,13 @@ func (h *MenuItemIngredientHandler) SetMenuItemIngredients(c *gin.Context) {
 			return
 		}
 
+		qtyUsed, err := recipeQuantityInInventoryUnit(ing.QuantityUsed, ing.Unit, inventoryRow.Unit)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
 		row := models.MenuItemIngredient{
 			ID:           uuid.New().String(),
 			RestaurantID: restaurantIDStr,
@@ -107,7 +114,7 @@ func (h *MenuItemIngredientHandler) SetMenuItemIngredients(c *gin.Context) {
 			IngredientID: inventoryRow.ID,
 			Name:         inventoryRow.Name,
 			Unit:         inventoryRow.Unit,
-			QuantityUsed: ing.QuantityUsed,
+			QuantityUsed: qtyUsed,
 		}
 		if err := tx.Create(&row).Error; err != nil {
 			tx.Rollback()

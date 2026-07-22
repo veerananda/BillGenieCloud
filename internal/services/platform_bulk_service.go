@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"restaurant-api/internal/models"
+	"restaurant-api/internal/units"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -285,6 +286,14 @@ func (s *PlatformOpsService) BulkUploadRecipes(restaurantID string, req BulkReci
 				ingredientsCreated++
 			}
 
+			qtyUsed, convErr := units.Convert(line.quantity, line.unit, ingredient.Unit)
+			if convErr != nil {
+				tx.Rollback()
+				result.Errors = append(result.Errors, BulkRowError{Row: line.rowNum, Message: convErr.Error()})
+				menuHadError = true
+				break
+			}
+
 			row := models.MenuItemIngredient{
 				ID:           uuid.New().String(),
 				RestaurantID: restaurantID,
@@ -292,7 +301,7 @@ func (s *PlatformOpsService) BulkUploadRecipes(restaurantID string, req BulkReci
 				IngredientID: ingredient.ID,
 				Name:         ingredient.Name,
 				Unit:         ingredient.Unit,
-				QuantityUsed: line.quantity,
+				QuantityUsed: qtyUsed,
 			}
 			if err := tx.Create(&row).Error; err != nil {
 				tx.Rollback()
@@ -330,14 +339,38 @@ func bulkFindOrCreateIngredient(db *gorm.DB, restaurantID, name, unit string) (m
 		return models.Ingredient{}, false, errors.New("ingredient name and unit are required")
 	}
 
+	canonical := units.CanonicalUnit(unit)
+	family := units.FamilyOf(canonical)
+
 	var existing models.Ingredient
-	err := db.Where(
-		"restaurant_id = ? AND LOWER(name) = ? AND unit = ?",
-		restaurantID,
-		strings.ToLower(name),
-		unit,
-	).First(&existing).Error
+	var err error
+	if family == units.FamilyOther {
+		err = db.Where(
+			"restaurant_id = ? AND LOWER(name) = ? AND LOWER(unit) = ?",
+			restaurantID,
+			strings.ToLower(name),
+			strings.ToLower(canonical),
+		).First(&existing).Error
+	} else {
+		members := units.FamilyMemberUnits(family)
+		lowered := make([]string, len(members))
+		for i, m := range members {
+			lowered[i] = strings.ToLower(m)
+		}
+		err = db.Where(
+			"restaurant_id = ? AND LOWER(name) = ? AND LOWER(unit) IN ?",
+			restaurantID,
+			strings.ToLower(name),
+			lowered,
+		).Order("updated_at DESC").First(&existing).Error
+	}
 	if err == nil {
+		if units.NormalizeUnit(existing.Unit) != canonical {
+			existing.Unit = canonical
+			if saveErr := db.Save(&existing).Error; saveErr != nil {
+				return models.Ingredient{}, false, saveErr
+			}
+		}
 		return existing, false, nil
 	}
 	if err != gorm.ErrRecordNotFound {
@@ -348,7 +381,7 @@ func bulkFindOrCreateIngredient(db *gorm.DB, restaurantID, name, unit string) (m
 		ID:           uuid.New().String(),
 		RestaurantID: restaurantID,
 		Name:         name,
-		Unit:         unit,
+		Unit:         canonical,
 	}
 	if err := db.Create(&ingredient).Error; err != nil {
 		return models.Ingredient{}, false, err
