@@ -262,32 +262,36 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 	// Transform order to include items with menu details
 	type OrderItemResponse struct {
-		ID        string                 `json:"id"`
-		OrderID   string                 `json:"order_id"`
-		MenuID    string                 `json:"menu_id"`
-		Quantity  int                    `json:"quantity"`
-		UnitRate  float64                `json:"unit_rate"`
-		Total     float64                `json:"total"`
-		Status    string                 `json:"status"`
-		SubId     string                 `json:"sub_id,omitempty"`
-		Notes     string                 `json:"notes"`
-		CreatedAt time.Time              `json:"created_at"`
-		MenuItem  map[string]interface{} `json:"menu_item,omitempty"`
+		ID           string                 `json:"id"`
+		OrderID      string                 `json:"order_id"`
+		MenuID       string                 `json:"menu_id"`
+		Quantity     int                    `json:"quantity"`
+		UnitRate     float64                `json:"unit_rate"`
+		Total        float64                `json:"total"`
+		Status       string                 `json:"status"`
+		SubId        string                 `json:"sub_id,omitempty"`
+		Notes        string                 `json:"notes"`
+		VariantID    *string                `json:"variant_id,omitempty"`
+		VariantLabel string                 `json:"variant_label,omitempty"`
+		CreatedAt    time.Time              `json:"created_at"`
+		MenuItem     map[string]interface{} `json:"menu_item,omitempty"`
 	}
 
 	items := make([]OrderItemResponse, 0, len(order.Items))
 	for _, item := range order.Items {
 		itemResp := OrderItemResponse{
-			ID:        item.ID,
-			OrderID:   item.OrderID,
-			MenuID:    item.MenuID,
-			Quantity:  item.Quantity,
-			UnitRate:  item.UnitRate,
-			Total:     item.Total,
-			Status:    item.Status,
-			SubId:     item.SubId,
-			Notes:     item.Notes,
-			CreatedAt: item.CreatedAt,
+			ID:           item.ID,
+			OrderID:      item.OrderID,
+			MenuID:       item.MenuID,
+			Quantity:     item.Quantity,
+			UnitRate:     item.UnitRate,
+			Total:        item.Total,
+			Status:       item.Status,
+			SubId:        item.SubId,
+			Notes:        item.Notes,
+			VariantID:    item.VariantID,
+			VariantLabel: item.VariantLabel,
+			CreatedAt:    item.CreatedAt,
 		}
 
 		// Include menu item details if available
@@ -456,17 +460,19 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 
 	// Transform orders to include items with menu details
 	type OrderItemResponse struct {
-		ID        string                 `json:"id"`
-		OrderID   string                 `json:"order_id"`
-		MenuID    string                 `json:"menu_id"`
-		Quantity  int                    `json:"quantity"`
-		UnitRate  float64                `json:"unit_rate"`
-		Total     float64                `json:"total"`
-		Status    string                 `json:"status"`
-		SubId     string                 `json:"sub_id,omitempty"`
-		Notes     string                 `json:"notes"`
-		CreatedAt time.Time              `json:"created_at"`
-		MenuItem  map[string]interface{} `json:"menu_item,omitempty"`
+		ID           string                 `json:"id"`
+		OrderID      string                 `json:"order_id"`
+		MenuID       string                 `json:"menu_id"`
+		Quantity     int                    `json:"quantity"`
+		UnitRate     float64                `json:"unit_rate"`
+		Total        float64                `json:"total"`
+		Status       string                 `json:"status"`
+		SubId        string                 `json:"sub_id,omitempty"`
+		Notes        string                 `json:"notes"`
+		VariantID    *string                `json:"variant_id,omitempty"`
+		VariantLabel string                 `json:"variant_label,omitempty"`
+		CreatedAt    time.Time              `json:"created_at"`
+		MenuItem     map[string]interface{} `json:"menu_item,omitempty"`
 	}
 
 	type OrderResponse struct {
@@ -495,16 +501,18 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		items := make([]OrderItemResponse, 0, len(order.Items))
 		for _, item := range order.Items {
 			itemResp := OrderItemResponse{
-				ID:        item.ID,
-				OrderID:   item.OrderID,
-				MenuID:    item.MenuID,
-				Quantity:  item.Quantity,
-				UnitRate:  item.UnitRate,
-				Total:     item.Total,
-				Status:    item.Status,
-				SubId:     item.SubId,
-				Notes:     item.Notes,
-				CreatedAt: item.CreatedAt,
+				ID:           item.ID,
+				OrderID:      item.OrderID,
+				MenuID:       item.MenuID,
+				Quantity:     item.Quantity,
+				UnitRate:     item.UnitRate,
+				Total:        item.Total,
+				Status:       item.Status,
+				SubId:        item.SubId,
+				Notes:        item.Notes,
+				VariantID:    item.VariantID,
+				VariantLabel: item.VariantLabel,
+				CreatedAt:    item.CreatedAt,
 			}
 
 			// Include menu item details if available
@@ -671,17 +679,19 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 	}
 
 	type OrderItemResponse struct {
-		ID        string                 `json:"id"`
-		OrderID   string                 `json:"order_id"`
-		MenuID    string                 `json:"menu_id"`
-		Quantity  int                    `json:"quantity"`
-		UnitRate  float64                `json:"unit_rate"`
-		Total     float64                `json:"total"`
-		Status    string                 `json:"status"`
-		SubId     string                 `json:"sub_id,omitempty"`
-		Notes     string                 `json:"notes"`
-		CreatedAt time.Time              `json:"created_at"`
-		MenuItem  map[string]interface{} `json:"menu_item,omitempty"`
+		ID           string                 `json:"id"`
+		OrderID      string                 `json:"order_id"`
+		MenuID       string                 `json:"menu_id"`
+		Quantity     int                    `json:"quantity"`
+		UnitRate     float64                `json:"unit_rate"`
+		Total        float64                `json:"total"`
+		Status       string                 `json:"status"`
+		SubId        string                 `json:"sub_id,omitempty"`
+		Notes        string                 `json:"notes"`
+		VariantID    *string                `json:"variant_id,omitempty"`
+		VariantLabel string                 `json:"variant_label,omitempty"`
+		CreatedAt    time.Time              `json:"created_at"`
+		MenuItem     map[string]interface{} `json:"menu_item,omitempty"`
 	}
 
 	type OrderResponse struct {
@@ -717,16 +727,18 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 		items := make([]OrderItemResponse, 0, len(order.Items))
 		for _, item := range order.Items {
 			itemResp := OrderItemResponse{
-				ID:        item.ID,
-				OrderID:   item.OrderID,
-				MenuID:    item.MenuID,
-				Quantity:  item.Quantity,
-				UnitRate:  item.UnitRate,
-				Total:     item.Total,
-				Status:    item.Status,
-				SubId:     item.SubId,
-				Notes:     item.Notes,
-				CreatedAt: item.CreatedAt,
+				ID:           item.ID,
+				OrderID:      item.OrderID,
+				MenuID:       item.MenuID,
+				Quantity:     item.Quantity,
+				UnitRate:     item.UnitRate,
+				Total:        item.Total,
+				Status:       item.Status,
+				SubId:        item.SubId,
+				Notes:        item.Notes,
+				VariantID:    item.VariantID,
+				VariantLabel: item.VariantLabel,
+				CreatedAt:    item.CreatedAt,
 			}
 			if item.MenuItem != nil {
 				itemResp.MenuItem = map[string]interface{}{

@@ -871,16 +871,18 @@ func (s *OrderService) ListOrders(restaurantID string, status string, limit int,
 
 // OrderSummaryItem is a lightweight line item for list/summary views.
 type OrderSummaryItem struct {
-	ID        string  `json:"id"`
-	MenuID    string  `json:"menu_id"`
-	Quantity  int     `json:"quantity"`
-	UnitRate  float64 `json:"unit_rate"`
-	Status    string  `json:"status"`
-	Name      string  `json:"name"`
-	IsVeg     bool    `json:"is_vegetarian"`
-	SubId     string  `json:"sub_id,omitempty"`
-	Notes     string  `json:"notes,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string  `json:"id"`
+	MenuID       string  `json:"menu_id"`
+	Quantity     int     `json:"quantity"`
+	UnitRate     float64 `json:"unit_rate"`
+	Status       string  `json:"status"`
+	Name         string  `json:"name"`
+	IsVeg        bool    `json:"is_vegetarian"`
+	SubId        string  `json:"sub_id,omitempty"`
+	Notes        string  `json:"notes,omitempty"`
+	VariantID    *string `json:"variant_id,omitempty"`
+	VariantLabel string  `json:"variant_label,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // OrderSummary is a lightweight order payload without full menu metadata.
@@ -1003,16 +1005,18 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 			// Keep cancelled lines in the summary so Orders tiles can prioritize
 			// "cancelled" over "ready" until the waiter opens the table.
 			items = append(items, OrderSummaryItem{
-				ID:        item.ID,
-				MenuID:    item.MenuID,
-				Quantity:  item.Quantity,
-				UnitRate:  item.UnitRate,
-				Status:    item.Status,
-				Name:      name,
-				IsVeg:     isVeg,
-				SubId:     item.SubId,
-				Notes:     item.Notes,
-				CreatedAt: item.CreatedAt,
+				ID:           item.ID,
+				MenuID:       item.MenuID,
+				Quantity:     item.Quantity,
+				UnitRate:     item.UnitRate,
+				Status:       item.Status,
+				Name:         name,
+				IsVeg:        isVeg,
+				SubId:        item.SubId,
+				Notes:        item.Notes,
+				VariantID:    item.VariantID,
+				VariantLabel: item.VariantLabel,
+				CreatedAt:    item.CreatedAt,
 			})
 			if item.Status == "cancelled" {
 				continue
