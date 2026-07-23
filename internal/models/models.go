@@ -372,6 +372,8 @@ type WSOrderItem struct {
 	Status       string    `json:"status"`
 	SubId        string    `json:"sub_id,omitempty"`
 	Notes        string    `json:"notes,omitempty"`
+	VariantID    *string   `json:"variant_id,omitempty"`
+	VariantLabel string    `json:"variant_label,omitempty"`
 	IsVegetarian bool      `json:"is_vegetarian,omitempty"`
 	CreatedAt    time.Time `json:"created_at,omitempty"`
 }

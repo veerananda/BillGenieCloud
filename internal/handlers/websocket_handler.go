@@ -295,15 +295,17 @@ func buildWSOrderItems(items []models.OrderItem) []models.WSOrderItem {
 	out := make([]models.WSOrderItem, 0, len(items))
 	for _, item := range items {
 		ws := models.WSOrderItem{
-			ID:       item.ID,
-			MenuID:   item.MenuID,
-			Quantity: item.Quantity,
-			UnitRate: item.UnitRate,
-			Total:    item.Total,
-			Status:   item.Status,
-			SubId:    item.SubId,
-			Notes:    item.Notes,
-			CreatedAt: item.CreatedAt,
+			ID:           item.ID,
+			MenuID:       item.MenuID,
+			Quantity:     item.Quantity,
+			UnitRate:     item.UnitRate,
+			Total:        item.Total,
+			Status:       item.Status,
+			SubId:        item.SubId,
+			Notes:        item.Notes,
+			VariantID:    item.VariantID,
+			VariantLabel: item.VariantLabel,
+			CreatedAt:    item.CreatedAt,
 		}
 		if item.MenuItem != nil {
 			ws.Name = services.FormatOrderItemDisplayName(item.MenuItem.Name, item.VariantLabel)
