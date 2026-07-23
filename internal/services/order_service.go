@@ -913,6 +913,10 @@ type SalesSummary struct {
 	TotalRevenue      float64 `json:"total_revenue"`
 	AverageOrderValue float64 `json:"average_order_value"`
 	Period            string  `json:"period"`
+	DineInOrders      int64   `json:"dine_in_orders"`
+	DineInRevenue     float64 `json:"dine_in_revenue"`
+	CounterOrders     int64   `json:"counter_orders"`
+	CounterRevenue    float64 `json:"counter_revenue"`
 }
 
 // SalesDayPoint is one day's revenue in a sales chart series.
@@ -1070,31 +1074,55 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	}
 
-	var result struct {
+	type agg struct {
 		TotalOrders  int64
 		TotalRevenue float64
 	}
 
-	err := s.db.Model(&models.Order{}).
-		Where("restaurant_id = ?", restaurantID).
-		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
-		Where(historyActivityAtSQL+" >= ?", start).
+	applySalesWindow := func(db *gorm.DB) *gorm.DB {
+		return db.Model(&models.Order{}).
+			Where("restaurant_id = ?", restaurantID).
+			Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
+			Where(historyActivityAtSQL+" >= ?", start)
+	}
+
+	var total agg
+	if err := applySalesWindow(s.db).
 		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
-		Scan(&result).Error
-	if err != nil {
+		Scan(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var dineIn agg
+	if err := applySalesWindow(s.db).
+		Where("NOT (" + isLegacyCounterOrderClause() + ")").
+		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+		Scan(&dineIn).Error; err != nil {
+		return nil, err
+	}
+
+	var counter agg
+	if err := applySalesWindow(s.db).
+		Where(isLegacyCounterOrderClause()).
+		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+		Scan(&counter).Error; err != nil {
 		return nil, err
 	}
 
 	avg := float64(0)
-	if result.TotalOrders > 0 {
-		avg = result.TotalRevenue / float64(result.TotalOrders)
+	if total.TotalOrders > 0 {
+		avg = total.TotalRevenue / float64(total.TotalOrders)
 	}
 
 	return &SalesSummary{
-		TotalOrders:       result.TotalOrders,
-		TotalRevenue:      result.TotalRevenue,
+		TotalOrders:       total.TotalOrders,
+		TotalRevenue:      total.TotalRevenue,
 		AverageOrderValue: avg,
 		Period:            label,
+		DineInOrders:      dineIn.TotalOrders,
+		DineInRevenue:     dineIn.TotalRevenue,
+		CounterOrders:     counter.TotalOrders,
+		CounterRevenue:    counter.TotalRevenue,
 	}, nil
 }
 
