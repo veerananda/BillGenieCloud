@@ -103,12 +103,17 @@ func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus
 				}
 				category = item.MenuItem.Category
 			}
+			name = services.FormatOrderItemDisplayName(name, item.VariantLabel)
 			lineTotal := item.Total
 			if lineTotal <= 0 {
 				lineTotal = unitRate * float64(item.Quantity)
 			}
 
-			key := fmt.Sprintf("%s|%s|%s|%.2f", item.MenuID, strings.ToLower(name), strings.ToLower(category), unitRate)
+			variantKey := ""
+			if item.VariantID != nil {
+				variantKey = *item.VariantID
+			}
+			key := fmt.Sprintf("%s|%s|%s|%s|%.2f", item.MenuID, variantKey, strings.ToLower(name), strings.ToLower(category), unitRate)
 			if idx, ok := groupedItems[key]; ok {
 				status.Items[idx].Quantity += item.Quantity
 				status.Items[idx].Total += lineTotal

@@ -157,20 +157,23 @@ func (o *Order) BeforeCreate(tx *gorm.DB) error {
 
 // OrderItem represents individual items in an order
 type OrderItem struct {
-	ID        string    `gorm:"primaryKey" json:"id"`
-	OrderID   string    `json:"order_id" gorm:"index" validate:"required"`
-	MenuID    string    `json:"menu_id" validate:"required"`
-	Quantity  int       `json:"quantity" validate:"required,min=1"`
-	UnitRate  float64   `json:"unit_rate" gorm:"type:numeric(10,2)"`
-	Total     float64   `json:"total" gorm:"type:numeric(10,2)"`
-	Status    string    `json:"status" gorm:"default:'pending';type:varchar(50)"` // pending, preparing, ready, served
-	SubId     string    `json:"sub_id,omitempty" gorm:"index"`                    // Batch tracking for incremental orders
-	Notes     string    `json:"notes" gorm:"type:text"`
-	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
+	ID           string    `gorm:"primaryKey" json:"id"`
+	OrderID      string    `json:"order_id" gorm:"index" validate:"required"`
+	MenuID       string    `json:"menu_id" validate:"required"`
+	VariantID    *string   `json:"variant_id,omitempty" gorm:"index"`
+	VariantLabel string    `json:"variant_label,omitempty" gorm:"type:varchar(80)"`
+	Quantity     int       `json:"quantity" validate:"required,min=1"`
+	UnitRate     float64   `json:"unit_rate" gorm:"type:numeric(10,2)"`
+	Total        float64   `json:"total" gorm:"type:numeric(10,2)"`
+	Status       string    `json:"status" gorm:"default:'pending';type:varchar(50)"` // pending, preparing, ready, served
+	SubId        string    `json:"sub_id,omitempty" gorm:"index"`                    // Batch tracking for incremental orders
+	Notes        string    `json:"notes" gorm:"type:text"`
+	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
 
 	// Relations
-	Order    *Order    `json:"-" gorm:"foreignKey:OrderID"`
-	MenuItem *MenuItem `json:"-" gorm:"foreignKey:MenuID"`
+	Order    *Order           `json:"-" gorm:"foreignKey:OrderID"`
+	MenuItem *MenuItem        `json:"-" gorm:"foreignKey:MenuID"`
+	Variant  *MenuItemVariant `json:"-" gorm:"foreignKey:VariantID"`
 }
 
 // TableName specifies the table name
@@ -203,8 +206,9 @@ type MenuItem struct {
 	UpdatedAt        time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Relations
-	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
-	Inventory  *Inventory  `json:"-" gorm:"foreignKey:MenuItemID"`
+	Restaurant *Restaurant        `json:"-" gorm:"foreignKey:RestaurantID"`
+	Inventory  *Inventory         `json:"-" gorm:"foreignKey:MenuItemID"`
+	Variants   []MenuItemVariant  `json:"variants,omitempty" gorm:"foreignKey:MenuItemID"`
 }
 
 // TableName specifies the table name
@@ -216,6 +220,38 @@ func (MenuItem) TableName() string {
 func (m *MenuItem) BeforeCreate(tx *gorm.DB) error {
 	if m.ID == "" {
 		m.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// MenuItemVariant is a portion/pack option for a dish (Half, Full, Family, etc.).
+type MenuItemVariant struct {
+	ID           string    `gorm:"primaryKey" json:"id"`
+	RestaurantID string    `json:"restaurant_id" gorm:"index;not null"`
+	MenuItemID   string    `json:"menu_item_id" gorm:"index;not null"`
+	Label        string    `json:"label" gorm:"type:varchar(80);not null"` // Half, Full, Family…
+	Price        float64   `json:"price" gorm:"type:numeric(10,2);not null"`
+	RecipeScale  float64   `json:"recipe_scale" gorm:"type:numeric(10,3);default:1"` // multiplies parent recipe BOM
+	IsDefault    bool      `json:"is_default" gorm:"default:false"`
+	IsAvailable  bool      `json:"is_available" gorm:"default:true"`
+	SortOrder    int       `json:"sort_order" gorm:"default:0"`
+	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+
+	MenuItem   *MenuItem   `json:"-" gorm:"foreignKey:MenuItemID"`
+	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`
+}
+
+func (MenuItemVariant) TableName() string {
+	return "menu_item_variants"
+}
+
+func (v *MenuItemVariant) BeforeCreate(tx *gorm.DB) error {
+	if v.ID == "" {
+		v.ID = uuid.New().String()
+	}
+	if v.RecipeScale <= 0 {
+		v.RecipeScale = 1
 	}
 	return nil
 }

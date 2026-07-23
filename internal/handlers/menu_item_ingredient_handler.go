@@ -85,7 +85,13 @@ func (h *MenuItemIngredientHandler) SetMenuItemIngredients(c *gin.Context) {
 		return
 	}
 
-	created := make([]models.MenuItemIngredient, 0, len(req.Ingredients))
+	type pendingRecipeLine struct {
+		inventory models.Ingredient
+		qty       float64
+	}
+	merged := make(map[string]*pendingRecipeLine)
+	order := make([]string, 0)
+
 	for _, ing := range req.Ingredients {
 		name := strings.TrimSpace(ing.Name)
 		unit := strings.TrimSpace(ing.Unit)
@@ -107,14 +113,25 @@ func (h *MenuItemIngredientHandler) SetMenuItemIngredients(c *gin.Context) {
 			return
 		}
 
+		if existing, ok := merged[inventoryRow.ID]; ok {
+			existing.qty += qtyUsed
+			continue
+		}
+		merged[inventoryRow.ID] = &pendingRecipeLine{inventory: inventoryRow, qty: qtyUsed}
+		order = append(order, inventoryRow.ID)
+	}
+
+	created := make([]models.MenuItemIngredient, 0, len(order))
+	for _, id := range order {
+		line := merged[id]
 		row := models.MenuItemIngredient{
 			ID:           uuid.New().String(),
 			RestaurantID: restaurantIDStr,
 			MenuItemID:   menuItemID,
-			IngredientID: inventoryRow.ID,
-			Name:         inventoryRow.Name,
-			Unit:         inventoryRow.Unit,
-			QuantityUsed: qtyUsed,
+			IngredientID: line.inventory.ID,
+			Name:         line.inventory.Name,
+			Unit:         line.inventory.Unit,
+			QuantityUsed: line.qty,
 		}
 		if err := tx.Create(&row).Error; err != nil {
 			tx.Rollback()

@@ -32,6 +32,7 @@ type CreateOrderRequest struct {
 
 type CreateOrderItemRequest struct {
 	MenuItemID string `json:"menu_item_id" validate:"required"`
+	VariantID  string `json:"variant_id,omitempty"`
 	Quantity   int    `json:"quantity" validate:"required,min=1"`
 	Notes      string `json:"notes"`
 }
@@ -215,6 +216,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		return nil, nil, err
 	}
 
+	stockQuantities := make([]MenuItemQuantity, 0, len(req.Items))
 	for i, itemReq := range req.Items {
 		menuItem, ok := menuItemsByID[itemReq.MenuItemID]
 		if !ok {
@@ -225,16 +227,36 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 
 		// Create order item with explicit UUID generation
 		itemID := uuid.New().String()
+		unitPrice, variantLabel, recipeScale, variantIDPtr, err := ResolveOrderVariant(
+			tx, restaurantID, menuItem.ID, itemReq.VariantID, menuItem.Price,
+		)
+		if err != nil {
+			log.Printf("❌ [CreateOrder] Item %d: variant resolve failed: %v", i+1, err)
+			tx.Rollback()
+			return nil, nil, err
+		}
+		variantID := ""
+		if variantIDPtr != nil {
+			variantID = *variantIDPtr
+		}
+		stockQuantities = append(stockQuantities, MenuItemQuantity{
+			MenuItemID:  menuItem.ID,
+			Quantity:    itemReq.Quantity,
+			RecipeScale: recipeScale,
+			VariantID:   variantID,
+		})
 		orderItem := &models.OrderItem{
-			ID:       itemID,
-			OrderID:  order.ID,
-			MenuID:   menuItem.ID,
-			Quantity: itemReq.Quantity,
-			UnitRate: menuItem.Price,
-			Total:    menuItem.Price * float64(itemReq.Quantity),
-			Status:   InitialOrderItemStatus(menuItem),
-			Notes:    itemReq.Notes,
-			SubId:    batchSubID,
+			ID:           itemID,
+			OrderID:      order.ID,
+			MenuID:       menuItem.ID,
+			VariantID:    variantIDPtr,
+			VariantLabel: variantLabel,
+			Quantity:     itemReq.Quantity,
+			UnitRate:     unitPrice,
+			Total:        unitPrice * float64(itemReq.Quantity),
+			Status:       InitialOrderItemStatus(menuItem),
+			Notes:        itemReq.Notes,
+			SubId:        batchSubID,
 		}
 
 		log.Printf("🔵 [CreateOrder] Item %d: Creating OrderItem - ID: %s, MenuID: %s, Qty: %d, Total: ₹%.2f", i+1, itemID, menuItem.ID, itemReq.Quantity, orderItem.Total)
@@ -292,9 +314,9 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 	}
 
 	var updatedIngredients []models.Ingredient
-	if len(req.Items) > 0 {
+	if len(stockQuantities) > 0 {
 		var deductErr error
-		updatedIngredients, deductErr = DeductIngredientsForMenuItems(tx, restaurantID, menuItemQuantitiesFromCreateItems(req.Items))
+		updatedIngredients, deductErr = DeductIngredientsForMenuItems(tx, restaurantID, stockQuantities)
 		if deductErr != nil {
 			log.Printf("❌ [CreateOrder] Ingredient stock deduction failed: %v", deductErr)
 			tx.Rollback()
@@ -373,6 +395,7 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 	// Add new items to the order (one KOT batch per update)
 	var totalAdded float64 = 0
 	batchSubID := uuid.New().String()
+	stockQuantities := make([]MenuItemQuantity, 0, len(req.Items))
 	log.Printf("🔵 [UpdateOrder] KOT batch sub_id: %s", batchSubID)
 	for _, itemReq := range req.Items {
 		menuItem, ok := menuItemsByID[itemReq.MenuItemID]
@@ -381,18 +404,36 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 			return nil, nil, errors.New("menu item not found")
 		}
 
-		// Create order item
 		itemID := uuid.New().String()
+		unitPrice, variantLabel, recipeScale, variantIDPtr, err := ResolveOrderVariant(
+			tx, restaurantID, menuItem.ID, itemReq.VariantID, menuItem.Price,
+		)
+		if err != nil {
+			tx.Rollback()
+			return nil, nil, err
+		}
+		variantID := ""
+		if variantIDPtr != nil {
+			variantID = *variantIDPtr
+		}
+		stockQuantities = append(stockQuantities, MenuItemQuantity{
+			MenuItemID:  menuItem.ID,
+			Quantity:    itemReq.Quantity,
+			RecipeScale: recipeScale,
+			VariantID:   variantID,
+		})
 		orderItem := models.OrderItem{
-			ID:       itemID,
-			OrderID:  orderID,
-			MenuID:   menuItem.ID,
-			Quantity: itemReq.Quantity,
-			UnitRate: menuItem.Price,
-			Total:    menuItem.Price * float64(itemReq.Quantity),
-			Status:   InitialOrderItemStatus(menuItem),
-			Notes:    itemReq.Notes,
-			SubId:    batchSubID,
+			ID:           itemID,
+			OrderID:      orderID,
+			MenuID:       menuItem.ID,
+			VariantID:    variantIDPtr,
+			VariantLabel: variantLabel,
+			Quantity:     itemReq.Quantity,
+			UnitRate:     unitPrice,
+			Total:        unitPrice * float64(itemReq.Quantity),
+			Status:       InitialOrderItemStatus(menuItem),
+			Notes:        itemReq.Notes,
+			SubId:        batchSubID,
 		}
 
 		if err := tx.Create(&orderItem).Error; err != nil {
@@ -443,9 +484,9 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 	}
 
 	var updatedIngredients []models.Ingredient
-	if len(req.Items) > 0 {
+	if len(stockQuantities) > 0 {
 		var deductErr error
-		updatedIngredients, deductErr = DeductIngredientsForMenuItems(tx, restaurantID, menuItemQuantitiesFromCreateItems(req.Items))
+		updatedIngredients, deductErr = DeductIngredientsForMenuItems(tx, restaurantID, stockQuantities)
 		if deductErr != nil {
 			log.Printf("❌ [UpdateOrder] Ingredient stock deduction failed: %v", deductErr)
 			tx.Rollback()
@@ -958,6 +999,7 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 				name = item.MenuItem.Name
 				isVeg = item.MenuItem.IsVeg
 			}
+			name = FormatOrderItemDisplayName(name, item.VariantLabel)
 			// Keep cancelled lines in the summary so Orders tiles can prioritize
 			// "cancelled" over "ready" until the waiter opens the table.
 			items = append(items, OrderSummaryItem{
@@ -1476,9 +1518,19 @@ func (s *OrderService) AdjustOrderItemQuantity(
 		return nil, nil, err
 	}
 
-	restoredIngredients, restoreErr := RestoreIngredientsForMenuItems(tx, restaurantID, []MenuItemQuantity{
-		{MenuItemID: item.MenuID, Quantity: removedQty},
-	})
+	restoreQty := []MenuItemQuantity{{
+		MenuItemID: item.MenuID,
+		Quantity:   removedQty,
+	}}
+	if item.VariantID != nil {
+		restoreQty[0].VariantID = *item.VariantID
+	}
+	restoreQty, enrichErr := enrichMenuItemQuantitiesWithScales(tx, restaurantID, restoreQty)
+	if enrichErr != nil {
+		tx.Rollback()
+		return nil, nil, enrichErr
+	}
+	restoredIngredients, restoreErr := RestoreIngredientsForMenuItems(tx, restaurantID, restoreQty)
 	if restoreErr != nil {
 		tx.Rollback()
 		return nil, nil, restoreErr

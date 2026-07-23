@@ -113,6 +113,7 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.Order{},
 		&models.OrderItem{},
 		&models.MenuItem{},
+		&models.MenuItemVariant{},
 		&models.Inventory{},
 		&models.Ingredient{},
 		&models.StockExpenditure{},
@@ -141,6 +142,12 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Printf("⚠️  Migration BackfillIngredientAlertQuantity skipped or failed: %v", err)
 	} else {
 		log.Println("✅ BackfillIngredientAlertQuantity migration completed")
+	}
+
+	if err := migrations.BackfillMenuItemVariants(db); err != nil {
+		log.Printf("⚠️  Migration BackfillMenuItemVariants skipped or failed: %v", err)
+	} else {
+		log.Println("✅ BackfillMenuItemVariants migration completed")
 	}
 
 	if err := migrations.NullEmptyAttendedByUserID(db); err != nil {
