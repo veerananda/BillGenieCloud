@@ -978,7 +978,12 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 
 	if err := query.
 		Preload("Items", func(db *gorm.DB) *gorm.DB {
-			return db.Select("id", "order_id", "menu_id", "quantity", "unit_rate", "status", "total", "sub_id", "notes", "created_at")
+			// Include variant columns so summary/kitchen can show Half/Family
+			// (FormatOrderItemDisplayName + variant_id/variant_label on the DTO).
+			return db.Select(
+				"id", "order_id", "menu_id", "quantity", "unit_rate", "status", "total",
+				"sub_id", "notes", "created_at", "variant_id", "variant_label",
+			)
 		}).
 		Preload("Items.MenuItem", func(db *gorm.DB) *gorm.DB {
 			return db.Select("id", "name", "is_veg")
