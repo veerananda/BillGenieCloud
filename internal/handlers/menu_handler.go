@@ -19,26 +19,28 @@ type MenuHandler struct {
 }
 
 type CreateMenuItemRequest struct {
-	Name        string  `json:"name" validate:"required"`
-	Category    string  `json:"category"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price" validate:"required,gt=0"`
-	CostPrice   float64 `json:"cost_price"`
-	IsVeg            bool `json:"is_veg"`
-	ReadilyAvailable bool `json:"readily_available"`
-	IsTaxable        *bool `json:"is_taxable"`
+	Name             string                   `json:"name" validate:"required"`
+	Category         string                   `json:"category"`
+	Description      string                   `json:"description"`
+	Price            float64                  `json:"price" validate:"required,gt=0"`
+	CostPrice        float64                  `json:"cost_price"`
+	IsVeg            bool                     `json:"is_veg"`
+	ReadilyAvailable bool                     `json:"readily_available"`
+	IsTaxable        *bool                    `json:"is_taxable"`
+	Variants         []services.VariantInput  `json:"variants"`
 }
 
 type UpdateMenuItemRequest struct {
-	Name        string  `json:"name"`
-	Category    string  `json:"category"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price"`
-	CostPrice   float64 `json:"cost_price"`
-	IsVeg            *bool `json:"is_veg"`
-	IsAvailable      *bool `json:"is_available"`
-	ReadilyAvailable *bool `json:"readily_available"`
-	IsTaxable        *bool `json:"is_taxable"`
+	Name             string                   `json:"name"`
+	Category         string                   `json:"category"`
+	Description      string                   `json:"description"`
+	Price            float64                  `json:"price"`
+	CostPrice        float64                  `json:"cost_price"`
+	IsVeg            *bool                    `json:"is_veg"`
+	IsAvailable      *bool                    `json:"is_available"`
+	ReadilyAvailable *bool                    `json:"readily_available"`
+	IsTaxable        *bool                    `json:"is_taxable"`
+	Variants         *[]services.VariantInput `json:"variants"`
 }
 
 // NewMenuHandler creates a new menu handler
@@ -67,7 +69,8 @@ func isAvailabilityOnlyUpdate(req UpdateMenuItemRequest) bool {
 		req.CostPrice <= 0 &&
 		req.IsVeg == nil &&
 		req.ReadilyAvailable == nil &&
-		req.IsTaxable == nil
+		req.IsTaxable == nil &&
+		req.Variants == nil
 }
 
 // CreateMenuItem creates a new menu item
@@ -121,6 +124,16 @@ func (h *MenuHandler) CreateMenuItem(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	variants, err := services.SyncMenuItemVariants(h.db, *menuItem, req.Variants)
+	if err != nil {
+		log.Printf("❌ Menu item variant sync failed: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	menuItem.Variants = variants
+	_ = h.db.Where("id = ?", menuItem.ID).First(menuItem).Error
+	menuItem.Variants = variants
 
 	log.Printf("✅ Menu item created: %s (ID: %s)", menuItem.Name, menuItem.ID)
 
@@ -181,10 +194,19 @@ func (h *MenuHandler) GetMenuItems(c *gin.Context) {
 		return
 	}
 
-	if err := query.Limit(limit).Offset(offset).Find(&items).Error; err != nil {
+	if err := query.Preload("Variants", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort_order ASC, created_at ASC")
+	}).Limit(limit).Offset(offset).Find(&items).Error; err != nil {
 		log.Printf("❌ Menu retrieval failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	for i := range items {
+		if len(items[i].Variants) == 0 {
+			_ = services.EnsureDefaultMenuItemVariant(h.db, items[i])
+			_ = h.db.Where("menu_item_id = ?", items[i].ID).Order("sort_order ASC, created_at ASC").Find(&items[i].Variants).Error
+		}
 	}
 
 	log.Printf("✅ Menu items retrieved: %d items", len(items))
@@ -216,6 +238,9 @@ func (h *MenuHandler) GetMenuItem(c *gin.Context) {
 
 	var item models.MenuItem
 	if err := h.db.Where("id = ? AND restaurant_id = ?", menuItemID, restaurantID).
+		Preload("Variants", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC, created_at ASC")
+		}).
 		First(&item).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "menu item not found"})
@@ -224,6 +249,10 @@ func (h *MenuHandler) GetMenuItem(c *gin.Context) {
 		log.Printf("❌ Menu item retrieval failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if len(item.Variants) == 0 {
+		_ = services.EnsureDefaultMenuItemVariant(h.db, item)
+		_ = h.db.Where("menu_item_id = ?", item.ID).Order("sort_order ASC, created_at ASC").Find(&item.Variants).Error
 	}
 
 	log.Printf("✅ Menu item retrieved: %s", item.Name)
@@ -326,6 +355,24 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 		return
 	}
 
+	if req.Variants != nil {
+		variants, err := services.SyncMenuItemVariants(h.db, item, *req.Variants)
+		if err != nil {
+			log.Printf("❌ Menu item variant sync failed: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		item.Variants = variants
+		_ = h.db.Where("id = ?", item.ID).First(&item).Error
+		item.Variants = variants
+	} else {
+		_ = h.db.Where("menu_item_id = ?", item.ID).Order("sort_order ASC, created_at ASC").Find(&item.Variants).Error
+		if len(item.Variants) == 0 {
+			_ = services.EnsureDefaultMenuItemVariant(h.db, item)
+			_ = h.db.Where("menu_item_id = ?", item.ID).Order("sort_order ASC, created_at ASC").Find(&item.Variants).Error
+		}
+	}
+
 	log.Printf("✅ Menu item updated: %s", item.Name)
 
 	if globalHub != nil {
@@ -361,9 +408,22 @@ func (h *MenuHandler) DeleteMenuItem(c *gin.Context) {
 
 	menuItemID := c.Param("menu_item_id")
 
-	if err := h.db.Where("id = ? AND restaurant_id = ?", menuItemID, restaurantID).
+	tx := h.db.Begin()
+	if err := tx.Where("menu_item_id = ? AND restaurant_id = ?", menuItemID, restaurantID).
+		Delete(&models.MenuItemVariant{}).Error; err != nil {
+		tx.Rollback()
+		log.Printf("❌ Menu item variant deletion failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := tx.Where("id = ? AND restaurant_id = ?", menuItemID, restaurantID).
 		Delete(&models.MenuItem{}).Error; err != nil {
+		tx.Rollback()
 		log.Printf("❌ Menu item deletion failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

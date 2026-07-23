@@ -187,6 +187,7 @@ func (h *OrderHandler) ListCounterOrdersToday(c *gin.Context) {
 			if item.MenuItem != nil {
 				name = item.MenuItem.Name
 			}
+			name = services.FormatOrderItemDisplayName(name, item.VariantLabel)
 			items = append(items, itemResp{
 				ID:       item.ID,
 				MenuID:   item.MenuID,

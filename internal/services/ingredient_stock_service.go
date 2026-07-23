@@ -10,8 +10,10 @@ import (
 
 // MenuItemQuantity identifies how many units of a menu item affect ingredient stock.
 type MenuItemQuantity struct {
-	MenuItemID string
-	Quantity   int
+	MenuItemID  string
+	Quantity    int
+	RecipeScale float64
+	VariantID   string
 }
 
 func menuItemQuantitiesFromCreateItems(items []CreateOrderItemRequest) []MenuItemQuantity {
@@ -21,8 +23,10 @@ func menuItemQuantitiesFromCreateItems(items []CreateOrderItemRequest) []MenuIte
 			continue
 		}
 		out = append(out, MenuItemQuantity{
-			MenuItemID: item.MenuItemID,
-			Quantity:   item.Quantity,
+			MenuItemID:  item.MenuItemID,
+			Quantity:    item.Quantity,
+			RecipeScale: 1,
+			VariantID:   item.VariantID,
 		})
 	}
 	return out
@@ -34,22 +38,70 @@ func menuItemQuantitiesFromOrderItems(items []models.OrderItem) []MenuItemQuanti
 		if item.Quantity < 1 {
 			continue
 		}
+		variantID := ""
+		if item.VariantID != nil {
+			variantID = *item.VariantID
+		}
 		out = append(out, MenuItemQuantity{
-			MenuItemID: item.MenuID,
-			Quantity:   item.Quantity,
+			MenuItemID:  item.MenuID,
+			Quantity:    item.Quantity,
+			RecipeScale: 1,
+			VariantID:   variantID,
 		})
 	}
 	return out
 }
 
+// enrichMenuItemQuantitiesWithScales fills RecipeScale from variant rows when VariantID is set.
+func enrichMenuItemQuantitiesWithScales(db *gorm.DB, restaurantID string, items []MenuItemQuantity) ([]MenuItemQuantity, error) {
+	ids := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, item := range items {
+		if item.VariantID == "" {
+			continue
+		}
+		if _, ok := seen[item.VariantID]; ok {
+			continue
+		}
+		seen[item.VariantID] = struct{}{}
+		ids = append(ids, item.VariantID)
+	}
+	scales, err := LoadVariantScalesByID(db, restaurantID, ids)
+	if err != nil {
+		return items, err
+	}
+	for i := range items {
+		if items[i].VariantID == "" {
+			if items[i].RecipeScale <= 0 {
+				items[i].RecipeScale = 1
+			}
+			continue
+		}
+		if scale, ok := scales[items[i].VariantID]; ok {
+			items[i].RecipeScale = scale
+		} else if items[i].RecipeScale <= 0 {
+			items[i].RecipeScale = 1
+		}
+	}
+	return items, nil
+}
+
 // DeductIngredientsForMenuItems subtracts recipe usage from ingredient current_stock.
 func DeductIngredientsForMenuItems(tx *gorm.DB, restaurantID string, items []MenuItemQuantity) ([]models.Ingredient, error) {
-	return adjustIngredientStockForMenuItems(tx, restaurantID, items, true)
+	enriched, err := enrichMenuItemQuantitiesWithScales(tx, restaurantID, items)
+	if err != nil {
+		return nil, err
+	}
+	return adjustIngredientStockForMenuItems(tx, restaurantID, enriched, true)
 }
 
 // RestoreIngredientsForMenuItems adds recipe usage back to ingredient current_stock.
 func RestoreIngredientsForMenuItems(tx *gorm.DB, restaurantID string, items []MenuItemQuantity) ([]models.Ingredient, error) {
-	return adjustIngredientStockForMenuItems(tx, restaurantID, items, false)
+	enriched, err := enrichMenuItemQuantitiesWithScales(tx, restaurantID, items)
+	if err != nil {
+		return nil, err
+	}
+	return adjustIngredientStockForMenuItems(tx, restaurantID, enriched, false)
 }
 
 func adjustIngredientStockForMenuItems(
@@ -94,11 +146,15 @@ func adjustIngredientStockForMenuItems(
 		if item.MenuItemID == "" || item.Quantity < 1 {
 			continue
 		}
+		scale := item.RecipeScale
+		if scale <= 0 {
+			scale = 1
+		}
 		for _, recipe := range recipesByMenuItem[item.MenuItemID] {
 			if recipe.IngredientID == "" {
 				continue
 			}
-			amount := recipe.QuantityUsed * float64(item.Quantity)
+			amount := recipe.QuantityUsed * float64(item.Quantity) * scale
 			if amount <= 0 {
 				continue
 			}

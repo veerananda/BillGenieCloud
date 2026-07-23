@@ -60,10 +60,11 @@ func orderItemsGross(items []models.OrderItem) float64 {
 }
 
 func resolveBillItemName(item models.OrderItem) string {
+	name := "Item"
 	if item.MenuItem != nil && item.MenuItem.Name != "" {
-		return item.MenuItem.Name
+		name = item.MenuItem.Name
 	}
-	return "Item"
+	return FormatOrderItemDisplayName(name, item.VariantLabel)
 }
 
 // BuildBillSummary builds the customer-facing bill totals and line items.

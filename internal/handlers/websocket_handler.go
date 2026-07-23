@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -305,8 +306,10 @@ func buildWSOrderItems(items []models.OrderItem) []models.WSOrderItem {
 			CreatedAt: item.CreatedAt,
 		}
 		if item.MenuItem != nil {
-			ws.Name = item.MenuItem.Name
+			ws.Name = services.FormatOrderItemDisplayName(item.MenuItem.Name, item.VariantLabel)
 			ws.IsVegetarian = item.MenuItem.IsVeg
+		} else if strings.TrimSpace(item.VariantLabel) != "" {
+			ws.Name = services.FormatOrderItemDisplayName("Item", item.VariantLabel)
 		}
 		out = append(out, ws)
 	}
