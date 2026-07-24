@@ -629,7 +629,7 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 		return nil, err
 	}
 
-	log.Printf("🔵 [CompleteOrderWithPayment] BEFORE - Order #%d Status: %s, Total: %.2f", order.OrderNumber, order.Status, order.Total)
+	log.Printf("🔵 [CompleteOrderWithPayment] BEFORE - Order #%d Status: %s, Total: [redacted]", order.OrderNumber, order.Status)
 
 	if paymentMethod == "split" {
 		if cashAmount <= 0 || upiAmount <= 0 {
@@ -681,7 +681,7 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 		updates["completed_at"] = now
 	}
 
-	log.Printf("🔵 [CompleteOrderWithPayment] Updating order with: %+v", updates)
+	log.Printf("🔵 [CompleteOrderWithPayment] Updating order payment fields (amounts redacted)")
 
 	if err := tx.Model(&order).Updates(updates).Error; err != nil {
 		tx.Rollback()
@@ -714,8 +714,8 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 		return nil, err
 	}
 
-	log.Printf("✅ [CompleteOrderWithPayment] AFTER - Order #%d Status: %s, PaymentMethod: %s, Received: %.2f, Change: %.2f",
-		reloaded.OrderNumber, reloaded.Status, reloaded.PaymentMethod, reloaded.AmountReceived, reloaded.ChangeReturned)
+	log.Printf("✅ [CompleteOrderWithPayment] AFTER - Order #%d Status: %s, PaymentMethod: %s, Received: [redacted], Change: [redacted]",
+		reloaded.OrderNumber, reloaded.Status, reloaded.PaymentMethod)
 
 	return reloaded, nil
 }

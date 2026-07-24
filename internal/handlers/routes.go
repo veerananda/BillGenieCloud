@@ -17,7 +17,7 @@ func getAuthService(db *gorm.DB) *services.AuthService {
 	if secret == "" {
 		log.Fatal("JWT secret is not configured — set JWT_SECRET before starting the server")
 	}
-	return services.NewAuthService(db, secret)
+	return services.NewAuthService(db, secret, appRefreshJWTSecret)
 }
 
 func withSubscription(db *gorm.DB) gin.HandlerFunc {
