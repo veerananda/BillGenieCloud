@@ -71,3 +71,46 @@ Deployed with `feat/security-p1-hardening`:
 - [ ] Closing the browser tab clears access token (cookie refresh still works next visit)
 - [ ] Mobile login stores tokens in SecureStore
 - [ ] Forgot-password for unknown email returns the generic success message
+
+## Week 4 P3 (platform ops + deps + public token review)
+
+### Platform ops
+
+Prefer per-actor keys (identity bound to secret):
+
+```bash
+fly secrets set PLATFORM_OPS_API_KEYS="veera=...,mani=..." -a billgenie-api
+```
+
+Optional IP allowlist:
+
+```bash
+fly secrets set PLATFORM_OPS_IP_ALLOWLIST="x.x.x.x,y.y.y.y/24" -a billgenie-api
+```
+
+Legacy `PLATFORM_OPS_API_KEY` still works; when used alone, `X-Platform-Actor` remains a soft label.
+
+Review ops actions: `GET /platform/audit-logs?restaurant_id=&limit=50`
+
+### Dependency scanning
+
+- Dependabot watches Go modules + GitHub Actions weekly
+- CI runs `govulncheck ./...` on every PR
+
+### Public capability tokens (`/t`, `/b`, `/a`)
+
+| Token | TTL | Auth | PII on page |
+|-------|-----|------|-------------|
+| `/t/:token` tracking | 4h | unauthenticated (128-bit) | restaurant name, ticket/order #, readiness — no phone/email |
+| `/b/:token` bill | 1h | unauthenticated (128-bit) | restaurant name/address/contact, order lines, optional customer first name — no phone |
+| `/a/:token` assistance | table-bound | unauthenticated (128-bit) | table name, order totals/items when checkout — no email |
+
+Public `/public/restaurant` returns name/address/phone only (email removed in P3).
+
+### Verify P3
+
+- [ ] Multi-key login: key for `mani` cannot claim actor `veera` via header
+- [ ] IP allowlist blocks non-listed clients when set
+- [ ] `/platform/audit-logs` lists recent `platform_*` actions
+- [ ] Public restaurant JSON has no `email`
+- [ ] CI govulncheck step is green
