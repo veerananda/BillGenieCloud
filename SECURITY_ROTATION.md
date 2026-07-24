@@ -58,3 +58,16 @@ Deployed with `feat/security-p1-hardening`:
 - [ ] Password reset email link still works once.
 - [ ] Staff/kitchen menu payloads do not include `cost_price`.
 - [ ] Payment completion logs do not print cash amounts.
+
+## Week 3 P2 (client token storage + public HTML / anti-enumeration)
+
+- Web: access JWT in `sessionStorage`; refresh JWT in httpOnly `bg_refresh` cookie (`SameSite=None; Secure` in production).
+- Mobile: access + refresh JWTs in `expo-secure-store` (migrates from AsyncStorage once).
+- Public track/bill error HTML escapes messages; forgot-password / login-recovery responses avoid account enumeration.
+
+### Verify P2
+
+- [ ] Web login sets `bg_refresh` cookie; refresh works after clearing `localStorage.refresh_token`
+- [ ] Closing the browser tab clears access token (cookie refresh still works next visit)
+- [ ] Mobile login stores tokens in SecureStore
+- [ ] Forgot-password for unknown email returns the generic success message

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"strings"
@@ -238,7 +239,7 @@ func trackErrorHTML(message string) string {
 <title>Order</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f5;color:#333}
 .card{background:#fff;padding:32px;border-radius:16px;max-width:360px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08)}</style></head>
-<body><div class="card"><h1>Order</h1><p>%s</p></div></body></html>`, message)
+<body><div class="card"><h1>Order</h1><p>%s</p></div></body></html>`, html.EscapeString(message))
 }
 
 func trackStatusStylesBlock() string {
