@@ -1,10 +1,11 @@
 package services
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"regexp"
 	"strings"
 	"time"
@@ -638,7 +639,11 @@ func (s *UserService) RegenerateStaffKey(userID string, req RegenerateStaffKeyRe
 
 func generateUniqueNumericStaffKey(db *gorm.DB) (string, error) {
 	for i := 0; i < 30; i++ {
-		candidate := fmt.Sprintf("%06d", 100000+rand.Intn(900000))
+		n, err := rand.Int(rand.Reader, big.NewInt(900000))
+		if err != nil {
+			return "", fmt.Errorf("staff key entropy: %w", err)
+		}
+		candidate := fmt.Sprintf("%06d", 100000+n.Int64())
 		var count int64
 		if err := db.Model(&models.User{}).Where("staff_key = ?", candidate).Count(&count).Error; err != nil {
 			return "", fmt.Errorf("failed to validate staff key uniqueness: %w", err)
