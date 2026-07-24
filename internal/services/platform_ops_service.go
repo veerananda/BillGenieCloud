@@ -665,6 +665,7 @@ func (s *PlatformOpsService) writePlatformAudit(restaurantID, actor, action, rea
 	entry := models.AuditLog{
 		ID:           uuid.New().String(),
 		RestaurantID: restaurantID,
+		UserID:       actor, // platform actor label (not a users.id UUID)
 		Action:       action,
 		Entity:       "restaurant",
 		EntityID:     restaurantID,
@@ -672,6 +673,64 @@ func (s *PlatformOpsService) writePlatformAudit(restaurantID, actor, action, rea
 		NewValues:    json.RawMessage(newSnapshot),
 	}
 	_ = s.db.Create(&entry).Error
+}
+
+// PlatformAuditEntry is a platform-console audit row.
+type PlatformAuditEntry struct {
+	ID           string          `json:"id"`
+	RestaurantID string          `json:"restaurant_id"`
+	Actor        string          `json:"actor"`
+	Action       string          `json:"action"`
+	Entity       string          `json:"entity"`
+	EntityID     string          `json:"entity_id"`
+	OldValues    json.RawMessage `json:"old_values,omitempty"`
+	NewValues    json.RawMessage `json:"new_values,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// ListPlatformAuditLogs returns recent platform_* audit rows for ops review.
+func (s *PlatformOpsService) ListPlatformAuditLogs(restaurantID string, limit, offset int) ([]PlatformAuditEntry, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	q := s.db.Model(&models.AuditLog{}).Where("action LIKE ?", "platform_%")
+	if restaurantID = strings.TrimSpace(restaurantID); restaurantID != "" {
+		q = q.Where("restaurant_id = ?", restaurantID)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []models.AuditLog
+	if err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	out := make([]PlatformAuditEntry, 0, len(rows))
+	for _, row := range rows {
+		actor := row.UserID
+		if actor == "" {
+			actor = "platform_ops"
+		}
+		out = append(out, PlatformAuditEntry{
+			ID:           row.ID,
+			RestaurantID: row.RestaurantID,
+			Actor:        actor,
+			Action:       row.Action,
+			Entity:       row.Entity,
+			EntityID:     row.EntityID,
+			OldValues:    row.OldValues,
+			NewValues:    row.NewValues,
+			CreatedAt:    row.CreatedAt,
+		})
+	}
+	return out, total, nil
 }
 
 func maskLoginHint(staffKey string) string {

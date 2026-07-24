@@ -153,12 +153,11 @@ func (h *PublicHandler) GetPublicRestaurant(c *gin.Context) {
 
 	log.Printf("✅ Public restaurant info retrieved: %s", restaurant.Name)
 
-	// Return only public information
+	// Public restaurant profile: name/address/phone only (no email — reduces PII scrape surface).
 	c.JSON(http.StatusOK, gin.H{
 		"id":      restaurant.ID,
 		"name":    restaurant.Name,
 		"address": restaurant.Address,
 		"phone":   restaurant.Phone,
-		"email":   restaurant.Email,
 	})
 }

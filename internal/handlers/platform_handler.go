@@ -222,3 +222,22 @@ func (h *PlatformHandler) BulkUploadRecipes(c *gin.Context) {
 		"result":  result,
 	})
 }
+
+// ListAuditLogs returns recent platform_* audit entries for ops review.
+func (h *PlatformHandler) ListAuditLogs(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	restaurantID := c.Query("restaurant_id")
+
+	entries, total, err := h.ops.ListPlatformAuditLogs(restaurantID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"audit_logs": entries,
+		"total":      total,
+		"limit":      limit,
+		"offset":     offset,
+	})
+}

@@ -401,6 +401,7 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 		platform.GET("/support-issues/:issue_id/screenshots", supportHandler.GetPlatformIssueScreenshots)
 		platform.GET("/restaurants", platformHandler.ListRestaurants)
 		platform.GET("/restaurants/:restaurant_id", platformHandler.GetRestaurant)
+		platform.GET("/audit-logs", platformHandler.ListAuditLogs)
 		platform.POST("/restaurants/:restaurant_id/grant-subscription", platformHandler.GrantSubscription)
 		platform.POST("/restaurants/:restaurant_id/extend-trial", platformHandler.ExtendTrial)
 		platform.PUT("/restaurants/:restaurant_id/selection", platformHandler.UpdateSelection)
