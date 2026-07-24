@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"log"
+	"time"
 
 	"restaurant-api/internal/middleware"
 	"restaurant-api/internal/services"
@@ -30,17 +31,20 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 
 	public := router.Group("")
 	{
-		public.POST("/auth/register", authHandler.Register)
-		public.POST("/auth/login", authHandler.Login)
-		public.POST("/auth/refresh", authHandler.RefreshToken)
-		public.POST("/auth/forgot-password", authHandler.ForgotPassword)
+		authStrict := middleware.RateLimit(10, 15*time.Minute)
+		authRefresh := middleware.RateLimit(30, 15*time.Minute)
+
+		public.POST("/auth/register", authStrict, authHandler.Register)
+		public.POST("/auth/login", authStrict, authHandler.Login)
+		public.POST("/auth/refresh", authRefresh, authHandler.RefreshToken)
+		public.POST("/auth/forgot-password", authStrict, authHandler.ForgotPassword)
 		public.GET("/reset-password", authHandler.ResetPasswordPage)
-		public.POST("/auth/reset-password", authHandler.ResetPassword)
-		public.POST("/auth/forgot-login-id", authHandler.ForgotLoginID)
-		public.POST("/auth/verify-login-recovery", authHandler.VerifyLoginRecovery)
+		public.POST("/auth/reset-password", authStrict, authHandler.ResetPassword)
+		public.POST("/auth/forgot-login-id", authStrict, authHandler.ForgotLoginID)
+		public.POST("/auth/verify-login-recovery", authStrict, authHandler.VerifyLoginRecovery)
 		public.POST("/auth/verify-email", authHandler.VerifyEmail)
 		public.GET("/auth/verification-status", authHandler.GetVerificationStatus)
-		public.POST("/auth/resend-verification", authHandler.ResendVerificationEmail)
+		public.POST("/auth/resend-verification", authStrict, authHandler.ResendVerificationEmail)
 		public.GET("/health", authHandler.HealthCheck)
 	}
 

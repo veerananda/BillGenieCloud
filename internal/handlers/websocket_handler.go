@@ -38,9 +38,53 @@ type WebSocketClient struct {
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+	Subprotocols:    []string{"billgenie"},
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for now (configure in production)
+		return true // replaced by ConfigureWebSocketOrigins at startup
 	},
+}
+
+var wsAllowedOrigins []string
+
+// ConfigureWebSocketOrigins restricts browser WS Origin to the CORS allowlist.
+func ConfigureWebSocketOrigins(allowedOrigins []string) {
+	wsAllowedOrigins = append([]string(nil), allowedOrigins...)
+	upgrader.CheckOrigin = func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // native / non-browser clients
+		}
+		for _, o := range wsAllowedOrigins {
+			if o == "*" || o == origin {
+				return true
+			}
+		}
+		log.Printf("❌ WebSocket origin rejected: %s", origin)
+		return false
+	}
+}
+
+// ExtractWebSocketToken prefers Sec-WebSocket-Protocol (billgenie,<jwt>); falls back to ?token=.
+func ExtractWebSocketToken(r *http.Request) (token string, viaQuery bool) {
+	header := r.Header.Get("Sec-WebSocket-Protocol")
+	if header != "" {
+		parts := strings.Split(header, ",")
+		cleaned := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				cleaned = append(cleaned, t)
+			}
+		}
+		for i, p := range cleaned {
+			if p == "billgenie" && i+1 < len(cleaned) {
+				return cleaned[i+1], false
+			}
+		}
+	}
+	if q := strings.TrimSpace(r.URL.Query().Get("token")); q != "" {
+		return q, true
+	}
+	return "", false
 }
 
 // Global hub instance for broadcasting

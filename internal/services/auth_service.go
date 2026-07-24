@@ -55,7 +55,7 @@ type RegisterRequest struct {
 	OwnerName      string `json:"owner_name" validate:"required"`
 	Email          string `json:"email" validate:"required,email"`
 	Phone          string `json:"phone" validate:"required"`
-	Password       string `json:"password" validate:"required,min=6"`
+	Password       string `json:"password" validate:"required,min=8"`
 	LoginID        string `json:"login_id" validate:"required"`
 	Address        string `json:"address"`
 	City           string `json:"city"`
@@ -83,6 +83,10 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 	if err := s.db.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
 		return nil, nil, errors.New("email already registered")
 	} else if err != gorm.ErrRecordNotFound {
+		return nil, nil, err
+	}
+
+	if err := ValidateAccountPassword(req.Password, ""); err != nil {
 		return nil, nil, err
 	}
 
@@ -571,6 +575,9 @@ func (s *AuthService) GetUserByID(userID string) (*models.User, error) {
 func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 	claims := &TokenClaims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if token.Method == nil || token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(s.jwtSecret), nil
 	})
 
@@ -886,6 +893,9 @@ func (s *AuthService) ResetPassword(token string, newPassword string) error {
 	// Validate input
 	if token == "" || newPassword == "" {
 		return errors.New("token and password are required")
+	}
+	if err := ValidateAccountPassword(newPassword, ""); err != nil {
+		return err
 	}
 
 	// Find valid, unused reset token

@@ -96,6 +96,7 @@ func LoadConfig() *Config {
 	}
 
 	validateJWTSecrets(cfg)
+	validateCORSOrigins(cfg)
 
 	log.Printf("✅ Configuration loaded (Environment: %s)", cfg.Environment)
 	return cfg
@@ -117,6 +118,9 @@ func validateJWTSecrets(cfg *Config) {
 		if len(cfg.JWTSecret) < 32 || len(cfg.RefreshJWTSecret) < 32 {
 			log.Fatal("JWT_SECRET and REFRESH_JWT_SECRET must be at least 32 characters in production")
 		}
+		if cfg.JWTSecret == cfg.RefreshJWTSecret {
+			log.Fatal("JWT_SECRET and REFRESH_JWT_SECRET must be different values in production")
+		}
 		return
 	}
 
@@ -126,6 +130,41 @@ func validateJWTSecrets(cfg *Config) {
 	if weakRefresh {
 		log.Println("⚠️  REFRESH_JWT_SECRET is using the insecure default — set REFRESH_JWT_SECRET before deploying")
 	}
+}
+
+func validateCORSOrigins(cfg *Config) {
+	origins := make([]string, 0, len(cfg.CORSAllowedOrigins))
+	hasWildcard := false
+	for _, raw := range cfg.CORSAllowedOrigins {
+		o := strings.TrimSpace(raw)
+		if o == "" {
+			continue
+		}
+		if o == "*" {
+			hasWildcard = true
+			continue
+		}
+		origins = append(origins, o)
+	}
+
+	if cfg.Environment == "production" {
+		if hasWildcard || len(origins) == 0 {
+			log.Fatal("CORS_ALLOWED_ORIGINS must be an explicit allowlist in production (no *)")
+		}
+		cfg.CORSAllowedOrigins = origins
+		return
+	}
+
+	if hasWildcard {
+		log.Println("⚠️  CORS_ALLOWED_ORIGINS includes * — allowed only outside production; credentials will not be enabled with wildcard")
+		cfg.CORSAllowedOrigins = []string{"*"}
+		return
+	}
+	if len(origins) == 0 {
+		cfg.CORSAllowedOrigins = []string{"http://localhost:3000", "http://localhost:5173"}
+		return
+	}
+	cfg.CORSAllowedOrigins = origins
 }
 
 func getEnv(key, defaultValue string) string {
@@ -174,7 +213,14 @@ func parseDuration(value string) time.Duration {
 
 func parseOrigins(origins string) []string {
 	if origins == "" {
-		return []string{"*"}
+		return []string{}
 	}
-	return strings.Split(origins, ",")
+	parts := strings.Split(origins, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

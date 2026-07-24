@@ -29,7 +29,7 @@ type CreateUserRequest struct {
 	Name     string `json:"name" validate:"required,min=2"`
 	Email    string `json:"email" validate:"omitempty,email"`
 	Phone    string `json:"phone"`
-	Password string `json:"password" validate:"omitempty,min=6"`
+	Password string `json:"password" validate:"required,min=8"`
 	Role            string `json:"role" validate:"required,oneof=manager staff chef"`
 	StaffKey        string `json:"staff_key"`
 	CanCancelOrders      bool   `json:"can_cancel_orders"`
@@ -41,12 +41,29 @@ type CreateUserRequest struct {
 type UpdateUserRequest struct {
 	Name            string `json:"name" validate:"omitempty,min=2"`
 	Phone           string `json:"phone"`
-	Password        string `json:"password" validate:"omitempty,min=6"` // Optional: only update if provided
+	Password        string `json:"password" validate:"omitempty,min=8"` // Optional: only update if provided
 	Role            string `json:"role" validate:"omitempty,oneof=manager staff chef"`
 	IsActive        *bool  `json:"is_active"`
 	CanCancelOrders      *bool  `json:"can_cancel_orders"`
 	CanRestockInventory  *bool  `json:"can_restock_inventory"`
 	MenuManagementAccess *bool  `json:"menu_management_access"`
+}
+
+const MinPasswordLength = 8
+
+// ValidateAccountPassword enforces password length and forbids password == staff key.
+func ValidateAccountPassword(password, staffKey string) error {
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return errors.New("password is required")
+	}
+	if len(password) < MinPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+	}
+	if staffKey != "" && password == staffKey {
+		return errors.New("password must not be the same as the staff key")
+	}
+	return nil
 }
 
 // NewUserService creates a new user service
@@ -118,8 +135,8 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 	}
 
 	password := strings.TrimSpace(req.Password)
-	if password == "" {
-		password = staffKey
+	if err := ValidateAccountPassword(password, staffKey); err != nil {
+		return nil, err
 	}
 
 	// Hash password
@@ -343,6 +360,9 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 
 	// Password is optional - only hash and update if provided
 	if req.Password != "" {
+		if err := ValidateAccountPassword(req.Password, user.StaffKey); err != nil {
+			return nil, err
+		}
 		hashedPassword, err := hashPassword(req.Password)
 		if err != nil {
 			return nil, fmt.Errorf("password hashing failed: %w", err)
@@ -567,7 +587,7 @@ func (s *UserService) GetAdminCount(restaurantID string) (int64, error) {
 
 // RegenerateStaffKeyRequest for regenerating staff key and optionally password
 type RegenerateStaffKeyRequest struct {
-	NewPassword *string `json:"new_password" validate:"omitempty,min=6"` // Optional: if provided, password is also updated
+	NewPassword *string `json:"new_password" validate:"omitempty,min=8"` // Optional: if provided, password is also updated
 }
 
 // RegenerateStaffKey regenerates a new staff key and optionally updates password
@@ -586,30 +606,30 @@ func (s *UserService) RegenerateStaffKey(userID string, req RegenerateStaffKeyRe
 		return "", err
 	}
 
-	// Prepare update map
+	// Prepare update map — do not reset password to the new key.
 	updateMap := map[string]interface{}{
 		"staff_key":        newStaffKey,
 		"key_generated_at": time.Now(),
 		"updated_at":       time.Now(),
 	}
 
-	// Default password to the new key; override when admin sets a new password.
-	passwordToSet := newStaffKey
-	if req.NewPassword != nil && *req.NewPassword != "" {
-		passwordToSet = *req.NewPassword
+	if req.NewPassword != nil && strings.TrimSpace(*req.NewPassword) != "" {
+		if err := ValidateAccountPassword(*req.NewPassword, newStaffKey); err != nil {
+			return "", err
+		}
+		hashedPassword, err := hashPassword(strings.TrimSpace(*req.NewPassword))
+		if err != nil {
+			return "", fmt.Errorf("password hashing failed: %w", err)
+		}
+		updateMap["password_hash"] = hashedPassword
 	}
-	hashedPassword, err := hashPassword(passwordToSet)
-	if err != nil {
-		return "", fmt.Errorf("password hashing failed: %w", err)
-	}
-	updateMap["password_hash"] = hashedPassword
 
 	if err := s.db.Model(user).Updates(updateMap).Error; err != nil {
 		return "", fmt.Errorf("failed to regenerate staff key: %w", err)
 	}
 
 	logMsg := fmt.Sprintf("✅ Staff key regenerated for user: %s", userID)
-	if req.NewPassword != nil && *req.NewPassword != "" {
+	if req.NewPassword != nil && strings.TrimSpace(*req.NewPassword) != "" {
 		logMsg += " (password also updated)"
 	}
 	log.Printf("%s", logMsg)
