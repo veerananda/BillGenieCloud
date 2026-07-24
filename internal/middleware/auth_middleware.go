@@ -122,24 +122,36 @@ func ErrorHandling() gin.HandlerFunc {
 	}
 }
 
-// CORSMiddleware handles CORS
+// CORSMiddleware handles CORS against an explicit origin allowlist.
+// Wildcard (*) is only tolerated outside production (validated at config load);
+// when used, credentials are never enabled.
 func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
+	allowAll := false
+	exact := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		if o == "*" {
+			allowAll = true
+			continue
+		}
+		exact[o] = struct{}{}
+	}
+
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		allowed := false
 
-		for _, o := range allowedOrigins {
-			if o == "*" || o == origin {
-				allowed = true
-				break
-			}
-		}
-
-		if allowed {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
-			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		if allowAll {
+			// Non-production wildcard: echo * without credentials.
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Platform-Api-Key, X-Platform-Actor")
+		} else if origin != "" {
+			if _, ok := exact[origin]; ok {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+				c.Writer.Header().Set("Vary", "Origin")
+				c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Platform-Api-Key, X-Platform-Actor")
+			}
 		}
 
 		if c.Request.Method == "OPTIONS" {
@@ -149,6 +161,19 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// OriginAllowed reports whether origin is on the CORS allowlist (used by WebSocket CheckOrigin).
+func OriginAllowed(origin string, allowedOrigins []string) bool {
+	if origin == "" {
+		return true // non-browser clients (native apps) often omit Origin
+	}
+	for _, o := range allowedOrigins {
+		if o == "*" || o == origin {
+			return true
+		}
+	}
+	return false
 }
 
 // LoggingMiddleware logs all requests

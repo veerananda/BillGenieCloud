@@ -104,17 +104,19 @@ func main() {
 	handlers.SetupWebhookRoutes(router, db)
 	handlers.SetupPlatformRoutes(router, db)
 
-	// WebSocket route with authentication (token via query param for WebSocket compatibility)
+	// WebSocket route — prefer Sec-WebSocket-Protocol; temporary ?token= fallback
 	authService := services.NewAuthService(db, cfg.JWTSecret)
+	handlers.ConfigureWebSocketOrigins(cfg.CORSAllowedOrigins)
 	router.GET("/ws", func(c *gin.Context) {
-		// Get token from query parameter
-		token := c.Query("token")
+		token, viaQuery := handlers.ExtractWebSocketToken(c.Request)
 		if token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
 			return
 		}
+		if viaQuery {
+			log.Printf("⚠️  WebSocket auth via query token (deprecated) from %s", c.ClientIP())
+		}
 
-		// Validate token
 		claims, err := authService.ValidateToken(token)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
@@ -131,7 +133,6 @@ func main() {
 			return
 		}
 
-		// Set context values for WebSocket handler
 		c.Set("user_id", claims.UserID)
 		c.Set("restaurant_id", claims.RestaurantID)
 		c.Set("role", claims.Role)
