@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"restaurant-api/internal/services"
 
@@ -124,6 +125,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	BroadcastSessionRevoked(authResponse.RestaurantID, authResponse.UserID)
 
+	setRefreshTokenCookie(c, authResponse.RefreshToken, int((7 * 24 * time.Hour).Seconds()))
 	c.JSON(http.StatusOK, authResponse)
 }
 
@@ -143,6 +145,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
+	clearRefreshTokenCookie(c)
 	c.JSON(http.StatusOK, gin.H{"message": "logged out"})
 }
 
@@ -196,25 +199,28 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 // @Router /auth/refresh [post]
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	var req struct {
-		RefreshToken string `json:"refresh_token" binding:"required"`
+		RefreshToken string `json:"refresh_token"`
 	}
+	// Body is optional when the httpOnly refresh cookie is present (web).
+	_ = c.ShouldBindJSON(&req)
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Printf("❌ Binding error: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	refreshToken := readRefreshToken(c, req.RefreshToken)
+	if refreshToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "refresh_token is required"})
 		return
 	}
 
-	// Refresh the access token
-	authResponse, err := h.authService.RefreshAccessToken(req.RefreshToken)
+	authResponse, err := h.authService.RefreshAccessToken(refreshToken)
 	if err != nil {
 		log.Printf("❌ Token refresh failed: %v", err)
+		clearRefreshTokenCookie(c)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
 
 	log.Printf("✅ Access token refreshed successfully")
 
+	setRefreshTokenCookie(c, authResponse.RefreshToken, int((7 * 24 * time.Hour).Seconds()))
 	c.JSON(http.StatusOK, authResponse)
 }
 
@@ -261,14 +267,15 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	_, err := h.authService.ForgotPassword(req.Identifier)
 	if err != nil {
 		log.Printf("❌ Forgot password error: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		if isAuthIdentifierFormatError(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// Avoid account enumeration: always return the same success message.
 	}
 
-	log.Printf("✅ Password reset request processed for identifier: %s", req.Identifier)
-
 	c.JSON(http.StatusOK, gin.H{
-		"message": "A password reset link has been sent to your registered email.",
+		"message": "If an account exists for that email or phone, a password reset link has been sent.",
 	})
 }
 
@@ -331,12 +338,15 @@ func (h *AuthHandler) ForgotLoginID(c *gin.Context) {
 
 	if err := h.authService.RequestLoginRecovery(req.Identifier); err != nil {
 		log.Printf("❌ Forgot login ID error: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		if isAuthIdentifierFormatError(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// Avoid account enumeration.
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "A verification code has been sent to your registered email",
+		"message": "If an account exists for that email or phone, a verification code has been sent.",
 	})
 }
 
@@ -456,4 +466,25 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "If that restaurant email is registered, a verification link has been sent",
 	})
+}
+
+// isAuthIdentifierFormatError reports client input/format mistakes that are safe to return
+// verbatim (not account-existence signals).
+func isAuthIdentifierFormatError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "required"):
+		return true
+	case strings.Contains(msg, "use your registered email"):
+		return true
+	case strings.Contains(msg, "valid email or phone"):
+		return true
+	case strings.Contains(msg, "login number"):
+		return true
+	default:
+		return false
+	}
 }
