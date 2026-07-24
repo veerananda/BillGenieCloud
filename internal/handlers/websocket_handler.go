@@ -473,15 +473,22 @@ func BroadcastCheckoutEvent(hub *WebSocketHub, restaurantID, eventType string, d
 }
 
 // BroadcastMenuUpdate notifies clients that the menu changed.
+// Cost price is cleared so non-admin WS clients never receive margin data.
 func BroadcastMenuUpdate(hub *WebSocketHub, restaurantID, action string, item *models.MenuItem, menuItemID string) {
 	if action == "" {
 		return
 	}
 	_ = hub
+	var safeItem *models.MenuItem
+	if item != nil {
+		copy := *item
+		copy.CostPrice = 0
+		safeItem = &copy
+	}
 	data := models.MenuEventData{
 		Action:     action,
 		MenuItemID: menuItemID,
-		MenuItem:   item,
+		MenuItem:   safeItem,
 	}
 	if action == "deleted" && menuItemID == "" && item != nil {
 		data.MenuItemID = item.ID

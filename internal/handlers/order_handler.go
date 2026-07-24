@@ -296,18 +296,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 		// Include menu item details if available
 		if item.MenuItem != nil {
-			itemResp.MenuItem = map[string]interface{}{
-				"id":            item.MenuItem.ID,
-				"name":          item.MenuItem.Name,
-				"description":   item.MenuItem.Description,
-				"price":         item.MenuItem.Price,
-				"cost_price":    item.MenuItem.CostPrice,
-				"is_veg":        item.MenuItem.IsVeg,
-				"is_vegetarian": item.MenuItem.IsVeg, // Alias for compatibility
-				"is_available":  item.MenuItem.IsAvailable,
-				"category":      item.MenuItem.Category,
-				"restaurant_id": item.MenuItem.RestaurantID,
-			}
+			itemResp.MenuItem = orderMenuItemPayload(item.MenuItem, canViewCostPrice(c))
 		}
 
 		items = append(items, itemResp)
@@ -517,18 +506,7 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 
 			// Include menu item details if available
 			if item.MenuItem != nil {
-				itemResp.MenuItem = map[string]interface{}{
-					"id":            item.MenuItem.ID,
-					"name":          item.MenuItem.Name,
-					"description":   item.MenuItem.Description,
-					"price":         item.MenuItem.Price,
-					"cost_price":    item.MenuItem.CostPrice,
-					"is_veg":        item.MenuItem.IsVeg,
-					"is_vegetarian": item.MenuItem.IsVeg, // Alias for compatibility
-					"is_available":  item.MenuItem.IsAvailable,
-					"category":      item.MenuItem.Category,
-					"restaurant_id": item.MenuItem.RestaurantID,
-				}
+				itemResp.MenuItem = orderMenuItemPayload(item.MenuItem, canViewCostPrice(c))
 			}
 
 			items = append(items, itemResp)
@@ -741,18 +719,7 @@ func (h *OrderHandler) ListOrderHistory(c *gin.Context) {
 				CreatedAt:    item.CreatedAt,
 			}
 			if item.MenuItem != nil {
-				itemResp.MenuItem = map[string]interface{}{
-					"id":            item.MenuItem.ID,
-					"name":          item.MenuItem.Name,
-					"description":   item.MenuItem.Description,
-					"price":         item.MenuItem.Price,
-					"cost_price":    item.MenuItem.CostPrice,
-					"is_veg":        item.MenuItem.IsVeg,
-					"is_vegetarian": item.MenuItem.IsVeg,
-					"is_available":  item.MenuItem.IsAvailable,
-					"category":      item.MenuItem.Category,
-					"restaurant_id": item.MenuItem.RestaurantID,
-				}
+				itemResp.MenuItem = orderMenuItemPayload(item.MenuItem, canViewCostPrice(c))
 			}
 			items = append(items, itemResp)
 		}
@@ -889,7 +856,7 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	log.Printf("   Payment Data: Method=%s, Received=%.2f, Change=%.2f", input.PaymentMethod, input.AmountReceived, input.ChangeReturned)
+	log.Printf("   Payment Data: Method=%s, Received=[redacted], Change=[redacted]", input.PaymentMethod)
 
 	// Validate payment method
 	if input.PaymentMethod != "cash" && input.PaymentMethod != "upi" && input.PaymentMethod != "split" {

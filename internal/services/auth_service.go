@@ -3,7 +3,6 @@ package services
 import (
 	"errors"
 	"fmt"
-	"math/rand"
 	"net/smtp"
 	"os"
 	"regexp"
@@ -24,8 +23,9 @@ var (
 )
 
 type AuthService struct {
-	db        *gorm.DB
-	jwtSecret string
+	db               *gorm.DB
+	jwtSecret        string
+	refreshJWTSecret string
 }
 
 type TokenClaims struct {
@@ -68,11 +68,16 @@ type LoginRequest struct {
 	Password   string `json:"password" validate:"required"`
 }
 
-// NewAuthService creates a new auth service
-func NewAuthService(db *gorm.DB, jwtSecret string) *AuthService {
+// NewAuthService creates a new auth service.
+// refreshJWTSecret signs refresh tokens; when empty it falls back to jwtSecret (dev only).
+func NewAuthService(db *gorm.DB, jwtSecret, refreshJWTSecret string) *AuthService {
+	if strings.TrimSpace(refreshJWTSecret) == "" {
+		refreshJWTSecret = jwtSecret
+	}
 	return &AuthService{
-		db:        db,
-		jwtSecret: jwtSecret,
+		db:               db,
+		jwtSecret:        jwtSecret,
+		refreshJWTSecret: refreshJWTSecret,
 	}
 }
 
@@ -228,15 +233,17 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 
 // SendVerificationEmail sends an email verification token
 func (s *AuthService) SendVerificationEmail(restaurantID, email string) (string, error) {
-	// Generate 32-character token
-	token := generateRandomToken(32)
+	token, err := generateRandomToken(32)
+	if err != nil {
+		return "", err
+	}
 
-	// Create email verification record (valid for 24 hours)
+	// Create email verification record (valid for 24 hours); store hash only.
 	verification := &models.EmailVerification{
 		ID:           uuid.New().String(),
 		RestaurantID: restaurantID,
 		Email:        email,
-		Token:        token,
+		Token:        hashSecret(token),
 		ExpiresAt:    time.Now().Add(24 * time.Hour),
 		IsUsed:       false,
 	}
@@ -266,31 +273,26 @@ func (s *AuthService) SendVerificationEmail(restaurantID, email string) (string,
 
 // VerifyEmail verifies an email with the provided token
 func (s *AuthService) VerifyEmail(token string) error {
-	// Find verification record
-	var verification models.EmailVerification
-	if err := s.db.Where("token = ?", token).First(&verification).Error; err != nil {
+	verification, err := findEmailVerificationByRaw(s.db, token)
+	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return errors.New("invalid verification token")
 		}
 		return err
 	}
 
-	// Check if token is already used
 	if verification.IsUsed {
 		return errors.New("verification token already used")
 	}
 
-	// Check if token has expired
 	if time.Now().After(verification.ExpiresAt) {
 		return errors.New("verification token has expired")
 	}
 
-	// Mark token as used
-	if err := s.db.Model(&verification).Update("is_used", true).Error; err != nil {
+	if err := s.db.Model(verification).Update("is_used", true).Error; err != nil {
 		return err
 	}
 
-	// Mark restaurant email as verified
 	if err := s.db.Model(&models.Restaurant{}).Where("id = ?", verification.RestaurantID).Update("is_email_verified", true).Error; err != nil {
 		return err
 	}
@@ -479,15 +481,15 @@ func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(s.jwtSecret))
+	tokenString, err := token.SignedString([]byte(s.refreshJWTSecret))
 	if err != nil {
 		return "", err
 	}
 
-	// Store in database
+	// Store hashed token at rest (client still receives the raw JWT).
 	refreshToken := &models.RefreshToken{
 		UserID:    user.ID,
-		Token:     tokenString,
+		Token:     hashSecret(tokenString),
 		ExpiresAt: expirationTime,
 	}
 
@@ -500,17 +502,19 @@ func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
 
 // RefreshAccessToken validates refresh token and returns new access token
 func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse, error) {
-	// Validate refresh token
-	claims, err := s.ValidateToken(refreshTokenStr)
+	claims, err := s.ValidateRefreshToken(refreshTokenStr)
 	if err != nil {
 		return nil, errors.New("invalid refresh token")
 	}
 
-	// Check if refresh token exists in database and is not expired
-	var refreshToken models.RefreshToken
-	if err := s.db.Where("token = ? AND expires_at > ?", refreshTokenStr, time.Now()).First(&refreshToken).Error; err != nil {
-		return nil, errors.New("refresh token not found or expired")
+	refreshToken, err := findRefreshTokenByRaw(s.db, refreshTokenStr)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("refresh token not found or expired")
+		}
+		return nil, err
 	}
+	_ = refreshToken
 
 	// Get user
 	var user models.User
@@ -535,24 +539,28 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 	// Keep the previous token valid briefly so concurrent in-flight requests
 	// that still use the old JWT are not treated as a foreign-device login.
 	graceUntil := time.Now().Add(60 * time.Second)
+	prevStored := activeSession.AccessToken
+	if !looksLikeSHA256Hex(prevStored) && prevStored != "" {
+		prevStored = hashSecret(prevStored)
+	}
 	if err := s.db.Model(&activeSession).Updates(map[string]interface{}{
-		"previous_access_token":             activeSession.AccessToken,
+		"previous_access_token":             prevStored,
 		"previous_access_token_valid_until": graceUntil,
-		"access_token":                      newAccessToken,
+		"access_token":                      hashSecret(newAccessToken),
 		"last_activity":                     time.Now(),
 	}).Error; err != nil {
 		return nil, fmt.Errorf("failed to update session: %w", err)
 	}
 
 	return &AuthResponse{
-		AccessToken:     newAccessToken,
-		RefreshToken:    refreshTokenStr,
-		ExpiresIn:       3600, // 1 hour
-		TokenType:       "Bearer",
-		RestaurantID:    user.RestaurantID,
-		UserID:          user.ID,
-		Role:            user.Role,
-		Name:            user.Name,
+		AccessToken:          newAccessToken,
+		RefreshToken:         refreshTokenStr,
+		ExpiresIn:            3600, // 1 hour
+		TokenType:            "Bearer",
+		RestaurantID:         user.RestaurantID,
+		UserID:               user.ID,
+		Role:                 user.Role,
+		Name:                 user.Name,
 		CanCancelOrders:      user.CanCancelOrders,
 		CanRestockInventory:  user.CanRestockInventory,
 		MenuManagementAccess: user.MenuManagementAccess,
@@ -571,7 +579,7 @@ func (s *AuthService) GetUserByID(userID string) (*models.User, error) {
 	return &user, nil
 }
 
-// ValidateToken validates and parses JWT token
+// ValidateToken validates and parses an access JWT token
 func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 	claims := &TokenClaims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
@@ -592,26 +600,58 @@ func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 	return claims, nil
 }
 
+// ValidateRefreshToken validates a refresh JWT.
+// Prefer REFRESH_JWT_SECRET; briefly accept tokens signed with the access secret (pre-rotation).
+func (s *AuthService) ValidateRefreshToken(tokenString string) (*TokenClaims, error) {
+	parseWith := func(secret string) (*TokenClaims, error) {
+		claims := &TokenClaims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			if token.Method == nil || token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return []byte(secret), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !token.Valid {
+			return nil, errors.New("invalid token")
+		}
+		return claims, nil
+	}
+
+	claims, err := parseWith(s.refreshJWTSecret)
+	if err == nil {
+		return claims, nil
+	}
+	if s.refreshJWTSecret != s.jwtSecret {
+		if legacy, legacyErr := parseWith(s.jwtSecret); legacyErr == nil {
+			return legacy, nil
+		}
+	}
+	return nil, err
+}
+
 // ValidateUserSession checks if a user has an active session matching the access token.
 // After a refresh, the previous access token remains valid for a short grace window
 // so in-flight requests are not mistaken for a login from another device.
 func (s *AuthService) ValidateUserSession(userID string, accessToken string) (bool, error) {
-	var session models.UserSession
-
-	if err := s.db.Where("user_id = ? AND access_token = ? AND is_active = true", userID, accessToken).First(&session).Error; err == nil {
-		return true, nil
-	} else if err != gorm.ErrRecordNotFound {
+	var sessions []models.UserSession
+	if err := s.db.Where("user_id = ? AND is_active = true", userID).Find(&sessions).Error; err != nil {
 		return false, err
 	}
 
 	now := time.Now()
-	if err := s.db.Where(
-		"user_id = ? AND previous_access_token = ? AND is_active = true AND previous_access_token_valid_until > ?",
-		userID, accessToken, now,
-	).First(&session).Error; err == nil {
-		return true, nil
-	} else if err != gorm.ErrRecordNotFound {
-		return false, err
+	for _, session := range sessions {
+		if sessionTokenMatches(session.AccessToken, accessToken) {
+			return true, nil
+		}
+		if session.PreviousAccessToken != "" &&
+			session.PreviousAccessTokenValidUntil != nil &&
+			session.PreviousAccessTokenValidUntil.After(now) &&
+			sessionTokenMatches(session.PreviousAccessToken, accessToken) {
+			return true, nil
+		}
 	}
 
 	return false, errors.New("session invalidated. Another device has logged in with your account")
@@ -646,24 +686,27 @@ func (s *AuthService) RevokeRestaurantSessionsExceptCurrent(
 	}
 
 	revokedUsers := make(map[string]struct{})
+	keepSessionIDs := make(map[string]struct{})
 	for _, session := range sessions {
-		if session.UserID == keepUserID && session.AccessToken == keepAccessToken {
+		if session.UserID == keepUserID && sessionTokenMatches(session.AccessToken, keepAccessToken) {
+			keepSessionIDs[session.ID] = struct{}{}
 			continue
 		}
 		revokedUsers[session.UserID] = struct{}{}
 	}
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		q := tx.Model(&models.UserSession{}).
-			Where("restaurant_id = ? AND is_active = true", restaurantID)
-		if keepAccessToken != "" {
-			q = q.Where("access_token <> ?", keepAccessToken)
-		}
-		if err := q.Update("is_active", false).Error; err != nil {
-			return err
+		for _, session := range sessions {
+			if _, keep := keepSessionIDs[session.ID]; keep {
+				continue
+			}
+			if err := tx.Model(&models.UserSession{}).
+				Where("id = ?", session.ID).
+				Update("is_active", false).Error; err != nil {
+				return err
+			}
 		}
 
-		// Drop refresh tokens for every user in the restaurant except keep-user (they re-auth next).
 		var userIDs []string
 		if err := tx.Model(&models.User{}).
 			Where("restaurant_id = ?", restaurantID).
@@ -672,15 +715,12 @@ func (s *AuthService) RevokeRestaurantSessionsExceptCurrent(
 		}
 		for _, uid := range userIDs {
 			if uid == keepUserID {
-				// Still wipe other devices' refresh tokens for this admin by deleting all then...
-				// Simpler: delete all refresh tokens for restaurant users; current access JWT still works until expiry.
 				continue
 			}
 			if err := tx.Where("user_id = ?", uid).Delete(&models.RefreshToken{}).Error; err != nil {
 				return err
 			}
 		}
-		// Also clear refresh tokens for keep user so only the current access session remains usable for refresh.
 		if err := tx.Where("user_id = ?", keepUserID).Delete(&models.RefreshToken{}).Error; err != nil {
 			return err
 		}
@@ -720,7 +760,7 @@ func (s *AuthService) CreateUserSession(user *models.User, accessToken string) e
 		ID:                            uuid.New().String(),
 		UserID:                        user.ID,
 		RestaurantID:                  user.RestaurantID,
-		AccessToken:                   accessToken,
+		AccessToken:                   hashSecret(accessToken),
 		PreviousAccessToken:           "",
 		PreviousAccessTokenValidUntil: nil,
 		IsActive:                      true,
@@ -731,10 +771,19 @@ func (s *AuthService) CreateUserSession(user *models.User, accessToken string) e
 // LogoutUser deactivates the current session and refresh tokens for the user.
 func (s *AuthService) LogoutUser(userID string, accessToken string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.UserSession{}).
-			Where("user_id = ? AND access_token = ? AND is_active = true", userID, accessToken).
-			Update("is_active", false).Error; err != nil {
+		var sessions []models.UserSession
+		if err := tx.Where("user_id = ? AND is_active = true", userID).Find(&sessions).Error; err != nil {
 			return err
+		}
+		for _, session := range sessions {
+			if !sessionTokenMatches(session.AccessToken, accessToken) {
+				continue
+			}
+			if err := tx.Model(&models.UserSession{}).
+				Where("id = ?", session.ID).
+				Update("is_active", false).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Where("user_id = ?", userID).Delete(&models.RefreshToken{}).Error; err != nil {
 			return err
@@ -770,8 +819,11 @@ func generateRestaurantCode(restaurantName string) string {
 	}
 
 	// Add 2 random digits
-	randomSuffix := rand.Intn(100) // 00-99
-	code := cleaned + fmt.Sprintf("%02d", randomSuffix)
+	n, err := generateNumericOTP(2)
+	if err != nil {
+		n = "00"
+	}
+	code := cleaned + n
 
 	// Ensure minimum length of 6
 	if len(code) < 6 {
@@ -793,14 +845,12 @@ func normalizePhone(phone string) string {
 
 // generateStaffKey creates a globally unique staff key (e.g., SK_8F4K9P2Q1R)
 func generateStaffKey() string {
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	key := "SK_" // Staff Key prefix
-
-	for i := 0; i < 10; i++ {
-		key += string(charset[rand.Intn(len(charset))])
+	suffix, err := generateSecureStaffKeySuffix(10)
+	if err != nil {
+		// Extremely unlikely; fall back to UUID fragment rather than weak PRNG.
+		return "SK_" + strings.ToUpper(strings.ReplaceAll(uuid.New().String(), "-", "")[:10])
 	}
-
-	return key
+	return "SK_" + suffix
 }
 
 // ForgotPassword generates a password reset token and emails the reset link.
@@ -855,14 +905,15 @@ func (s *AuthService) ForgotPassword(identifier string) (string, error) {
 		return "", errors.New("your email is not verified yet. Check your inbox for the verification link sent during registration")
 	}
 
-	// Generate reset token (32-character random string)
-	resetToken := generateRandomToken(32)
+	resetToken, err := generateRandomToken(32)
+	if err != nil {
+		return "", err
+	}
 
-	// Create password reset record (valid for 1 hour)
 	passwordReset := &models.PasswordReset{
 		UserID:    user.ID,
 		Email:     user.Email,
-		Token:     resetToken,
+		Token:     hashSecret(resetToken),
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 		IsUsed:    false,
 	}
@@ -898,9 +949,9 @@ func (s *AuthService) ResetPassword(token string, newPassword string) error {
 		return err
 	}
 
-	// Find valid, unused reset token
-	var passwordReset models.PasswordReset
-	if err := s.db.Where("token = ? AND is_used = false AND expires_at > ?", token, time.Now()).First(&passwordReset).Error; err != nil {
+	// Find valid, unused reset token (hash with plaintext dual-read).
+	passwordReset, err := findPasswordResetByRaw(s.db, token)
+	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return errors.New("invalid or expired reset token")
 		}
@@ -954,7 +1005,10 @@ func (s *AuthService) RequestLoginRecovery(identifier string) error {
 		return errors.New("no email on file for this account. Contact support")
 	}
 
-	otp := generateNumericOTP(6)
+	otp, err := generateNumericOTP(6)
+	if err != nil {
+		return err
+	}
 
 	if err := s.db.Model(&models.LoginRecoveryOTP{}).
 		Where("user_id = ? AND is_used = false", user.ID).
@@ -965,7 +1019,7 @@ func (s *AuthService) RequestLoginRecovery(identifier string) error {
 	recovery := &models.LoginRecoveryOTP{
 		UserID:     user.ID,
 		Identifier: strings.TrimSpace(identifier),
-		OTP:        otp,
+		OTP:        hashSecret(otp),
 		ExpiresAt:  time.Now().Add(loginRecoveryOTPExpiry),
 		IsUsed:     false,
 		Attempts:   0,
@@ -1021,7 +1075,7 @@ func (s *AuthService) VerifyLoginRecovery(identifier, otp string) (string, error
 		return "", errors.New("too many failed attempts. Request a new code")
 	}
 
-	if recovery.OTP != otp {
+	if !sessionTokenMatches(recovery.OTP, otp) {
 		s.db.Model(&recovery).Update("attempts", recovery.Attempts+1)
 		return "", errors.New("invalid verification code")
 	}
@@ -1082,24 +1136,6 @@ func (s *AuthService) findAdminByRecoveryIdentifier(identifier string) (*models.
 	}
 
 	return &user, nil
-}
-
-func generateNumericOTP(length int) string {
-	const digits = "0123456789"
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = digits[rand.Intn(len(digits))]
-	}
-	return string(b)
-}
-
-func generateRandomToken(length int) string {
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
-	}
-	return string(b)
 }
 
 // publicAppBaseURL is the HTTPS base for links in emails (reset password, verify email).

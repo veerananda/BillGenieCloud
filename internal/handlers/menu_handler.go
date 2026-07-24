@@ -212,7 +212,7 @@ func (h *MenuHandler) GetMenuItems(c *gin.Context) {
 	log.Printf("✅ Menu items retrieved: %d items", len(items))
 
 	c.JSON(http.StatusOK, gin.H{
-		"menu_items": items,
+		"menu_items": menuItemsForResponse(items, canViewCostPrice(c)),
 		"total":      total,
 		"limit":      limit,
 		"offset":     offset,
@@ -258,7 +258,7 @@ func (h *MenuHandler) GetMenuItem(c *gin.Context) {
 	log.Printf("✅ Menu item retrieved: %s", item.Name)
 
 	c.JSON(http.StatusOK, gin.H{
-		"menu_item": item,
+		"menu_item": menuItemForResponse(item, canViewCostPrice(c)),
 	})
 }
 

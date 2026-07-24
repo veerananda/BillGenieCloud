@@ -74,7 +74,7 @@ func main() {
 	// Initialize WebSocket hub
 	wsHub := handlers.NewWebSocketHub()
 	handlers.SetGlobalHub(wsHub)
-	handlers.SetJWTSecret(cfg.JWTSecret)
+	handlers.SetJWTSecrets(cfg.JWTSecret, cfg.RefreshJWTSecret)
 	eventBridge := realtime.NewEventBridge(wsHub)
 	handlers.SetEventPublisher(eventBridge)
 	go wsHub.Run()
@@ -105,7 +105,7 @@ func main() {
 	handlers.SetupPlatformRoutes(router, db)
 
 	// WebSocket route — prefer Sec-WebSocket-Protocol; temporary ?token= fallback
-	authService := services.NewAuthService(db, cfg.JWTSecret)
+	authService := services.NewAuthService(db, cfg.JWTSecret, cfg.RefreshJWTSecret)
 	handlers.ConfigureWebSocketOrigins(cfg.CORSAllowedOrigins)
 	router.GET("/ws", func(c *gin.Context) {
 		token, viaQuery := handlers.ExtractWebSocketToken(c.Request)
