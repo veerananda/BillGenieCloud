@@ -106,6 +106,14 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Println("✅ AddIsApproved migration completed")
 	}
 
+	// Drop misnamed UNIQUE constraints on assistance_token before AutoMigrate.
+	// Otherwise GORM tries DROP CONSTRAINT uni_restaurant_tables_assistance_token
+	// and fatals when that name does not exist (SQLSTATE 42704).
+	if err := migrations.FixAssistanceTokenUniqueConstraint(db); err != nil {
+		log.Fatalf("❌ FixAssistanceTokenUniqueConstraint failed: %v", err)
+	}
+	log.Println("✅ FixAssistanceTokenUniqueConstraint migration completed")
+
 	// Now run AutoMigrate on all models
 	err := db.AutoMigrate(
 		&models.User{},
