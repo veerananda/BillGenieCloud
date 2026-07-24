@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -47,10 +48,12 @@ var upgrader = websocket.Upgrader{
 var wsAllowedOrigins []string
 
 // ConfigureWebSocketOrigins restricts browser WS Origin to the CORS allowlist.
+// React Native / Expo often set Origin to the API host itself (not a web app origin);
+// those are allowed when the Origin host matches the request Host. JWT auth still applies.
 func ConfigureWebSocketOrigins(allowedOrigins []string) {
 	wsAllowedOrigins = append([]string(nil), allowedOrigins...)
 	upgrader.CheckOrigin = func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin == "" {
 			return true // native / non-browser clients
 		}
@@ -59,9 +62,26 @@ func ConfigureWebSocketOrigins(allowedOrigins []string) {
 				return true
 			}
 		}
+		if originMatchesRequestHost(r, origin) {
+			return true
+		}
 		log.Printf("❌ WebSocket origin rejected: %s", origin)
 		return false
 	}
+}
+
+func originMatchesRequestHost(r *http.Request, origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	reqHost := r.Host
+	if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); fwd != "" {
+		// Fly / proxies may forward the public host separately.
+		reqHost = strings.Split(fwd, ",")[0]
+		reqHost = strings.TrimSpace(reqHost)
+	}
+	return strings.EqualFold(u.Host, reqHost)
 }
 
 // ExtractWebSocketToken prefers Sec-WebSocket-Protocol (billgenie,<jwt>); falls back to ?token=.
