@@ -76,11 +76,39 @@ func (h *PrintHandler) UpdatePrintSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	isManager := role == "admin" || role == "manager"
 	// Only admin/manager may flip master enable toggles.
-	if role != "admin" && role != "manager" {
+	if !isManager {
 		input.BillPrintingEnabled = nil
 		input.KotPrintingEnabled = nil
 	}
+
+	current, err := h.printService.GetOrCreateSettings(restaurantID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Staff/chef may only write hosts when the matching print feature is enabled.
+	if !isManager {
+		if !current.KotPrintingEnabled {
+			input.KotPrinterHost = nil
+			input.KotPrinterPort = nil
+		}
+		if !current.BillPrintingEnabled {
+			input.BillPrinterHost = nil
+			input.BillPrinterPort = nil
+		}
+		if input.KotPrinterHost == nil && input.KotPrinterPort == nil &&
+			input.BillPrinterHost == nil && input.BillPrinterPort == nil {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "printing is disabled — ask an admin or manager to enable KOT or bill printing first",
+			})
+			return
+		}
+	}
+
 	settings, err := h.printService.UpdateSettings(restaurantID.(string), input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
