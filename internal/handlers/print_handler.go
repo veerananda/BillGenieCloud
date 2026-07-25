@@ -30,8 +30,9 @@ func SetupPrintRoutes(router *gin.Engine, db *gorm.DB) {
 	restaurant.Use(middleware.AuthMiddleware(authService))
 	restaurant.Use(withSubscription(db))
 	{
-		restaurant.GET("/print-settings", middleware.RoleMiddleware("admin", "manager"), h.GetPrintSettings)
-		restaurant.PUT("/print-settings", middleware.RoleMiddleware("admin", "manager"), h.UpdatePrintSettings)
+		// All restaurant roles can read settings; staff/chef configure hosts when printing is enabled.
+		restaurant.GET("/print-settings", middleware.RoleMiddleware("admin", "manager", "staff", "chef"), h.GetPrintSettings)
+		restaurant.PUT("/print-settings", middleware.RoleMiddleware("admin", "manager", "staff", "chef"), h.UpdatePrintSettings)
 		restaurant.POST("/print-settings/rotate-agent-key", middleware.RoleMiddleware("admin"), h.RotateAgentKey)
 	}
 
@@ -68,10 +69,17 @@ func (h *PrintHandler) GetPrintSettings(c *gin.Context) {
 
 func (h *PrintHandler) UpdatePrintSettings(c *gin.Context) {
 	restaurantID, _ := c.Get("restaurant_id")
+	roleVal, _ := c.Get("role")
+	role, _ := roleVal.(string)
 	var input services.UpdatePrintSettingsInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	// Only admin/manager may flip master enable toggles.
+	if role != "admin" && role != "manager" {
+		input.BillPrintingEnabled = nil
+		input.KotPrintingEnabled = nil
 	}
 	settings, err := h.printService.UpdateSettings(restaurantID.(string), input)
 	if err != nil {

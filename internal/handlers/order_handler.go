@@ -951,9 +951,8 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 		}
 	}
 
-	if h.printService != nil {
-		h.printService.EnqueueBillForOrder(order)
-	}
+	// Bills are not auto-printed on payment — only via POST /orders/:id/print-bill
+	// when staff tap Print bill (see PrintHandler.EnqueueBillPrint).
 
 	if order.OrderType == "counter" && order.TrackingToken != "" {
 		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
