@@ -19,15 +19,22 @@ type OrderHandler struct {
 	orderService *services.OrderService
 	checkoutLock *services.CheckoutLockService
 	authService  *services.AuthService
+	printService *services.PrintService
 	validator    *validator.Validate
 }
 
 // NewOrderHandler creates a new order handler
-func NewOrderHandler(orderService *services.OrderService, checkoutLock *services.CheckoutLockService, authService *services.AuthService) *OrderHandler {
+func NewOrderHandler(
+	orderService *services.OrderService,
+	checkoutLock *services.CheckoutLockService,
+	authService *services.AuthService,
+	printService *services.PrintService,
+) *OrderHandler {
 	return &OrderHandler{
 		orderService: orderService,
 		checkoutLock: checkoutLock,
 		authService:  authService,
+		printService: printService,
 		validator:    validator.New(),
 	}
 }
@@ -109,6 +116,10 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	if globalHub != nil {
 		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_created", order)
 		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), updatedIngredients)
+	}
+
+	if h.printService != nil {
+		h.printService.EnqueueKOTForOrder(order, false)
 	}
 
 	tableIDValue := ""
@@ -389,6 +400,10 @@ func (h *OrderHandler) UpdateOrder(c *gin.Context) {
 	if globalHub != nil {
 		BroadcastOrderEvent(globalHub, restaurantID.(string), "order_updated", order)
 		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), updatedIngredients)
+	}
+
+	if h.printService != nil {
+		h.printService.EnqueueKOTForOrder(order, true)
 	}
 
 	tableIDValue := ""
@@ -934,6 +949,10 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 				CurrentOrderID: nil,
 			})
 		}
+	}
+
+	if h.printService != nil {
+		h.printService.EnqueueBillForOrder(order)
 	}
 
 	if order.OrderType == "counter" && order.TrackingToken != "" {

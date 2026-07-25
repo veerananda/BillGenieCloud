@@ -796,3 +796,55 @@ func (si *SupportIssue) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+// RestaurantPrintSettings holds LAN printer targets and enable flags for the on-site print agent.
+type RestaurantPrintSettings struct {
+	RestaurantID         string    `gorm:"primaryKey" json:"restaurant_id"`
+	BillPrinterHost      string    `json:"bill_printer_host" gorm:"type:varchar(255)"` // IP or hostname (LAN ESC/POS)
+	BillPrinterPort      int       `json:"bill_printer_port" gorm:"default:9100"`
+	KotPrinterHost       string    `json:"kot_printer_host" gorm:"type:varchar(255)"`
+	KotPrinterPort       int       `json:"kot_printer_port" gorm:"default:9100"`
+	BillPrintingEnabled  bool      `json:"bill_printing_enabled" gorm:"default:false"`
+	KotPrintingEnabled   bool      `json:"kot_printing_enabled" gorm:"default:false"`
+	AgentAPIKeyHash      string    `json:"-" gorm:"type:varchar(64);index"`
+	AgentAPIKeyHint      string    `json:"agent_api_key_hint,omitempty" gorm:"type:varchar(12)"` // last 4 chars for UI
+	CreatedAt            time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt            time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+func (RestaurantPrintSettings) TableName() string {
+	return "restaurant_print_settings"
+}
+
+// PrintJob is a queued ESC/POS text slip for the on-site print agent.
+type PrintJob struct {
+	ID           string     `gorm:"primaryKey" json:"id"`
+	RestaurantID string     `json:"restaurant_id" gorm:"index;not null"`
+	OrderID      string     `json:"order_id" gorm:"index"`
+	JobType      string     `json:"job_type" gorm:"type:varchar(16);not null"` // kot | bill
+	Target       string     `json:"target" gorm:"type:varchar(16);not null"`   // kot_printer | bill_printer
+	PayloadText  string     `json:"payload_text" gorm:"type:text;not null"`
+	Status       string     `json:"status" gorm:"type:varchar(16);default:pending;index"` // pending|claimed|done|failed
+	ClaimedBy    string     `json:"claimed_by,omitempty" gorm:"type:varchar(120)"`
+	ClaimedAt    *time.Time `json:"claimed_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage string     `json:"error_message,omitempty" gorm:"type:text"`
+	Attempts     int        `json:"attempts" gorm:"default:0"`
+	CreatedAt    time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt    time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+func (PrintJob) TableName() string {
+	return "print_jobs"
+}
+
+func (j *PrintJob) BeforeCreate(tx *gorm.DB) error {
+	if j.ID == "" {
+		j.ID = uuid.New().String()
+	}
+	if j.Status == "" {
+		j.Status = "pending"
+	}
+	return nil
+}
+

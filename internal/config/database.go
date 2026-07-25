@@ -138,6 +138,8 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.SubscriptionRenewal{},
 		&models.TrialEligibility{},
 		&models.SupportIssue{},
+		&models.RestaurantPrintSettings{},
+		&models.PrintJob{},
 	)
 
 	if err != nil {
