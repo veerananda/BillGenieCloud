@@ -1,4 +1,6 @@
-// Print agent: polls BillGenieCloud for queued KOT/bill jobs and prints over LAN ESC/POS (TCP :9100).
+// Print agent: polls BillGenieCloud for queued KOT/bill jobs and prints over
+// LAN ESC/POS (TCP :9100) or Bluetooth-classic printers exposed as serial ports
+// (Windows COM after OS pairing, or /dev/cu.* on macOS/Linux).
 //
 // Usage:
 //
@@ -17,9 +19,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
+
+	"go.bug.st/serial"
 )
 
 type claimResponse struct {
@@ -35,6 +40,11 @@ type printJob struct {
 	PrinterPort int    `json:"printer_port"`
 }
 
+var (
+	comPortRe   = regexp.MustCompile(`(?i)^COM\d+$`)
+	serialDevRe = regexp.MustCompile(`(?i)^(/dev/|\\\\\.\\)`)
+)
+
 func main() {
 	apiURL := strings.TrimRight(os.Getenv("BILLGENIE_API_URL"), "/")
 	agentKey := strings.TrimSpace(os.Getenv("BILLGENIE_PRINT_AGENT_KEY"))
@@ -49,6 +59,7 @@ func main() {
 	}
 
 	log.Printf("Print agent starting → %s (agent_id=%s)", apiURL, agentID)
+	log.Printf("Supports TCP (LAN/Wi-Fi) and serial/Bluetooth COM ports (e.g. COM5, serial:COM5)")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -96,7 +107,8 @@ func pollOnce(apiURL, agentKey, agentID string) error {
 		return err
 	}
 	for _, job := range claimed.Jobs {
-		log.Printf("printing %s job %s → %s:%d", job.JobType, job.ID, job.PrinterHost, job.PrinterPort)
+		target := describePrintTarget(job.PrinterHost, job.PrinterPort)
+		log.Printf("printing %s job %s → %s", job.JobType, job.ID, target)
 		if err := printESCPOS(job.PrinterHost, job.PrinterPort, job.PayloadText); err != nil {
 			log.Printf("print failed: %v", err)
 			_ = reportJob(apiURL, agentKey, job.ID, true, err.Error())
@@ -131,11 +143,64 @@ func reportJob(apiURL, agentKey, jobID string, failed bool, errMsg string) error
 	return nil
 }
 
-// printESCPOS sends plain text with init + cut to a LAN thermal printer.
+func describePrintTarget(host string, port int) string {
+	if portName, ok := serialPortName(host); ok {
+		return "serial:" + portName
+	}
+	if port <= 0 {
+		port = 9100
+	}
+	return fmt.Sprintf("%s:%d", host, port)
+}
+
+// serialPortName returns a serial device path when host is a Bluetooth/serial target.
+// Accepted forms: COM5, serial:COM5, bt:COM5, /dev/cu.Printer, \\.\COM5
+func serialPortName(host string) (string, bool) {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return "", false
+	}
+	lower := strings.ToLower(h)
+	for _, prefix := range []string{"serial:", "bt:", "bluetooth:"} {
+		if strings.HasPrefix(lower, prefix) {
+			h = strings.TrimSpace(h[len(prefix):])
+			lower = strings.ToLower(h)
+			break
+		}
+	}
+	if comPortRe.MatchString(h) {
+		return strings.ToUpper(h), true
+	}
+	if serialDevRe.MatchString(h) {
+		return h, true
+	}
+	return "", false
+}
+
+func buildESCPOSPayload(text string) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0x1b, 0x40}) // ESC @ init
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	buf.WriteString(normalized)
+	if !strings.HasSuffix(normalized, "\n") {
+		buf.WriteByte('\n')
+	}
+	buf.Write([]byte{0x1d, 0x56, 0x00}) // GS V 0 full cut
+	return buf.Bytes()
+}
+
+// printESCPOS sends plain text with init + cut to a LAN or serial/Bluetooth printer.
 func printESCPOS(host string, port int, text string) error {
 	if host == "" {
 		return fmt.Errorf("empty printer host")
 	}
+	payload := buildESCPOSPayload(text)
+
+	if portName, ok := serialPortName(host); ok {
+		return printESCPOSSerial(portName, payload)
+	}
+
 	if port <= 0 {
 		port = 9100
 	}
@@ -146,17 +211,37 @@ func printESCPOS(host string, port int, text string) error {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
-
-	var buf bytes.Buffer
-	buf.Write([]byte{0x1b, 0x40}) // ESC @ init
-	normalized := strings.ReplaceAll(text, "\r\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\r", "\n")
-	buf.WriteString(normalized)
-	if !strings.HasSuffix(normalized, "\n") {
-		buf.WriteByte('\n')
-	}
-	buf.Write([]byte{0x1d, 0x56, 0x00}) // GS V 0 full cut
-
-	_, err = conn.Write(buf.Bytes())
+	_, err = conn.Write(payload)
 	return err
+}
+
+func printESCPOSSerial(portName string, payload []byte) error {
+	mode := &serial.Mode{
+		BaudRate: 9600,
+		DataBits: 8,
+		Parity:   serial.NoParity,
+		StopBits: serial.OneStopBit,
+	}
+	port, err := serial.Open(portName, mode)
+	if err != nil {
+		// Some BT SPP printers prefer 115200.
+		mode.BaudRate = 115200
+		port, err = serial.Open(portName, mode)
+		if err != nil {
+			return fmt.Errorf("open serial %s: %w (pair the Bluetooth printer in Windows and use its COM port)", portName, err)
+		}
+	}
+	defer port.Close()
+	_ = port.SetReadTimeout(2 * time.Second)
+
+	n, err := port.Write(payload)
+	if err != nil {
+		return fmt.Errorf("write serial %s: %w", portName, err)
+	}
+	if n < len(payload) {
+		return fmt.Errorf("short write to %s: %d/%d bytes", portName, n, len(payload))
+	}
+	// Give the printer a moment to finish before closing the RFCOMM link.
+	time.Sleep(300 * time.Millisecond)
+	return nil
 }
