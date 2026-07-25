@@ -401,6 +401,18 @@ func (s *PrintService) CompleteJob(restaurantID, jobID string, failed bool, errM
 	}).Error
 }
 
+// printItemNameAndCategory returns the menu item name and its category for slips.
+func printItemNameAndCategory(it models.OrderItem) (name, category string) {
+	if it.MenuItem != nil {
+		name = strings.TrimSpace(it.MenuItem.Name)
+		category = strings.TrimSpace(it.MenuItem.Category)
+	}
+	if name == "" {
+		name = "Item"
+	}
+	return name, category
+}
+
 func buildKOTPayload(restaurantName string, order *models.Order, items []models.OrderItem, isAddOn bool) string {
 	var b strings.Builder
 	divider := "--------------------------------"
@@ -436,17 +448,14 @@ func buildKOTPayload(restaurantName string, order *models.Order, items []models.
 	b.WriteString(divider)
 	b.WriteByte('\n')
 	for _, it := range items {
-		name := ""
-		if it.MenuItem != nil {
-			name = it.MenuItem.Name
-		}
-		if name == "" {
-			name = "Item"
-		}
+		name, category := printItemNameAndCategory(it)
 		if it.VariantLabel != "" && !strings.EqualFold(it.VariantLabel, "regular") {
 			name = fmt.Sprintf("%s (%s)", name, it.VariantLabel)
 		}
 		b.WriteString(fmt.Sprintf("%d x %s\n", it.Quantity, name))
+		if category != "" {
+			b.WriteString(fmt.Sprintf("   [%s]\n", category))
+		}
 		if notes := strings.TrimSpace(it.Notes); notes != "" {
 			b.WriteString(fmt.Sprintf("   * %s\n", notes))
 		}
@@ -496,13 +505,7 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteString(divider)
 	b.WriteByte('\n')
 	for _, it := range items {
-		name := ""
-		if it.MenuItem != nil {
-			name = it.MenuItem.Name
-		}
-		if name == "" {
-			name = "Item"
-		}
+		name, category := printItemNameAndCategory(it)
 		if it.VariantLabel != "" && !strings.EqualFold(it.VariantLabel, "regular") {
 			name = fmt.Sprintf("%s (%s)", name, it.VariantLabel)
 		}
@@ -511,6 +514,9 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 			lineTotal = it.UnitRate * float64(it.Quantity)
 		}
 		b.WriteString(fmt.Sprintf("%d x %s\n", it.Quantity, name))
+		if category != "" {
+			b.WriteString(fmt.Sprintf("   [%s]\n", category))
+		}
 		b.WriteString(fmt.Sprintf("   Rs %.2f\n", lineTotal))
 	}
 	b.WriteString(divider)
