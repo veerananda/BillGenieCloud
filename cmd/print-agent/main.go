@@ -32,12 +32,14 @@ type claimResponse struct {
 }
 
 type printJob struct {
-	ID          string `json:"id"`
-	JobType     string `json:"job_type"`
-	Target      string `json:"target"`
-	PayloadText string `json:"payload_text"`
-	PrinterHost string `json:"printer_host"`
-	PrinterPort int    `json:"printer_port"`
+	ID              string `json:"id"`
+	JobType         string `json:"job_type"`
+	Target          string `json:"target"`
+	PayloadText     string `json:"payload_text"`
+	PrinterHost     string `json:"printer_host"`
+	PrinterPort     int    `json:"printer_port"`
+	TopFeedLines    int    `json:"top_feed_lines"`
+	BottomFeedLines int    `json:"bottom_feed_lines"`
 }
 
 var (
@@ -109,7 +111,7 @@ func pollOnce(apiURL, agentKey, agentID string) error {
 	for _, job := range claimed.Jobs {
 		target := describePrintTarget(job.PrinterHost, job.PrinterPort)
 		log.Printf("printing %s job %s → %s", job.JobType, job.ID, target)
-		if err := printESCPOS(job.PrinterHost, job.PrinterPort, job.PayloadText); err != nil {
+		if err := printESCPOS(job.PrinterHost, job.PrinterPort, job.PayloadText, job.TopFeedLines, job.BottomFeedLines); err != nil {
 			log.Printf("print failed: %v", err)
 			_ = reportJob(apiURL, agentKey, job.ID, true, err.Error())
 			continue
@@ -177,25 +179,45 @@ func serialPortName(host string) (string, bool) {
 	return "", false
 }
 
-func buildESCPOSPayload(text string) []byte {
+func clampFeed(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > 20 {
+		return 20
+	}
+	return n
+}
+
+func buildESCPOSPayload(text string, topFeed, bottomFeed int) []byte {
+	topFeed = clampFeed(topFeed)
+	bottomFeed = clampFeed(bottomFeed)
 	var buf bytes.Buffer
 	buf.Write([]byte{0x1b, 0x40}) // ESC @ init
+	if topFeed > 0 {
+		buf.WriteString(strings.Repeat("\n", topFeed))
+	}
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
 	normalized = strings.ReplaceAll(normalized, "\r", "\n")
 	buf.WriteString(normalized)
 	if !strings.HasSuffix(normalized, "\n") {
 		buf.WriteByte('\n')
 	}
-	buf.Write([]byte{0x1d, 0x56, 0x00}) // GS V 0 full cut
+	// Advance paper past the print head before cutting (thermal head sits above cutter).
+	if bottomFeed > 0 {
+		buf.WriteString(strings.Repeat("\n", bottomFeed))
+	}
+	// GS V 1 = partial cut — safer on many 58mm models than full cut (GS V 0).
+	buf.Write([]byte{0x1d, 0x56, 0x01})
 	return buf.Bytes()
 }
 
 // printESCPOS sends plain text with init + cut to a LAN or serial/Bluetooth printer.
-func printESCPOS(host string, port int, text string) error {
+func printESCPOS(host string, port int, text string, topFeed, bottomFeed int) error {
 	if host == "" {
 		return fmt.Errorf("empty printer host")
 	}
-	payload := buildESCPOSPayload(text)
+	payload := buildESCPOSPayload(text, topFeed, bottomFeed)
 
 	if portName, ok := serialPortName(host); ok {
 		return printESCPOSSerial(portName, payload)
