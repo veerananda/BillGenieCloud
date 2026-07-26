@@ -46,6 +46,8 @@ func (s *PrintService) GetOrCreateSettings(restaurantID string) (*models.Restaur
 		RestaurantID:    restaurantID,
 		BillPrinterPort: 9100,
 		KotPrinterPort:  9100,
+		TopFeedLines:    0,
+		BottomFeedLines: 3,
 	}
 	if err := s.db.Create(&settings).Error; err != nil {
 		return nil, err
@@ -60,6 +62,18 @@ type UpdatePrintSettingsInput struct {
 	KotPrinterPort      *int    `json:"kot_printer_port"`
 	BillPrintingEnabled *bool   `json:"bill_printing_enabled"`
 	KotPrintingEnabled  *bool   `json:"kot_printing_enabled"`
+	TopFeedLines        *int    `json:"top_feed_lines"`
+	BottomFeedLines     *int    `json:"bottom_feed_lines"`
+}
+
+func clampFeedLines(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > 20 {
+		return 20
+	}
+	return n
 }
 
 func (s *PrintService) UpdateSettings(restaurantID string, input UpdatePrintSettingsInput) (*models.RestaurantPrintSettings, error) {
@@ -93,6 +107,12 @@ func (s *PrintService) UpdateSettings(restaurantID string, input UpdatePrintSett
 	}
 	if input.KotPrintingEnabled != nil {
 		updates["kot_printing_enabled"] = *input.KotPrintingEnabled
+	}
+	if input.TopFeedLines != nil {
+		updates["top_feed_lines"] = clampFeedLines(*input.TopFeedLines)
+	}
+	if input.BottomFeedLines != nil {
+		updates["bottom_feed_lines"] = clampFeedLines(*input.BottomFeedLines)
 	}
 	if len(updates) == 0 {
 		return settings, nil
@@ -305,13 +325,15 @@ func (s *PrintService) LoadOrderForEnqueue(restaurantID, orderID string) (*model
 }
 
 type AgentJobView struct {
-	ID          string `json:"id"`
-	JobType     string `json:"job_type"`
-	Target      string `json:"target"`
-	PayloadText string `json:"payload_text"`
-	PrinterHost string `json:"printer_host"`
-	PrinterPort int    `json:"printer_port"`
-	CreatedAt   string `json:"created_at"`
+	ID              string `json:"id"`
+	JobType         string `json:"job_type"`
+	Target          string `json:"target"`
+	PayloadText     string `json:"payload_text"`
+	PrinterHost     string `json:"printer_host"`
+	PrinterPort     int    `json:"printer_port"`
+	TopFeedLines    int    `json:"top_feed_lines"`
+	BottomFeedLines int    `json:"bottom_feed_lines"`
+	CreatedAt       string `json:"created_at"`
 }
 
 func (s *PrintService) ClaimPendingJobs(restaurantID, agentID string, limit int) ([]AgentJobView, error) {
@@ -355,13 +377,15 @@ func (s *PrintService) ClaimPendingJobs(restaurantID, agentID string, limit int)
 				return err
 			}
 			claimed = append(claimed, AgentJobView{
-				ID:          job.ID,
-				JobType:     job.JobType,
-				Target:      job.Target,
-				PayloadText: job.PayloadText,
-				PrinterHost: host,
-				PrinterPort: port,
-				CreatedAt:   job.CreatedAt.UTC().Format(time.RFC3339),
+				ID:              job.ID,
+				JobType:         job.JobType,
+				Target:          job.Target,
+				PayloadText:     job.PayloadText,
+				PrinterHost:     host,
+				PrinterPort:     port,
+				TopFeedLines:    settings.TopFeedLines,
+				BottomFeedLines: settings.BottomFeedLines,
+				CreatedAt:       job.CreatedAt.UTC().Format(time.RFC3339),
 			})
 		}
 		return nil

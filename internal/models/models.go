@@ -800,12 +800,14 @@ func (si *SupportIssue) BeforeCreate(tx *gorm.DB) error {
 // RestaurantPrintSettings holds LAN printer targets and enable flags for the on-site print agent.
 type RestaurantPrintSettings struct {
 	RestaurantID         string    `gorm:"primaryKey" json:"restaurant_id"`
-	BillPrinterHost      string    `json:"bill_printer_host" gorm:"type:varchar(255)"` // IP or hostname (LAN ESC/POS)
+	BillPrinterHost      string    `json:"bill_printer_host" gorm:"type:varchar(255)"` // IP, hostname, or COM/serial for BT
 	BillPrinterPort      int       `json:"bill_printer_port" gorm:"default:9100"`
 	KotPrinterHost       string    `json:"kot_printer_host" gorm:"type:varchar(255)"`
 	KotPrinterPort       int       `json:"kot_printer_port" gorm:"default:9100"`
 	BillPrintingEnabled  bool      `json:"bill_printing_enabled" gorm:"default:false"`
 	KotPrintingEnabled   bool      `json:"kot_printing_enabled" gorm:"default:false"`
+	TopFeedLines         int       `json:"top_feed_lines" gorm:"default:0"`    // blank lines before slip content
+	BottomFeedLines      int       `json:"bottom_feed_lines" gorm:"default:3"` // blank lines before cutter
 	AgentAPIKeyHash      string    `json:"-" gorm:"type:varchar(64);index"`
 	AgentAPIKeyHint      string    `json:"agent_api_key_hint,omitempty" gorm:"type:varchar(12)"` // last 4 chars for UI
 	CreatedAt            time.Time `json:"created_at" gorm:"autoCreateTime"`

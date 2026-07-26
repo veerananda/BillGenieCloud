@@ -78,10 +78,12 @@ func (h *PrintHandler) UpdatePrintSettings(c *gin.Context) {
 	}
 
 	isManager := role == "admin" || role == "manager"
-	// Only admin/manager may flip master enable toggles.
+	// Only admin/manager may flip master enable toggles or paper feed.
 	if !isManager {
 		input.BillPrintingEnabled = nil
 		input.KotPrintingEnabled = nil
+		input.TopFeedLines = nil
+		input.BottomFeedLines = nil
 	}
 
 	current, err := h.printService.GetOrCreateSettings(restaurantID.(string))
