@@ -21,6 +21,8 @@ go.work
 .env
 .env.local
 .env.*.local
+.env.production
+.env.production.local
 scripts/fly-secrets.env
 
 # IDE
