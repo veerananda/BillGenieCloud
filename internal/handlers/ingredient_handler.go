@@ -452,13 +452,15 @@ func (h *IngredientHandler) BulkUpdateIngredients(c *gin.Context) {
 	})
 }
 
-// DeleteIngredient deletes an ingredient
+// DeleteIngredient deletes an inventory ingredient only when it is not used in any dish recipe.
+// If it is still linked via menu_item_ingredients, returns 409 and refuses deletion.
 // @Summary Delete ingredient
-// @Description Remove ingredient from inventory
+// @Description Remove ingredient from inventory when unused in recipes
 // @Security ApiKeyAuth
 // @Produce json
 // @Param ingredient_id path string true "Ingredient ID"
 // @Success 200 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
 // @Router /ingredients/:ingredient_id [delete]
 func (h *IngredientHandler) DeleteIngredient(c *gin.Context) {
 	restaurantID, exists := c.Get("restaurant_id")
@@ -468,15 +470,69 @@ func (h *IngredientHandler) DeleteIngredient(c *gin.Context) {
 	}
 
 	ingredientID := c.Param("ingredient_id")
+	rid := restaurantID.(string)
 
-	if err := h.db.Where("restaurant_id = ? AND ingredient_id = ?", restaurantID, ingredientID).
-		Delete(&models.MenuItemIngredient{}).Error; err != nil {
-		log.Printf("❌ Failed to remove recipe lines for ingredient: %v", err)
+	var recipeLines []models.MenuItemIngredient
+	if err := h.db.Where("restaurant_id = ? AND ingredient_id = ?", rid, ingredientID).
+		Find(&recipeLines).Error; err != nil {
+		log.Printf("❌ Failed to check recipe usage for ingredient: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	result := h.db.Where("id = ? AND restaurant_id = ?", ingredientID, restaurantID).
+	if len(recipeLines) > 0 {
+		menuIDs := make([]string, 0, len(recipeLines))
+		seen := map[string]struct{}{}
+		for _, line := range recipeLines {
+			if line.MenuItemID == "" {
+				continue
+			}
+			if _, ok := seen[line.MenuItemID]; ok {
+				continue
+			}
+			seen[line.MenuItemID] = struct{}{}
+			menuIDs = append(menuIDs, line.MenuItemID)
+		}
+
+		var menuItems []models.MenuItem
+		if len(menuIDs) > 0 {
+			_ = h.db.Select("id, name").
+				Where("restaurant_id = ? AND id IN ?", rid, menuIDs).
+				Find(&menuItems).Error
+		}
+		nameByID := make(map[string]string, len(menuItems))
+		for _, m := range menuItems {
+			nameByID[m.ID] = m.Name
+		}
+
+		dishes := make([]gin.H, 0, len(menuIDs))
+		dishNames := make([]string, 0, len(menuIDs))
+		for _, id := range menuIDs {
+			name := nameByID[id]
+			if name == "" {
+				name = "Unknown dish"
+			}
+			dishes = append(dishes, gin.H{"id": id, "name": name})
+			dishNames = append(dishNames, name)
+		}
+
+		msg := "Item used in another recipe. Remove it from Ingredient Management first, then delete from Inventory."
+		if len(dishNames) == 1 {
+			msg = "Item used in another recipe (" + dishNames[0] + "). Remove it from Ingredient Management first, then delete from Inventory."
+		} else if len(dishNames) > 1 {
+			msg = "Item used in another recipe. Used in: " + strings.Join(dishNames, ", ") + ". Remove it from Ingredient Management first, then delete from Inventory."
+		}
+
+		c.JSON(http.StatusConflict, gin.H{
+			"error":         msg,
+			"code":          "ingredient_in_use",
+			"used_in_count": len(menuIDs),
+			"dishes":        dishes,
+		})
+		return
+	}
+
+	result := h.db.Where("id = ? AND restaurant_id = ?", ingredientID, rid).
 		Delete(&models.Ingredient{})
 
 	if result.Error != nil {
@@ -490,7 +546,7 @@ func (h *IngredientHandler) DeleteIngredient(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ Ingredient deleted: %s", ingredientID)
+	log.Printf("✅ Ingredient deleted (unused in recipes): %s", ingredientID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Ingredient deleted successfully",
