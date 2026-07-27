@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -590,8 +591,26 @@ func (h *OrderHandler) GetSalesSummary(c *gin.Context) {
 	}
 
 	period := c.DefaultQuery("period", "today")
-	summary, err := h.orderService.GetSalesSummary(restaurantID.(string), period)
+	orderType := c.DefaultQuery("order_type", "all")
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+
+	if period == "range" || fromStr != "" || toStr != "" {
+		if err := h.clampSalesRangeQuery(c, restaurantID.(string), &fromStr, &toStr); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if period != "range" && (fromStr != "" || toStr != "") {
+			period = "range"
+		}
+	}
+
+	summary, err := h.orderService.GetSalesSummary(restaurantID.(string), period, orderType, fromStr, toStr)
 	if err != nil {
+		if strings.Contains(err.Error(), "period must") || strings.Contains(err.Error(), "date range") || strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "to must") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -607,10 +626,24 @@ func (h *OrderHandler) GetSalesAnalytics(c *gin.Context) {
 		return
 	}
 
-	period := c.DefaultQuery("period", "week")
-	analytics, err := h.orderService.GetSalesAnalytics(restaurantID.(string), period)
+	period := c.DefaultQuery("period", "this_month")
+	orderType := c.DefaultQuery("order_type", "all")
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+
+	if period == "range" || fromStr != "" || toStr != "" {
+		if err := h.clampSalesRangeQuery(c, restaurantID.(string), &fromStr, &toStr); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if period != "range" && (fromStr != "" || toStr != "") {
+			period = "range"
+		}
+	}
+
+	analytics, err := h.orderService.GetSalesAnalytics(restaurantID.(string), period, orderType, fromStr, toStr)
 	if err != nil {
-		if err.Error() == "period must be week, last_week, or month" {
+		if strings.Contains(err.Error(), "period must") || strings.Contains(err.Error(), "date range") || strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "to must") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -619,6 +652,34 @@ func (h *OrderHandler) GetSalesAnalytics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, analytics)
+}
+
+func (h *OrderHandler) clampSalesRangeQuery(c *gin.Context, restaurantID string, fromStr, toStr *string) error {
+	if *fromStr == "" || *toStr == "" {
+		return fmt.Errorf("from and to are required for a custom date range")
+	}
+	from, _, err := services.ParseHistoryDateRange(*fromStr, *toStr)
+	if err != nil {
+		return err
+	}
+	var restaurant models.Restaurant
+	if err := h.orderService.GetDB().Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		return fmt.Errorf("failed to load restaurant")
+	}
+	limits, err := services.LoadSubscriptionLimits(h.orderService.GetDB(), &restaurant)
+	if err != nil {
+		return fmt.Errorf("failed to load subscription")
+	}
+	// Cap sales lookback at 1 year even when extended history is enabled.
+	maxDays := limits.HistoryDays
+	if maxDays > 365 {
+		maxDays = 365
+	}
+	capped := services.SubscriptionLimits{HistoryDays: maxDays}
+	clamped := services.ClampHistoryFrom(capped, from)
+	*fromStr = clamped.In(services.RestaurantLocation()).Format("2006-01-02")
+	_ = c
+	return nil
 }
 
 // ListOrderHistory returns completed/paid orders for a date range (order history).

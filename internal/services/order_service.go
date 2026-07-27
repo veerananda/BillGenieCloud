@@ -1061,18 +1061,15 @@ func (s *OrderService) ListOrdersSummary(restaurantID string, status string, lim
 	return summaries, count, nil
 }
 
-// GetSalesSummary aggregates completed orders for today or this month.
-func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*SalesSummary, error) {
-	now := time.Now().In(RestaurantLocation())
-	var start time.Time
-	label := "today"
-	switch period {
-	case "month":
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		label = "month"
-	default:
-		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+// GetSalesSummary aggregates completed orders for a sales period (and optional channel filter).
+// period: today | this_month | last_month | current_quarter | last_quarter | range
+// orderType: all | dine_in | counter
+func (s *OrderService) GetSalesSummary(restaurantID, period, orderType, fromStr, toStr string) (*SalesSummary, error) {
+	window, err := ResolveSalesPeriodWindow(period, fromStr, toStr)
+	if err != nil {
+		return nil, err
 	}
+	orderType = normalizeSalesOrderType(orderType)
 
 	type agg struct {
 		TotalOrders  int64
@@ -1080,10 +1077,11 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 	}
 
 	applySalesWindow := func(db *gorm.DB) *gorm.DB {
-		return db.Model(&models.Order{}).
+		q := db.Model(&models.Order{}).
 			Where("restaurant_id = ?", restaurantID).
 			Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
-			Where(historyActivityAtSQL+" >= ?", start)
+			Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", window.From, window.ToEnd)
+		return applySalesOrderTypeFilter(q, orderType)
 	}
 
 	var total agg
@@ -1094,19 +1092,23 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 	}
 
 	var dineIn agg
-	if err := applySalesWindow(s.db).
-		Where("NOT (" + isLegacyCounterOrderClause() + ")").
-		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
-		Scan(&dineIn).Error; err != nil {
-		return nil, err
+	if orderType == "all" || orderType == "dine_in" {
+		if err := applySalesWindow(s.db).
+			Where("NOT (" + isLegacyCounterOrderClause() + ")").
+			Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+			Scan(&dineIn).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	var counter agg
-	if err := applySalesWindow(s.db).
-		Where(isLegacyCounterOrderClause()).
-		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
-		Scan(&counter).Error; err != nil {
-		return nil, err
+	if orderType == "all" || orderType == "counter" {
+		if err := applySalesWindow(s.db).
+			Where(isLegacyCounterOrderClause()).
+			Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+			Scan(&counter).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	avg := float64(0)
@@ -1118,7 +1120,7 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 		TotalOrders:       total.TotalOrders,
 		TotalRevenue:      total.TotalRevenue,
 		AverageOrderValue: avg,
-		Period:            label,
+		Period:            window.Label,
 		DineInOrders:      dineIn.TotalOrders,
 		DineInRevenue:     dineIn.TotalRevenue,
 		CounterOrders:     counter.TotalOrders,
@@ -1126,54 +1128,157 @@ func (s *OrderService) GetSalesSummary(restaurantID string, period string) (*Sal
 	}, nil
 }
 
-// GetSalesAnalytics returns daily sales, previous-period comparison, and top-selling items.
-// period must be "week", "last_week", or "month".
-func (s *OrderService) GetSalesAnalytics(restaurantID string, period string) (*SalesAnalytics, error) {
+// SalesPeriodWindow is a resolved [From, ToEnd) window for sales queries.
+type SalesPeriodWindow struct {
+	Label          string
+	From           time.Time
+	ToEnd          time.Time
+	PreviousFrom   time.Time
+	PreviousToEnd  time.Time
+}
+
+func normalizeSalesOrderType(orderType string) string {
+	switch strings.TrimSpace(strings.ToLower(orderType)) {
+	case "dine_in", "counter":
+		return strings.TrimSpace(strings.ToLower(orderType))
+	default:
+		return "all"
+	}
+}
+
+func applySalesOrderTypeFilter(query *gorm.DB, orderType string) *gorm.DB {
+	switch orderType {
+	case "counter":
+		return query.Where(isLegacyCounterOrderClause())
+	case "dine_in":
+		return query.Where("NOT (" + isLegacyCounterOrderClause() + ")")
+	default:
+		return query
+	}
+}
+
+// ResolveSalesPeriodWindow maps UI period presets (and optional custom range) to timestamps.
+// Max custom/preset span is 366 days. period: today | this_month | last_month | current_quarter | last_quarter | range
+func ResolveSalesPeriodWindow(period, fromStr, toStr string) (*SalesPeriodWindow, error) {
 	loc := RestaurantLocation()
 	now := time.Now().In(loc)
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	tomorrow := todayStart.Add(24 * time.Hour)
 
-	weekday := int(now.Weekday())
-	if weekday == 0 {
-		weekday = 7 // Sunday → 7 so Monday is start of week
+	quarterStart := func(t time.Time) time.Time {
+		m := ((int(t.Month())-1)/3)*3 + 1
+		return time.Date(t.Year(), time.Month(m), 1, 0, 0, 0, 0, loc)
 	}
-	thisWeekStart := todayStart.AddDate(0, 0, -(weekday - 1))
 
-	var currentStart, currentEnd, previousStart, previousEnd time.Time
+	var from, toEnd, prevFrom, prevToEnd time.Time
 	label := period
+
 	switch period {
-	case "month":
-		currentStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
-		currentEnd = todayStart.Add(24 * time.Hour)
-		previousStart = currentStart.AddDate(0, -1, 0)
-		previousEnd = currentStart
-		label = "month"
-	case "last_week":
-		currentStart = thisWeekStart.AddDate(0, 0, -7)
-		currentEnd = thisWeekStart
-		previousStart = currentStart.AddDate(0, 0, -7)
-		previousEnd = currentStart
-		label = "last_week"
+	case "today":
+		from = todayStart
+		toEnd = tomorrow
+		prevFrom = todayStart.AddDate(0, 0, -1)
+		prevToEnd = todayStart
+		label = "today"
+	case "this_month", "month":
+		from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+		toEnd = tomorrow
+		prevFrom = from.AddDate(0, -1, 0)
+		prevToEnd = from
+		label = "this_month"
+	case "last_month":
+		thisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+		from = thisMonth.AddDate(0, -1, 0)
+		toEnd = thisMonth
+		prevFrom = from.AddDate(0, -1, 0)
+		prevToEnd = from
+		label = "last_month"
+	case "current_quarter":
+		from = quarterStart(now)
+		toEnd = tomorrow
+		prevToEnd = from
+		prevFrom = quarterStart(from.AddDate(0, -1, 0))
+		label = "current_quarter"
+	case "last_quarter":
+		thisQ := quarterStart(now)
+		from = quarterStart(thisQ.AddDate(0, -1, 0))
+		toEnd = thisQ
+		prevToEnd = from
+		prevFrom = quarterStart(from.AddDate(0, -1, 0))
+		label = "last_quarter"
+	case "range":
+		parsedFrom, parsedToEnd, err := ParseHistoryDateRange(fromStr, toStr)
+		if err != nil {
+			return nil, err
+		}
+		from = parsedFrom
+		toEnd = parsedToEnd
+		if !toEnd.After(from) {
+			return nil, errors.New("to must be on or after from")
+		}
+		span := toEnd.Sub(from)
+		if span > 366*24*time.Hour {
+			return nil, errors.New("date range cannot exceed 1 year")
+		}
+		prevToEnd = from
+		prevFrom = from.Add(-span)
+		label = "range"
 	case "week":
-		currentStart = thisWeekStart
-		currentEnd = todayStart.Add(24 * time.Hour)
-		previousStart = thisWeekStart.AddDate(0, 0, -7)
-		previousEnd = thisWeekStart
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		from = todayStart.AddDate(0, 0, -(weekday - 1))
+		toEnd = tomorrow
+		prevFrom = from.AddDate(0, 0, -7)
+		prevToEnd = from
 		label = "week"
+	case "last_week":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		thisWeek := todayStart.AddDate(0, 0, -(weekday - 1))
+		from = thisWeek.AddDate(0, 0, -7)
+		toEnd = thisWeek
+		prevFrom = from.AddDate(0, 0, -7)
+		prevToEnd = from
+		label = "last_week"
 	default:
-		return nil, errors.New("period must be week, last_week, or month")
+		return nil, errors.New("period must be today, this_month, last_month, current_quarter, last_quarter, or range")
 	}
 
-	series, err := s.dailySalesSeries(restaurantID, currentStart, currentEnd)
+	if toEnd.Sub(from) > 366*24*time.Hour {
+		return nil, errors.New("date range cannot exceed 1 year")
+	}
+
+	return &SalesPeriodWindow{
+		Label:         label,
+		From:          from,
+		ToEnd:         toEnd,
+		PreviousFrom:  prevFrom,
+		PreviousToEnd: prevToEnd,
+	}, nil
+}
+
+// GetSalesAnalytics returns daily sales, previous-period comparison, and top-selling items.
+func (s *OrderService) GetSalesAnalytics(restaurantID, period, orderType, fromStr, toStr string) (*SalesAnalytics, error) {
+	window, err := ResolveSalesPeriodWindow(period, fromStr, toStr)
+	if err != nil {
+		return nil, err
+	}
+	orderType = normalizeSalesOrderType(orderType)
+
+	series, err := s.dailySalesSeries(restaurantID, window.From, window.ToEnd, orderType)
 	if err != nil {
 		return nil, err
 	}
 
-	currentRevenue, currentOrders, err := s.salesTotals(restaurantID, currentStart, currentEnd)
+	currentRevenue, currentOrders, err := s.salesTotals(restaurantID, window.From, window.ToEnd, orderType)
 	if err != nil {
 		return nil, err
 	}
-	previousRevenue, previousOrders, err := s.salesTotals(restaurantID, previousStart, previousEnd)
+	previousRevenue, previousOrders, err := s.salesTotals(restaurantID, window.PreviousFrom, window.PreviousToEnd, orderType)
 	if err != nil {
 		return nil, err
 	}
@@ -1192,15 +1297,15 @@ func (s *OrderService) GetSalesAnalytics(restaurantID string, period string) (*S
 		direction = "down"
 	}
 
-	topItems, err := s.topSellingItems(restaurantID, currentStart, currentEnd, 10)
+	topItems, err := s.topSellingItems(restaurantID, window.From, window.ToEnd, 10, orderType)
 	if err != nil {
 		return nil, err
 	}
 
-	toInclusive := currentEnd.Add(-24 * time.Hour)
+	toInclusive := window.ToEnd.Add(-24 * time.Hour)
 	return &SalesAnalytics{
-		Period:            label,
-		From:              currentStart.Format("2006-01-02"),
+		Period:            window.Label,
+		From:              window.From.Format("2006-01-02"),
 		To:                toInclusive.Format("2006-01-02"),
 		TotalRevenue:      currentRevenue,
 		TotalOrders:       currentOrders,
@@ -1227,23 +1332,24 @@ func pctChange(current, previous float64) float64 {
 	return ((current - previous) / previous) * 100
 }
 
-func (s *OrderService) salesTotals(restaurantID string, from, toEnd time.Time) (float64, int64, error) {
+func (s *OrderService) salesTotals(restaurantID string, from, toEnd time.Time, orderType string) (float64, int64, error) {
 	var result struct {
 		TotalOrders  int64
 		TotalRevenue float64
 	}
-	err := s.db.Model(&models.Order{}).
+	q := s.db.Model(&models.Order{}).
 		Where("restaurant_id = ?", restaurantID).
 		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
-		Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", from, toEnd).
-		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+		Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", from, toEnd)
+	q = applySalesOrderTypeFilter(q, normalizeSalesOrderType(orderType))
+	err := q.Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
 		Scan(&result).Error
 	return result.TotalRevenue, result.TotalOrders, err
 }
 
 // SalesStatsForRange returns revenue, order count, AOV, and top-selling items for [from, toEnd).
 func (s *OrderService) SalesStatsForRange(restaurantID string, from, toEnd time.Time, topN int) (float64, int64, float64, []TopSellingItem, error) {
-	revenue, orders, err := s.salesTotals(restaurantID, from, toEnd)
+	revenue, orders, err := s.salesTotals(restaurantID, from, toEnd, "all")
 	if err != nil {
 		return 0, 0, 0, nil, err
 	}
@@ -1254,14 +1360,14 @@ func (s *OrderService) SalesStatsForRange(restaurantID string, from, toEnd time.
 	if topN <= 0 {
 		topN = 5
 	}
-	topItems, err := s.topSellingItems(restaurantID, from, toEnd, topN)
+	topItems, err := s.topSellingItems(restaurantID, from, toEnd, topN, "all")
 	if err != nil {
 		return 0, 0, 0, nil, err
 	}
 	return revenue, orders, avg, topItems, nil
 }
 
-func (s *OrderService) dailySalesSeries(restaurantID string, from, toEnd time.Time) ([]SalesDayPoint, error) {
+func (s *OrderService) dailySalesSeries(restaurantID string, from, toEnd time.Time, orderType string) ([]SalesDayPoint, error) {
 	loc := RestaurantLocation()
 	tz := loc.String()
 
@@ -1275,12 +1381,13 @@ func (s *OrderService) dailySalesSeries(restaurantID string, from, toEnd time.Ti
 	daySQL := fmt.Sprintf("((%s AT TIME ZONE '%s')::date)", historyActivityAtSQL, tz)
 
 	var rows []dayRow
-	err := s.db.Model(&models.Order{}).
+	q := s.db.Model(&models.Order{}).
 		Select(daySQL+" AS day, COUNT(*) AS orders, COALESCE(SUM(total), 0) AS revenue").
 		Where("restaurant_id = ?", restaurantID).
 		Where("(status = ? OR (order_type = ? AND payment_method <> ''))", "completed", "counter").
-		Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", from, toEnd).
-		Group(daySQL).
+		Where(historyActivityAtSQL+" >= ? AND "+historyActivityAtSQL+" < ?", from, toEnd)
+	q = applySalesOrderTypeFilter(q, normalizeSalesOrderType(orderType))
+	err := q.Group(daySQL).
 		Order("day ASC").
 		Scan(&rows).Error
 	if err != nil {
@@ -1297,12 +1404,15 @@ func (s *OrderService) dailySalesSeries(restaurantID string, from, toEnd time.Ti
 		byDate[key] = row
 	}
 
+	span := toEnd.Sub(from)
 	series := make([]SalesDayPoint, 0)
 	for d := from; d.Before(toEnd); d = d.AddDate(0, 0, 1) {
 		key := d.Format("2006-01-02")
 		row := byDate[key]
 		label := d.Format("Mon")
-		if toEnd.Sub(from) > 8*24*time.Hour {
+		if span > 45*24*time.Hour {
+			label = d.Format("2 Jan")
+		} else if span > 8*24*time.Hour {
 			label = d.Format("2")
 		}
 		series = append(series, SalesDayPoint{
@@ -1315,7 +1425,7 @@ func (s *OrderService) dailySalesSeries(restaurantID string, from, toEnd time.Ti
 	return series, nil
 }
 
-func (s *OrderService) topSellingItems(restaurantID string, from, toEnd time.Time, limit int) ([]TopSellingItem, error) {
+func (s *OrderService) topSellingItems(restaurantID string, from, toEnd time.Time, limit int, orderType string) ([]TopSellingItem, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -1328,14 +1438,20 @@ func (s *OrderService) topSellingItems(restaurantID string, from, toEnd time.Tim
 	}
 
 	var rows []itemRow
-	err := s.db.Table("order_items AS oi").
+	q := s.db.Table("order_items AS oi").
 		Select("COALESCE(mi.name, 'Unknown item') AS name, COALESCE(mi.category, '') AS category, COALESCE(SUM(oi.quantity), 0) AS quantity, COALESCE(SUM(oi.total), 0) AS revenue").
 		Joins("JOIN orders AS o ON o.id = oi.order_id").
 		Joins("LEFT JOIN menu_items AS mi ON mi.id = oi.menu_id").
 		Where("o.restaurant_id = ?", restaurantID).
 		Where("(o.status = ? OR (o.order_type = ? AND o.payment_method <> ''))", "completed", "counter").
-		Where("COALESCE(o.completed_at, o.created_at) >= ? AND COALESCE(o.completed_at, o.created_at) < ?", from, toEnd).
-		Group("mi.name, mi.category").
+		Where("COALESCE(o.completed_at, o.created_at) >= ? AND COALESCE(o.completed_at, o.created_at) < ?", from, toEnd)
+	switch normalizeSalesOrderType(orderType) {
+	case "counter":
+		q = q.Where(`(o.order_type = 'counter' OR o.customer_name IN ('Self Service','Takeaway','Counter') OR (o.table_id IS NOT NULL AND o.table_id LIKE 'self-service-%'))`)
+	case "dine_in":
+		q = q.Where(`NOT (o.order_type = 'counter' OR o.customer_name IN ('Self Service','Takeaway','Counter') OR (o.table_id IS NOT NULL AND o.table_id LIKE 'self-service-%'))`)
+	}
+	err := q.Group("mi.name, mi.category").
 		Order("quantity DESC, revenue DESC").
 		Limit(limit).
 		Scan(&rows).Error
