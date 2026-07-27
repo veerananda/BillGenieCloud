@@ -98,6 +98,15 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 			strings.ToUpper(escapeBillHTML(summary.PaymentMethod)))
 	}
 
+	addressLine := ""
+	if strings.TrimSpace(summary.Address) != "" {
+		addressLine = fmt.Sprintf(`<p class="meta">%s</p>`, escapeBillHTML(summary.Address))
+	}
+	contactLine := ""
+	if strings.TrimSpace(summary.ContactNumber) != "" {
+		contactLine = fmt.Sprintf(`<p class="meta">%s</p>`, escapeBillHTML(summary.ContactNumber))
+	}
+
 	meta := buildBillMetaLine(summary)
 	dateLine := formatBillDateTime(summary.CreatedAt)
 	customerLine := ""
@@ -116,6 +125,8 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
       <div class="head">
         <div class="brand">Bill Summary</div>
         <h1>%s</h1>
+        %s
+        %s
         <p class="meta">%s</p>
         %s
         %s
@@ -139,6 +150,8 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
     <!--BILL_ACTIONS-->
   </div>`,
 		escapeBillHTML(title),
+		addressLine,
+		contactLine,
 		meta,
 		dateLineHTML(dateLine),
 		customerLine+attendedLine,

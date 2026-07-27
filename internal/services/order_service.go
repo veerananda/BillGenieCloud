@@ -590,12 +590,15 @@ func (s *OrderService) CompleteOrder(restaurantID string, orderID string) (*mode
 
 // OrderPaymentDetails captures cash/UPI/split payment completion.
 type OrderPaymentDetails struct {
-	PaymentMethod     string
-	AmountReceived    float64
-	ChangeReturned    float64
-	CashAmount        float64
-	UpiAmount         float64
-	AttendedByUserID  string
+	PaymentMethod    string
+	AmountReceived   float64
+	ChangeReturned   float64
+	CashAmount       float64
+	UpiAmount        float64
+	AttendedByUserID string
+	// DiscountAmount is applied when HasDiscount is true (recalculates tax/total).
+	DiscountAmount float64
+	HasDiscount    bool
 }
 
 // CompleteOrderWithPayment completes order with payment details
@@ -630,6 +633,44 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 	}
 
 	log.Printf("🔵 [CompleteOrderWithPayment] BEFORE - Order #%d Status: %s, Total: [redacted]", order.OrderNumber, order.Status)
+
+	// Apply checkout discount and recalculate totals before payment validation.
+	if payment.HasDiscount {
+		discount := payment.DiscountAmount
+		if discount < 0 {
+			discount = 0
+		}
+		var restaurant models.Restaurant
+		if err := tx.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		var allItems []models.OrderItem
+		if err := tx.Preload("MenuItem").Where("order_id = ?", orderID).Find(&allItems).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		taxableGross, nonTaxableGross := orderItemsGrossSplit(allItems)
+		subTotal, taxAmount, total := CalculateRestaurantOrderTax(
+			taxableGross, nonTaxableGross, discount, SettingsFromRestaurant(&restaurant),
+		)
+		order.DiscountAmount = discount
+		order.BillPreviewDiscount = discount
+		order.SubTotal = subTotal
+		order.TaxAmount = taxAmount
+		order.Total = total
+		if err := tx.Model(&order).Updates(map[string]interface{}{
+			"discount_amount":       discount,
+			"bill_preview_discount": discount,
+			"sub_total":             subTotal,
+			"tax_amount":            taxAmount,
+			"total":                 total,
+			"updated_at":            time.Now(),
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
 
 	if paymentMethod == "split" {
 		if cashAmount <= 0 || upiAmount <= 0 {

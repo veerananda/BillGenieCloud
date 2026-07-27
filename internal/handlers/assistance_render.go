@@ -43,6 +43,11 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .line-name{font-weight:700}
     .line-sub{margin-top:3px;color:#64748b;font-size:.85rem}
     .line-total{font-weight:800;white-space:nowrap}
+    .totals{margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;display:none}
+    .totals.show{display:block}
+    .tot-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;color:#475569;font-size:.95rem}
+    .tot-row.discount{color:#16a34a}
+    .tot-row.total{margin-top:8px;padding-top:10px;border-top:1px solid #e2e8f0;font-size:1.1rem;font-weight:800;color:#0f172a}
     .bill{margin-top:20px;display:none}
     .bill.show{display:block}
     .bill a{display:flex;width:100%%;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;font-size:.95rem;font-weight:600;text-decoration:none;margin-top:8px}
@@ -65,6 +70,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         <h2>Bill items</h2>
         <div id="itemsList"></div>
       </div>
+      <div class="totals" id="totalsPanel"></div>
       <div class="bill" id="billPanel">
         <h2>Download bill</h2>
         <p class="sub" style="margin-bottom:0">Your bill is ready to download.</p>
@@ -79,10 +85,47 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     const note = document.getElementById('note');
     const itemsPanel = document.getElementById('itemsPanel');
     const itemsList = document.getElementById('itemsList');
+    const totalsPanel = document.getElementById('totalsPanel');
     const billPanel = document.getElementById('billPanel');
     const billDownload = document.getElementById('billDownload');
 
     function money(n){ return '₹' + Number(n||0).toFixed(2); }
+
+    function subtotalLabel(s){
+      if (s.composite_scheme) return 'Subtotal';
+      return s.prices_include_gst ? 'Subtotal (excl. GST)' : 'Subtotal';
+    }
+
+    function renderTotals(s){
+      totalsPanel.innerHTML = '';
+      if (!s.bill_available) {
+        totalsPanel.classList.remove('show');
+        return;
+      }
+      const rows = [];
+      if (Number(s.sub_total) > 0 && !s.composite_scheme) {
+        rows.push(['tot-row', subtotalLabel(s), money(s.sub_total)]);
+      }
+      if (s.show_tax && Number(s.tax_amount) > 0) {
+        rows.push(['tot-row', 'GST (5%%)', money(s.tax_amount)]);
+      }
+      if (Number(s.discount_amount) > 0) {
+        rows.push(['tot-row discount', 'Discount', '-' + money(s.discount_amount)]);
+      }
+      rows.push(['tot-row total', 'Total', money(s.order_total)]);
+      rows.forEach(([cls, label, value]) => {
+        const row = document.createElement('div');
+        row.className = cls;
+        const left = document.createElement('span');
+        left.textContent = label;
+        const right = document.createElement('span');
+        right.textContent = value;
+        row.appendChild(left);
+        row.appendChild(right);
+        totalsPanel.appendChild(row);
+      });
+      totalsPanel.classList.add('show');
+    }
 
     function render(s){
       state = s || state;
@@ -91,7 +134,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       const meta = document.getElementById('orderMeta');
       const total = document.getElementById('totalMeta');
       if (state.bill_available) {
-        meta.textContent = 'Bill ready';
+        meta.textContent = 'Bill ready — please review';
         total.textContent = money(state.order_total);
       } else if (state.has_active_order) {
         meta.textContent = 'Table session active';
@@ -148,6 +191,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       } else {
         itemsPanel.classList.remove('show');
       }
+      renderTotals(state);
       if (state.bill_available && state.bill_url) {
         billPanel.classList.add('show');
         billDownload.href = state.bill_download_url || (state.bill_url + '/download');
@@ -180,6 +224,9 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 
     render(state);
 
+    // Poll so discount/GST updates appear even if SSE is delayed.
+    const pollId = setInterval(() => { refresh(); }, 2500);
+
     if (window.EventSource) {
       const es = new EventSource('/a/' + token + '/events');
       es.onmessage = (ev) => {
@@ -188,6 +235,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       es.onerror = () => {
         // Browser reconnects automatically; keep last known UI state.
       };
+      window.addEventListener('beforeunload', () => { clearInterval(pollId); es.close(); });
     }
   </script>
 </body>

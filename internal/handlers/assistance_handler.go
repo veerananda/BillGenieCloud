@@ -88,8 +88,20 @@ func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus
 	}
 
 	if status.BillAvailable {
+		summary := services.BuildBillSummary(order, restaurant)
+		status.SubTotal = summary.SubTotal
+		status.TaxAmount = summary.TaxAmount
+		status.DiscountAmount = summary.DiscountAmount
+		status.OrderTotal = summary.Total
+		status.PricesIncludeGST = summary.PricesIncludeGST
+		status.CompositeScheme = summary.CompositeScheme
+		status.ShowTax = summary.TaxAmount > 0 && !summary.CompositeScheme
+
 		groupedItems := make(map[string]int)
 		for _, item := range order.Items {
+			if item.Status == "cancelled" {
+				continue
+			}
 			status.ItemCount += item.Quantity
 			unitRate := item.UnitRate
 			if unitRate <= 0 && item.Quantity > 0 {

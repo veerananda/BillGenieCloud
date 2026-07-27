@@ -919,12 +919,13 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 	orderID := c.Param("order_id")
 
 	var input struct {
-		PaymentMethod      string  `json:"payment_method" binding:"required"` // cash | upi | split
-		AmountReceived     float64 `json:"amount_received,omitempty"`
-		ChangeReturned     float64 `json:"change_returned,omitempty"`
-		CashAmount         float64 `json:"cash_amount,omitempty"`
-		UpiAmount          float64 `json:"upi_amount,omitempty"`
-		AttendedByUserID   string  `json:"attended_by_user_id,omitempty"`
+		PaymentMethod    string   `json:"payment_method" binding:"required"` // cash | upi | split
+		AmountReceived   float64  `json:"amount_received,omitempty"`
+		ChangeReturned   float64  `json:"change_returned,omitempty"`
+		CashAmount       float64  `json:"cash_amount,omitempty"`
+		UpiAmount        float64  `json:"upi_amount,omitempty"`
+		AttendedByUserID string   `json:"attended_by_user_id,omitempty"`
+		DiscountAmount   *float64 `json:"discount_amount,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -967,17 +968,23 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 	}
 
 	// Complete the order with payment details
+	paymentDetails := services.OrderPaymentDetails{
+		PaymentMethod:    input.PaymentMethod,
+		AmountReceived:   input.AmountReceived,
+		ChangeReturned:   input.ChangeReturned,
+		CashAmount:       input.CashAmount,
+		UpiAmount:        input.UpiAmount,
+		AttendedByUserID: attendedByUserID,
+	}
+	if input.DiscountAmount != nil {
+		paymentDetails.HasDiscount = true
+		paymentDetails.DiscountAmount = *input.DiscountAmount
+	}
+
 	order, err := h.orderService.CompleteOrderWithPayment(
 		restaurantID.(string),
 		orderID,
-		services.OrderPaymentDetails{
-			PaymentMethod:    input.PaymentMethod,
-			AmountReceived:   input.AmountReceived,
-			ChangeReturned:   input.ChangeReturned,
-			CashAmount:       input.CashAmount,
-			UpiAmount:        input.UpiAmount,
-			AttendedByUserID: attendedByUserID,
-		},
+		paymentDetails,
 	)
 
 	if err != nil {
@@ -1024,14 +1031,17 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 	resp := gin.H{
 		"message": "Order completed successfully",
 		"order": gin.H{
-			"id":              order.ID,
-			"order_number":    order.OrderNumber,
-			"status":          order.Status,
-			"total":           order.Total,
-			"payment_method":  order.PaymentMethod,
-			"amount_received": order.AmountReceived,
-			"change_returned": order.ChangeReturned,
-			"cash_amount":     order.CashAmount,
+			"id":                  order.ID,
+			"order_number":        order.OrderNumber,
+			"status":              order.Status,
+			"sub_total":           order.SubTotal,
+			"tax_amount":          order.TaxAmount,
+			"discount_amount":     order.DiscountAmount,
+			"total":               order.Total,
+			"payment_method":      order.PaymentMethod,
+			"amount_received":     order.AmountReceived,
+			"change_returned":     order.ChangeReturned,
+			"cash_amount":         order.CashAmount,
 			"upi_amount":          order.UpiAmount,
 			"attended_by_user_id": order.AttendedByUserID,
 			"attended_by_name":    services.AttendedByName(order),
@@ -1586,6 +1596,8 @@ func (h *OrderHandler) CreateBillShare(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	NotifyAssistanceUpdateByOrder(h.orderService.GetDB(), h.orderService, order)
 
 	c.JSON(http.StatusOK, gin.H{
 		"bill_token": order.BillToken,
