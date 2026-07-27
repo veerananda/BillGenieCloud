@@ -962,6 +962,9 @@ type SalesSummary struct {
 	DineInRevenue     float64 `json:"dine_in_revenue"`
 	CounterOrders     int64   `json:"counter_orders"`
 	CounterRevenue    float64 `json:"counter_revenue"`
+	TotalGST          float64 `json:"total_gst"`
+	CashAmount        float64 `json:"cash_amount"`
+	UpiAmount         float64 `json:"upi_amount"`
 }
 
 // SalesDayPoint is one day's revenue in a sales chart series.
@@ -1119,6 +1122,9 @@ func (s *OrderService) GetSalesSummary(restaurantID, period, orderType, fromStr,
 	type agg struct {
 		TotalOrders  int64
 		TotalRevenue float64
+		TotalGST     float64
+		CashAmount   float64
+		UpiAmount    float64
 	}
 
 	applySalesWindow := func(db *gorm.DB) *gorm.DB {
@@ -1129,9 +1135,24 @@ func (s *OrderService) GetSalesSummary(restaurantID, period, orderType, fromStr,
 		return applySalesOrderTypeFilter(q, orderType)
 	}
 
+	paymentSelect := `
+		COUNT(*) AS total_orders,
+		COALESCE(SUM(total), 0) AS total_revenue,
+		COALESCE(SUM(tax_amount), 0) AS total_gst,
+		COALESCE(SUM(CASE
+			WHEN LOWER(payment_method) = 'cash' THEN total
+			WHEN LOWER(payment_method) = 'split' THEN cash_amount
+			ELSE 0
+		END), 0) AS cash_amount,
+		COALESCE(SUM(CASE
+			WHEN LOWER(payment_method) = 'upi' THEN total
+			WHEN LOWER(payment_method) = 'split' THEN upi_amount
+			ELSE 0
+		END), 0) AS upi_amount`
+
 	var total agg
 	if err := applySalesWindow(s.db).
-		Select("COUNT(*) AS total_orders, COALESCE(SUM(total), 0) AS total_revenue").
+		Select(paymentSelect).
 		Scan(&total).Error; err != nil {
 		return nil, err
 	}
@@ -1170,6 +1191,9 @@ func (s *OrderService) GetSalesSummary(restaurantID, period, orderType, fromStr,
 		DineInRevenue:     dineIn.TotalRevenue,
 		CounterOrders:     counter.TotalOrders,
 		CounterRevenue:    counter.TotalRevenue,
+		TotalGST:          total.TotalGST,
+		CashAmount:        total.CashAmount,
+		UpiAmount:         total.UpiAmount,
 	}, nil
 }
 
