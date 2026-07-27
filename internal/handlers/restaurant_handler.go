@@ -76,6 +76,7 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"subscription_selection":     selection,
 		"subscription_limits":        limits,
 		"subscription_usage":         usage,
+		"created_at":                 restaurant.CreatedAt,
 	})
 }
 
