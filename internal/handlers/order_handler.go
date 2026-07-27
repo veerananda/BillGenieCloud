@@ -337,6 +337,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			"change_returned": order.ChangeReturned,
 			"cash_amount":     order.CashAmount,
 			"upi_amount":           order.UpiAmount,
+			"upi_transaction_id":   order.UpiTransactionID,
 			"attended_by_user_id":  order.AttendedByUserID,
 			"attended_by_name":     services.AttendedByName(order),
 			"notes":                order.Notes,
@@ -924,6 +925,7 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 		ChangeReturned   float64  `json:"change_returned,omitempty"`
 		CashAmount       float64  `json:"cash_amount,omitempty"`
 		UpiAmount        float64  `json:"upi_amount,omitempty"`
+		UpiTransactionID string   `json:"upi_transaction_id,omitempty"`
 		AttendedByUserID string   `json:"attended_by_user_id,omitempty"`
 		DiscountAmount   *float64 `json:"discount_amount,omitempty"`
 	}
@@ -974,6 +976,7 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 		ChangeReturned:   input.ChangeReturned,
 		CashAmount:       input.CashAmount,
 		UpiAmount:        input.UpiAmount,
+		UpiTransactionID: strings.TrimSpace(input.UpiTransactionID),
 		AttendedByUserID: attendedByUserID,
 	}
 	if input.DiscountAmount != nil {
@@ -1043,6 +1046,7 @@ func (h *OrderHandler) CompleteOrderWithPayment(c *gin.Context) {
 			"change_returned":     order.ChangeReturned,
 			"cash_amount":         order.CashAmount,
 			"upi_amount":          order.UpiAmount,
+			"upi_transaction_id":  order.UpiTransactionID,
 			"attended_by_user_id": order.AttendedByUserID,
 			"attended_by_name":    services.AttendedByName(order),
 			"completed_at":        order.CompletedAt,
