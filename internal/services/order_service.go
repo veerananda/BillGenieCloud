@@ -383,12 +383,21 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 
 	if len(req.Items) == 0 {
 		customerName := strings.TrimSpace(req.CustomerName)
+		customerPhone := strings.TrimSpace(req.CustomerPhone)
+		updates := map[string]interface{}{}
 		if customerName != order.CustomerName {
-			if err := tx.Model(&order).Update("customer_name", customerName).Error; err != nil {
+			updates["customer_name"] = customerName
+		}
+		if customerPhone != order.CustomerPhone {
+			updates["customer_phone"] = customerPhone
+		}
+		if len(updates) > 0 {
+			if err := tx.Model(&order).Updates(updates).Error; err != nil {
 				tx.Rollback()
 				return nil, nil, err
 			}
 			order.CustomerName = customerName
+			order.CustomerPhone = customerPhone
 		}
 	}
 
