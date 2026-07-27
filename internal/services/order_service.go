@@ -1848,7 +1848,8 @@ func (s *OrderService) GetNextCounterTicket(restaurantID string) (int, error) {
 	return maxTicket + 1, nil
 }
 
-// ListCounterOrdersToday returns counter/takeaway orders created today.
+// ListCounterOrdersToday returns today's counter/takeaway orders, plus any older
+// incomplete counter orders so kitchen (and counter) can retain unfinished work.
 func (s *OrderService) ListCounterOrdersToday(restaurantID string, limit int) ([]models.Order, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -1857,7 +1858,12 @@ func (s *OrderService) ListCounterOrdersToday(restaurantID string, limit int) ([
 
 	var orders []models.Order
 	err := s.db.
-		Where("restaurant_id = ? AND created_at >= ? AND "+isLegacyCounterOrderClause(), restaurantID, todayStart).
+		Where(
+			"restaurant_id = ? AND "+isLegacyCounterOrderClause()+
+				" AND (created_at >= ? OR status NOT IN ('completed', 'cancelled'))",
+			restaurantID,
+			todayStart,
+		).
 		Preload("Items").
 		Preload("Items.MenuItem").
 		Order("ticket_number DESC, order_number DESC, created_at DESC").
