@@ -116,13 +116,14 @@ type Order struct {
 	TaxAmount      float64 `json:"tax_amount" gorm:"type:numeric(10,2);default:0"`
 	DiscountAmount float64 `json:"discount_amount" gorm:"type:numeric(10,2);default:0"`
 	Total          float64 `json:"total" gorm:"type:numeric(10,2);default:0"`
-	PaymentMethod  string  `json:"payment_method" gorm:"type:varchar(50)"` // "cash", "card", "upi"
+	PaymentMethod  string  `json:"payment_method" gorm:"type:varchar(50)"` // "cash", "card", "upi", "split"
 	PaymentID      string  `json:"payment_id"`                             // Razorpay payment ID
 	// Payment completion details
 	AmountReceived      float64    `json:"amount_received,omitempty" gorm:"type:numeric(10,2)"`
 	ChangeReturned      float64    `json:"change_returned,omitempty" gorm:"type:numeric(10,2)"`
 	CashAmount          float64    `json:"cash_amount,omitempty" gorm:"type:numeric(10,2);default:0"`
 	UpiAmount           float64    `json:"upi_amount,omitempty" gorm:"type:numeric(10,2);default:0"`
+	UpiTransactionID    string     `json:"upi_transaction_id,omitempty" gorm:"type:varchar(120)"`
 	TrackingToken       string     `json:"tracking_token,omitempty" gorm:"type:varchar(64);index"`
 	TrackingExpiresAt   *time.Time `json:"tracking_expires_at,omitempty"`
 	BillToken           string     `json:"bill_token,omitempty" gorm:"type:varchar(64);index"`

@@ -595,6 +595,7 @@ type OrderPaymentDetails struct {
 	ChangeReturned   float64
 	CashAmount       float64
 	UpiAmount        float64
+	UpiTransactionID string
 	AttendedByUserID string
 	// DiscountAmount is applied when HasDiscount is true (recalculates tax/total).
 	DiscountAmount float64
@@ -701,6 +702,9 @@ func (s *OrderService) CompleteOrderWithPayment(restaurantID string, orderID str
 		"cash_amount":     cashAmount,
 		"upi_amount":      upiAmount,
 		"updated_at":      now,
+	}
+	if txnID := strings.TrimSpace(payment.UpiTransactionID); txnID != "" {
+		updates["upi_transaction_id"] = txnID
 	}
 	if attendedByUserID != "" {
 		updates["attended_by_user_id"] = attendedByUserID
