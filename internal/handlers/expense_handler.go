@@ -63,6 +63,10 @@ func parseYearMonth(c *gin.Context) (int, int, time.Time, time.Time, error) {
 
 	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
 	end := start.AddDate(0, 1, 0)
+	// Current month: include through end of today (exclusive end = start of tomorrow).
+	if year == now.Year() && month == int(now.Month()) {
+		end = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
+	}
 	return year, month, start, end, nil
 }
 
@@ -76,7 +80,13 @@ type apiError struct{ msg string }
 func (e *apiError) Error() string { return e.msg }
 
 func monthPeriodLabel(year, month int) string {
-	return time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC).Format("January 2006")
+	loc := services.RestaurantLocation()
+	now := time.Now().In(loc)
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
+	if year == now.Year() && month == int(now.Month()) {
+		return start.Format("January 2006") + " · until today"
+	}
+	return start.Format("January 2006")
 }
 
 func sumStockExpenditure(db *gorm.DB, restaurantID string, start, end time.Time) (float64, error) {
