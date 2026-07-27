@@ -91,4 +91,11 @@ type AssistanceStatus struct {
 	BillURL             string               `json:"bill_url,omitempty"`
 	BillDownloadURL     string               `json:"bill_download_url,omitempty"`
 	OrderTotal          float64              `json:"order_total,omitempty"`
+	// Bill review totals (populated when bill_available).
+	SubTotal         float64 `json:"sub_total"`
+	TaxAmount        float64 `json:"tax_amount"`
+	DiscountAmount   float64 `json:"discount_amount"`
+	PricesIncludeGST bool    `json:"prices_include_gst"`
+	CompositeScheme  bool    `json:"composite_scheme"`
+	ShowTax          bool    `json:"show_tax"`
 }

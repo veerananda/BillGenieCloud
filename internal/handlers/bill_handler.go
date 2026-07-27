@@ -89,7 +89,7 @@ func formatBillDateTime(t time.Time) string {
 
 func subtotalLabelBill(pricesIncludeGST bool) string {
 	if pricesIncludeGST {
-		return "Taxable value"
+		return "Subtotal (excl. GST)"
 	}
 	return "Subtotal"
 }

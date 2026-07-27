@@ -149,6 +149,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 }
 
 // CreateBillShare assigns a bill token for customer QR sharing.
+// Reuses an existing unexpired token so discount updates keep the same customer URL.
 func (s *OrderService) CreateBillShare(restaurantID, orderID string, discountAmount float64) (*models.Order, error) {
 	if discountAmount < 0 {
 		discountAmount = 0
@@ -166,17 +167,21 @@ func (s *OrderService) CreateBillShare(restaurantID, orderID string, discountAmo
 		return nil, errors.New("order is cancelled")
 	}
 
-	token, err := GenerateTrackingToken()
-	if err != nil {
-		return nil, err
-	}
-
 	expires := time.Now().Add(billShareTTL)
 	updates := map[string]interface{}{
-		"bill_token":            token,
 		"bill_expires_at":       expires,
 		"bill_preview_discount": discountAmount,
 		"updated_at":            time.Now(),
+	}
+
+	tokenValid := strings.TrimSpace(order.BillToken) != "" &&
+		(order.BillExpiresAt == nil || order.BillExpiresAt.After(time.Now()))
+	if !tokenValid {
+		token, err := GenerateTrackingToken()
+		if err != nil {
+			return nil, err
+		}
+		updates["bill_token"] = token
 	}
 
 	if err := s.db.Model(&order).Updates(updates).Error; err != nil {
