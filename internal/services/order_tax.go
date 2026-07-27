@@ -6,10 +6,11 @@ import "restaurant-api/internal/models"
 const OrderGSTRate = 0.05
 
 // InitialOrderItemStatus returns the kitchen status for a new order line.
-// Readily available items (water, packaged goods) skip the kitchen queue.
+// Readily available items (water, packaged goods) skip the kitchen queue and
+// land as ready so floor staff can tap to mark them served.
 func InitialOrderItemStatus(menuItem models.MenuItem) string {
 	if menuItem.ReadilyAvailable {
-		return "served"
+		return "ready"
 	}
 	return "pending"
 }
