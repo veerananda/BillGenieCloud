@@ -58,6 +58,9 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"upi_id":                     restaurant.UPIID,
 		"upi_qr_code":                restaurant.UPIQRCode,
 		"city":                       restaurant.City,
+		"state":                      restaurant.State,
+		"district":                   restaurant.District,
+		"city_tier":                  restaurant.CityTier,
 		"cuisine":                    restaurant.Cuisine,
 		"is_self_service":            restaurant.IsSelfService,
 		"is_closed":                  restaurant.IsClosed,
@@ -95,6 +98,9 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	var input struct {
 		Name                string  `json:"name"`
 		Address             string  `json:"address"`
+		City                string  `json:"city"`
+		State               string  `json:"state"`
+		District            string  `json:"district"`
 		ContactNumber       string  `json:"contact_number"`
 		UPIID               *string `json:"upi_id"`
 		UPIQRCode           string  `json:"upi_qr_code"`
@@ -125,6 +131,27 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	}
 	if input.Address != "" {
 		restaurant.Address = input.Address
+	}
+	if input.City != "" {
+		restaurant.City = input.City
+	}
+	if input.State != "" || input.District != "" {
+		state := restaurant.State
+		if input.State != "" {
+			state = strings.TrimSpace(input.State)
+		}
+		district := restaurant.District
+		if input.District != "" {
+			district = strings.TrimSpace(input.District)
+		}
+		tier, ok := services.ResolveCityTier(state, district)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "selected district is not valid for the selected state"})
+			return
+		}
+		restaurant.State = state
+		restaurant.District = district
+		restaurant.CityTier = tier
 	}
 	if input.ContactNumber != "" {
 		restaurant.ContactNumber = input.ContactNumber

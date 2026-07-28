@@ -54,6 +54,9 @@ type Restaurant struct {
 	Phone                    string          `json:"phone"`
 	Address                  string          `json:"address"`
 	City                     string          `json:"city" gorm:"index"`
+	State                    string          `json:"state" gorm:"index"`
+	District                 string          `json:"district" gorm:"index"`
+	CityTier                 string          `json:"city_tier" gorm:"type:varchar(16);default:tier_3"`
 	Cuisine                  string          `json:"cuisine"` // "Indian", "Chinese", etc.
 	TotalTables              int             `json:"total_tables" gorm:"default:10"`
 	TotalStaff               int             `json:"total_staff" gorm:"default:5"`

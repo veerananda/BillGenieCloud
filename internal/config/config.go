@@ -41,6 +41,7 @@ type Config struct {
 
 	// CORS
 	CORSAllowedOrigins []string
+	EnableLocalhostCORSInProd bool
 
 	// Platform ops (BillGenie creators console)
 	PlatformOpsAPIKey string
@@ -85,7 +86,8 @@ func LoadConfig() *Config {
 		RazorpayKeySecret: getEnv("RAZORPAY_KEY_SECRET", ""),
 
 		// CORS
-		CORSAllowedOrigins: parseOrigins(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,exp://localhost:19000")),
+		CORSAllowedOrigins:         parseOrigins(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,exp://localhost:19000")),
+		EnableLocalhostCORSInProd: getBoolEnv("ENABLE_LOCALHOST_CORS_IN_PROD", false),
 
 		PlatformOpsAPIKey: getEnv("PLATFORM_OPS_API_KEY", ""),
 
@@ -151,6 +153,10 @@ func validateCORSOrigins(cfg *Config) {
 		if hasWildcard || len(origins) == 0 {
 			log.Fatal("CORS_ALLOWED_ORIGINS must be an explicit allowlist in production (no *)")
 		}
+		if cfg.EnableLocalhostCORSInProd {
+			origins = appendUniqueOrigins(origins, localhostCORSOrigins()...)
+			log.Println("⚠️  ENABLE_LOCALHOST_CORS_IN_PROD is enabled; localhost origins temporarily allowed in production")
+		}
 		cfg.CORSAllowedOrigins = origins
 		return
 	}
@@ -165,6 +171,34 @@ func validateCORSOrigins(cfg *Config) {
 		return
 	}
 	cfg.CORSAllowedOrigins = origins
+}
+
+func localhostCORSOrigins() []string {
+	return []string{
+		"http://localhost:3000",
+		"http://localhost:5173",
+		"http://localhost:8081",
+		"http://localhost:19006",
+		"http://127.0.0.1:3000",
+		"http://127.0.0.1:5173",
+		"http://127.0.0.1:8081",
+		"http://127.0.0.1:19006",
+	}
+}
+
+func appendUniqueOrigins(origins []string, extras ...string) []string {
+	seen := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		seen[origin] = struct{}{}
+	}
+	for _, origin := range extras {
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		origins = append(origins, origin)
+		seen[origin] = struct{}{}
+	}
+	return origins
 }
 
 func getEnv(key, defaultValue string) string {

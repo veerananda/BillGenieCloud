@@ -21,6 +21,8 @@ func NewSubscriptionHandler(db *gorm.DB) *SubscriptionHandler {
 
 type subscriptionSelectionBody struct {
 	Selection services.SubscriptionSelection `json:"selection"`
+	State     string                         `json:"state"`
+	District  string                         `json:"district"`
 }
 
 // GetRenewalQuote returns the renewal amount for the restaurant's current or selected plan.
@@ -47,7 +49,12 @@ func (h *SubscriptionHandler) QuoteSignupPlan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	quote, err := h.renewalService.QuoteForSelection(body.Selection)
+	tier, ok := services.ResolveCityTier(body.State, body.District)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid state and district are required"})
+		return
+	}
+	quote, err := h.renewalService.QuoteForSelection(body.Selection, tier)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
