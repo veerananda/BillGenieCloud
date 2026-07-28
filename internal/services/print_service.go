@@ -437,6 +437,11 @@ func printItemNameAndCategory(it models.OrderItem) (name, category string) {
 	return name, category
 }
 
+func printItemDisplayName(it models.OrderItem, extraBlocklist []string) string {
+	name, category := printItemNameAndCategory(it)
+	return FormatItemDisplayName(name, category, it.VariantLabel, extraBlocklist)
+}
+
 func buildKOTPayload(restaurantName string, order *models.Order, items []models.OrderItem, isAddOn bool) string {
 	var b strings.Builder
 	divider := "--------------------------------"
@@ -537,11 +542,10 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteByte('\n')
 	b.WriteString(printPadLine("", "Rate   Price", 32))
 	b.WriteByte('\n')
+	blocklist := ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
 	for _, it := range items {
-		name, category := printItemNameAndCategory(it)
-		if it.VariantLabel != "" && !strings.EqualFold(it.VariantLabel, "regular") {
-			name = fmt.Sprintf("%s (%s)", name, it.VariantLabel)
-		}
+		name := printItemDisplayName(it, blocklist)
+		_, category := printItemNameAndCategory(it)
 		lineTotal := it.Total
 		if lineTotal <= 0 {
 			lineTotal = it.UnitRate * float64(it.Quantity)
@@ -552,7 +556,7 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 		}
 		b.WriteString(printPadLine(name, fmt.Sprintf("%d", it.Quantity), 32))
 		b.WriteByte('\n')
-		if category != "" {
+		if category != "" && IsBlockedDisplayCategory(category, blocklist) {
 			b.WriteString(fmt.Sprintf("   [%s]\n", category))
 		}
 		b.WriteString(printPadLine("", fmt.Sprintf("Rs %.2f  Rs %.2f", rate, lineTotal), 32))

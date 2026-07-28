@@ -65,9 +65,10 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"is_self_service":            restaurant.IsSelfService,
 		"is_closed":                  restaurant.IsClosed,
 		"counter_service_modes":      counterModes,
-		"prices_include_gst":         restaurant.PricesIncludeGST,
-		"composite_scheme":           restaurant.CompositeScheme,
-		"gst_number":                 restaurant.GstNumber,
+		"prices_include_gst":           restaurant.PricesIncludeGST,
+		"composite_scheme":             restaurant.CompositeScheme,
+		"category_display_blocklist":   services.ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist),
+		"gst_number":                   restaurant.GstNumber,
 		"subscription_end":           restaurant.SubscriptionEnd,
 		"subscription_plan":          restaurant.SubscriptionPlan,
 		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
@@ -107,9 +108,10 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 		IsSelfService       *bool   `json:"is_self_service"`
 		IsClosed            *bool   `json:"is_closed"`
 		CounterServiceModes string  `json:"counter_service_modes"`
-		PricesIncludeGST    *bool   `json:"prices_include_gst"`
-		CompositeScheme     *bool   `json:"composite_scheme"`
-		GstNumber           *string `json:"gst_number"`
+		PricesIncludeGST         *bool     `json:"prices_include_gst"`
+		CompositeScheme          *bool     `json:"composite_scheme"`
+		CategoryDisplayBlocklist *[]string `json:"category_display_blocklist"`
+		GstNumber                *string   `json:"gst_number"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -189,6 +191,9 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	}
 	if input.PricesIncludeGST != nil && !restaurant.CompositeScheme {
 		restaurant.PricesIncludeGST = *input.PricesIncludeGST
+	}
+	if input.CategoryDisplayBlocklist != nil {
+		restaurant.CategoryDisplayBlocklist = services.EncodeCategoryDisplayBlocklist(*input.CategoryDisplayBlocklist)
 	}
 	if input.GstNumber != nil {
 		gst := strings.ToUpper(strings.TrimSpace(*input.GstNumber))
