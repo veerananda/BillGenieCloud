@@ -82,6 +82,7 @@ func (h *PrintHandler) UpdatePrintSettings(c *gin.Context) {
 	if !isManager {
 		input.BillPrintingEnabled = nil
 		input.KotPrintingEnabled = nil
+		input.BillAutoPrintOnCheckout = nil
 		input.TopFeedLines = nil
 		input.BottomFeedLines = nil
 	}

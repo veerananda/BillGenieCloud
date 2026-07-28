@@ -62,12 +62,13 @@ type UpdatePrintSettingsInput struct {
 	BillPrinterPort     *int    `json:"bill_printer_port"`
 	KotPrinterHost      *string `json:"kot_printer_host"`
 	KotPrinterPort      *int    `json:"kot_printer_port"`
-	BillPrintingEnabled *bool   `json:"bill_printing_enabled"`
-	KotPrintingEnabled  *bool   `json:"kot_printing_enabled"`
-	BillPaperWidthMm    *int    `json:"bill_paper_width_mm"`
-	KotPaperWidthMm     *int    `json:"kot_paper_width_mm"`
-	TopFeedLines        *int    `json:"top_feed_lines"`
-	BottomFeedLines     *int    `json:"bottom_feed_lines"`
+	BillPrintingEnabled     *bool   `json:"bill_printing_enabled"`
+	KotPrintingEnabled      *bool   `json:"kot_printing_enabled"`
+	BillAutoPrintOnCheckout *bool   `json:"bill_auto_print_on_checkout"`
+	BillPaperWidthMm        *int    `json:"bill_paper_width_mm"`
+	KotPaperWidthMm         *int    `json:"kot_paper_width_mm"`
+	TopFeedLines            *int    `json:"top_feed_lines"`
+	BottomFeedLines         *int    `json:"bottom_feed_lines"`
 }
 
 func clampFeedLines(n int) int {
@@ -125,6 +126,9 @@ func (s *PrintService) UpdateSettings(restaurantID string, input UpdatePrintSett
 	}
 	if input.KotPrintingEnabled != nil {
 		updates["kot_printing_enabled"] = *input.KotPrintingEnabled
+	}
+	if input.BillAutoPrintOnCheckout != nil {
+		updates["bill_auto_print_on_checkout"] = *input.BillAutoPrintOnCheckout
 	}
 	if input.BillPaperWidthMm != nil {
 		updates["bill_paper_width_mm"] = normalizePaperWidthMm(*input.BillPaperWidthMm)
