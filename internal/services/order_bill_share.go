@@ -60,12 +60,16 @@ func orderItemsGross(items []models.OrderItem) float64 {
 	return taxable + nonTaxable
 }
 
-func resolveBillItemName(item models.OrderItem) string {
+func resolveBillItemName(item models.OrderItem, extraBlocklist []string) string {
 	name := "Item"
-	if item.MenuItem != nil && item.MenuItem.Name != "" {
-		name = item.MenuItem.Name
+	category := ""
+	if item.MenuItem != nil {
+		if item.MenuItem.Name != "" {
+			name = item.MenuItem.Name
+		}
+		category = item.MenuItem.Category
 	}
-	return FormatOrderItemDisplayName(name, item.VariantLabel)
+	return FormatItemDisplayName(name, category, item.VariantLabel, extraBlocklist)
 }
 
 // BuildBillSummary builds the customer-facing bill totals and line items.
@@ -81,6 +85,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 	address := ""
 	contact := ""
 	gstNumber := ""
+	var categoryBlocklist []string
 	if restaurant != nil {
 		pricesIncludeGST = restaurant.PricesIncludeGST
 		compositeScheme = restaurant.CompositeScheme
@@ -91,6 +96,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 			contact = restaurant.Phone
 		}
 		gstNumber = strings.TrimSpace(restaurant.GstNumber)
+		categoryBlocklist = ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
 	}
 
 	taxableGross, nonTaxableGross := orderItemsGrossSplit(order.Items)
@@ -110,7 +116,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 			continue
 		}
 		items = append(items, BillItemView{
-			Name:     resolveBillItemName(item),
+			Name:     resolveBillItemName(item, categoryBlocklist),
 			Quantity: item.Quantity,
 			UnitRate: item.UnitRate,
 			Total:    item.Total,
