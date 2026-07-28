@@ -28,6 +28,7 @@ type BillSummaryView struct {
 	RestaurantName   string         `json:"restaurant_name"`
 	Address          string         `json:"address,omitempty"`
 	ContactNumber    string         `json:"contact_number,omitempty"`
+	GstNumber        string         `json:"gst_number,omitempty"`
 	TableNumber      string         `json:"table_number"`
 	OrderNumber      int            `json:"order_number"`
 	TicketNumber     int            `json:"ticket_number,omitempty"`
@@ -79,6 +80,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 	restaurantName := ""
 	address := ""
 	contact := ""
+	gstNumber := ""
 	if restaurant != nil {
 		pricesIncludeGST = restaurant.PricesIncludeGST
 		compositeScheme = restaurant.CompositeScheme
@@ -88,6 +90,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 		if contact == "" {
 			contact = restaurant.Phone
 		}
+		gstNumber = strings.TrimSpace(restaurant.GstNumber)
 	}
 
 	taxableGross, nonTaxableGross := orderItemsGrossSplit(order.Items)
@@ -129,6 +132,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 		RestaurantName:   restaurantName,
 		Address:          address,
 		ContactNumber:    contact,
+		GstNumber:        gstNumber,
 		TableNumber:      order.TableNumber,
 		OrderNumber:      order.OrderNumber,
 		TicketNumber:     ticketNumber,

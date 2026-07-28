@@ -69,6 +69,7 @@ type Restaurant struct {
 	CounterServiceModes      string          `json:"counter_service_modes" gorm:"type:varchar(20);default:both"` // both | eat_here | takeaway
 	PricesIncludeGST         bool            `json:"prices_include_gst" gorm:"default:false"`
 	CompositeScheme          bool            `json:"composite_scheme" gorm:"default:false"` // GST composition scheme — no tax on bills
+	GstNumber                string          `json:"gst_number" gorm:"type:varchar(20)"`    // GSTIN printed on bills
 	Settings                 json.RawMessage `json:"settings" gorm:"type:jsonb"` // Customizable settings
 	// Restaurant Profile fields
 	ContactNumber string    `json:"contact_number"`
