@@ -813,6 +813,8 @@ type RestaurantPrintSettings struct {
 	KotPrinterPort       int       `json:"kot_printer_port" gorm:"default:9100"`
 	BillPrintingEnabled  bool      `json:"bill_printing_enabled" gorm:"default:false"`
 	KotPrintingEnabled   bool      `json:"kot_printing_enabled" gorm:"default:false"`
+	BillPaperWidthMm     int       `json:"bill_paper_width_mm" gorm:"default:58"` // 58 or 80
+	KotPaperWidthMm      int       `json:"kot_paper_width_mm" gorm:"default:58"`  // 58 or 80
 	TopFeedLines         int       `json:"top_feed_lines" gorm:"default:0"`    // blank lines before slip content
 	BottomFeedLines      int       `json:"bottom_feed_lines" gorm:"default:3"` // blank lines before cutter
 	AgentAPIKeyHash      string    `json:"-" gorm:"type:varchar(64);index"`

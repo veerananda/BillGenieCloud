@@ -43,11 +43,13 @@ func (s *PrintService) GetOrCreateSettings(restaurantID string) (*models.Restaur
 		return nil, err
 	}
 	settings = models.RestaurantPrintSettings{
-		RestaurantID:    restaurantID,
-		BillPrinterPort: 9100,
-		KotPrinterPort:  9100,
-		TopFeedLines:    0,
-		BottomFeedLines: 3,
+		RestaurantID:     restaurantID,
+		BillPrinterPort:  9100,
+		KotPrinterPort:   9100,
+		BillPaperWidthMm: 58,
+		KotPaperWidthMm:  58,
+		TopFeedLines:     0,
+		BottomFeedLines:  3,
 	}
 	if err := s.db.Create(&settings).Error; err != nil {
 		return nil, err
@@ -62,6 +64,8 @@ type UpdatePrintSettingsInput struct {
 	KotPrinterPort      *int    `json:"kot_printer_port"`
 	BillPrintingEnabled *bool   `json:"bill_printing_enabled"`
 	KotPrintingEnabled  *bool   `json:"kot_printing_enabled"`
+	BillPaperWidthMm    *int    `json:"bill_paper_width_mm"`
+	KotPaperWidthMm     *int    `json:"kot_paper_width_mm"`
 	TopFeedLines        *int    `json:"top_feed_lines"`
 	BottomFeedLines     *int    `json:"bottom_feed_lines"`
 }
@@ -74,6 +78,20 @@ func clampFeedLines(n int) int {
 		return 20
 	}
 	return n
+}
+
+func normalizePaperWidthMm(n int) int {
+	if n == 80 {
+		return 80
+	}
+	return 58
+}
+
+func thermalColsForPaper(paperWidthMm int) int {
+	if normalizePaperWidthMm(paperWidthMm) == 80 {
+		return 48
+	}
+	return 32
 }
 
 func (s *PrintService) UpdateSettings(restaurantID string, input UpdatePrintSettingsInput) (*models.RestaurantPrintSettings, error) {
@@ -107,6 +125,12 @@ func (s *PrintService) UpdateSettings(restaurantID string, input UpdatePrintSett
 	}
 	if input.KotPrintingEnabled != nil {
 		updates["kot_printing_enabled"] = *input.KotPrintingEnabled
+	}
+	if input.BillPaperWidthMm != nil {
+		updates["bill_paper_width_mm"] = normalizePaperWidthMm(*input.BillPaperWidthMm)
+	}
+	if input.KotPaperWidthMm != nil {
+		updates["kot_paper_width_mm"] = normalizePaperWidthMm(*input.KotPaperWidthMm)
 	}
 	if input.TopFeedLines != nil {
 		updates["top_feed_lines"] = clampFeedLines(*input.TopFeedLines)
@@ -291,7 +315,7 @@ func (s *PrintService) enqueueBill(order *models.Order) error {
 		return nil
 	}
 
-	text := buildBillPayload(restaurant, order, active)
+	text := buildBillPayload(restaurant, order, active, settings.BillPaperWidthMm)
 	job := models.PrintJob{
 		RestaurantID: order.RestaurantID,
 		OrderID:      order.ID,
@@ -494,9 +518,10 @@ func buildKOTPayload(restaurantName string, order *models.Order, items []models.
 	return b.String()
 }
 
-func buildBillPayload(restaurant models.Restaurant, order *models.Order, items []models.OrderItem) string {
+func buildBillPayload(restaurant models.Restaurant, order *models.Order, items []models.OrderItem, paperWidthMm int) string {
+	width := thermalColsForPaper(paperWidthMm)
 	var b strings.Builder
-	divider := "--------------------------------"
+	divider := strings.Repeat("-", width)
 	if restaurant.Name != "" {
 		b.WriteString(restaurant.Name)
 		b.WriteByte('\n')
@@ -538,9 +563,11 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteByte('\n')
 	b.WriteString(divider)
 	b.WriteByte('\n')
-	const width = 32
 	const rightBlock = 19
 	nameWidth := width - rightBlock
+	if nameWidth < 8 {
+		nameWidth = 8
+	}
 	b.WriteString(fmt.Sprintf("%-*s%3s %7s %7s\n", nameWidth, "Item", "Qty", "Rate", "Price"))
 	blocklist := ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
 	for _, it := range items {

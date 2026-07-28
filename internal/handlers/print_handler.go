@@ -92,18 +92,21 @@ func (h *PrintHandler) UpdatePrintSettings(c *gin.Context) {
 		return
 	}
 
-	// Staff/chef may only write hosts when the matching print feature is enabled.
+	// Staff/chef may only write hosts/paper when the matching print feature is enabled.
 	if !isManager {
 		if !current.KotPrintingEnabled {
 			input.KotPrinterHost = nil
 			input.KotPrinterPort = nil
+			input.KotPaperWidthMm = nil
 		}
 		if !current.BillPrintingEnabled {
 			input.BillPrinterHost = nil
 			input.BillPrinterPort = nil
+			input.BillPaperWidthMm = nil
 		}
 		if input.KotPrinterHost == nil && input.KotPrinterPort == nil &&
-			input.BillPrinterHost == nil && input.BillPrinterPort == nil {
+			input.BillPrinterHost == nil && input.BillPrinterPort == nil &&
+			input.KotPaperWidthMm == nil && input.BillPaperWidthMm == nil {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "printing is disabled — ask an admin or manager to enable KOT or bill printing first",
 			})
