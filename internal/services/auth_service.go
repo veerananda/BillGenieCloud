@@ -59,6 +59,8 @@ type RegisterRequest struct {
 	LoginID        string `json:"login_id" validate:"required"`
 	Address        string `json:"address"`
 	City           string `json:"city"`
+	State          string `json:"state"`
+	District       string `json:"district"`
 	Cuisine        string `json:"cuisine"`
 	Subscription   *SubscriptionSelection `json:"subscription"`
 }
@@ -136,6 +138,19 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		hasEverPaid  bool
 	)
 
+	state := strings.TrimSpace(req.State)
+	district := strings.TrimSpace(req.District)
+	if state == "" {
+		return nil, nil, errors.New("state is required")
+	}
+	if district == "" {
+		return nil, nil, errors.New("district is required")
+	}
+	cityTier, ok := ResolveCityTier(state, district)
+	if !ok {
+		return nil, nil, errors.New("selected district is not valid for the selected state")
+	}
+
 	if startMode == "trial" {
 		subSelection = FixedTrialSelection()
 		phase = SubscriptionPhaseTrial
@@ -152,7 +167,7 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		hasEverPaid = false
 	}
 
-	quote := CalculateSubscriptionQuote(subSelection)
+	quote := CalculateSubscriptionQuoteForTier(subSelection, cityTier)
 	subConfig, err := BuildSubscriptionConfigJSON(phase, startMode, subSelection, quote, hasEverPaid)
 	if err != nil {
 		return nil, nil, err
@@ -176,6 +191,9 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		Phone:                    req.Phone,
 		Address:                  req.Address,
 		City:                     req.City,
+		State:                    state,
+		District:                 district,
+		CityTier:                 cityTier,
 		Cuisine:                  req.Cuisine,
 		IsActive:                 true,
 		IsSelfService:            isSelfService,

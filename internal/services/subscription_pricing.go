@@ -30,6 +30,7 @@ const (
 	ExtendedHistoryDays    = 730
 	MaxTablesAllowed       = 50
 	MinTablesDineIn        = 5
+	AnnualMultiplier       = 11
 )
 
 type SubscriptionSelection struct {
@@ -60,6 +61,19 @@ type SubscriptionQuote struct {
 	BundledStaff            int                    `json:"bundled_staff"`
 	BundledManagers         int                    `json:"bundled_managers"`
 	TableBundles            int                    `json:"table_bundles"`
+	CityTier                string                 `json:"city_tier"`
+}
+
+type TieredPricing struct {
+	BasicMonthly      int `json:"basic_monthly"`
+	ExtraStaff        int `json:"extra_staff"`
+	ExtraManager      int `json:"extra_manager"`
+	DualService       int `json:"dual_service"`
+	HistoryExtended   int `json:"history_extended"`
+	Inventory         int `json:"inventory"`
+	KitchenDineIn     int `json:"kitchen_dine_in"`
+	KitchenCounter    int `json:"kitchen_counter"`
+	TableStaffBundle  int `json:"table_staff_bundle"`
 }
 
 func DefaultSubscriptionSelection() SubscriptionSelection {
@@ -142,8 +156,40 @@ func ValidateSubscriptionSelection(sel SubscriptionSelection) (SubscriptionSelec
 	return sel, nil
 }
 
-func CalculateSubscriptionQuote(sel SubscriptionSelection) SubscriptionQuote {
+func tierMultiplierPercent(tier string) int {
+	switch NormalizeTierLabel(tier) {
+	case CityTier1:
+		return 125
+	case CityTier3:
+		return 75
+	default:
+		return 100
+	}
+}
+
+func scalePrice(amount, percent int) int {
+	return int(math.Round(float64(amount*percent) / 100))
+}
+
+func PricingForTier(tier string) TieredPricing {
+	percent := tierMultiplierPercent(tier)
+	return TieredPricing{
+		BasicMonthly:     scalePrice(BasicMonthlyPriceINR, percent),
+		ExtraStaff:       scalePrice(PriceExtraStaffINR, percent),
+		ExtraManager:     scalePrice(PriceExtraManagerINR, percent),
+		DualService:      scalePrice(PriceDualServiceINR, percent),
+		HistoryExtended:  scalePrice(PriceHistoryExtendedINR, percent),
+		Inventory:        scalePrice(PriceInventoryINR, percent),
+		KitchenDineIn:    scalePrice(PriceKitchenDineInINR, percent),
+		KitchenCounter:   scalePrice(PriceKitchenCounterINR, percent),
+		TableStaffBundle: scalePrice(TableStaffBundlePriceINR, percent),
+	}
+}
+
+func CalculateSubscriptionQuoteForTier(sel SubscriptionSelection, tier string) SubscriptionQuote {
 	sel, _ = ValidateSubscriptionSelection(sel)
+	tier = NormalizeTierLabel(tier)
+	pricing := PricingForTier(tier)
 
 	tableBundles := 0
 	bundledStaff := IncludedStaffINR
@@ -157,19 +203,19 @@ func CalculateSubscriptionQuote(sel SubscriptionSelection) SubscriptionQuote {
 	lineItems := []SubscriptionLineItem{{
 		ID:     "basic",
 		Label:  fmt.Sprintf("Basic — 1 admin + %d staff, %d tables, menu, sales, 30-day history", IncludedStaffINR, IncludedTablesBasic),
-		Amount: BasicMonthlyPriceINR,
+		Amount: pricing.BasicMonthly,
 	}}
-	monthly := BasicMonthlyPriceINR
+	monthly := pricing.BasicMonthly
 
 	if sel.OperationMode == "both" {
 		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "dual_service", Label: "Dine-in + Counter (both service modes)", Amount: PriceDualServiceINR,
+			ID: "dual_service", Label: "Dine-in + Counter (both service modes)", Amount: pricing.DualService,
 		})
-		monthly += PriceDualServiceINR
+		monthly += pricing.DualService
 	}
 	if sel.OperationMode != "counter" {
 		if tableBundles > 0 {
-			amount := tableBundles * TableStaffBundlePriceINR
+			amount := tableBundles * pricing.TableStaffBundle
 			lineItems = append(lineItems, SubscriptionLineItem{
 				ID: "table_staff_bundles",
 				Label: fmt.Sprintf("Table bundles × %d (+%d tables, +%d staff)", tableBundles, tableBundles*TableStaffBundleSize, tableBundles),
@@ -188,14 +234,14 @@ func CalculateSubscriptionQuote(sel SubscriptionSelection) SubscriptionQuote {
 		})
 	}
 	if sel.ExtraStaff > 0 {
-		amount := sel.ExtraStaff * PriceExtraStaffINR
+		amount := sel.ExtraStaff * pricing.ExtraStaff
 		lineItems = append(lineItems, SubscriptionLineItem{
 			ID: "extra_staff", Label: fmt.Sprintf("Additional staff (beyond table bundle) × %d", sel.ExtraStaff), Amount: amount,
 		})
 		monthly += amount
 	}
 	if sel.ExtraManagers > 0 {
-		amount := sel.ExtraManagers * PriceExtraManagerINR
+		amount := sel.ExtraManagers * pricing.ExtraManager
 		lineItems = append(lineItems, SubscriptionLineItem{
 			ID: "extra_managers", Label: fmt.Sprintf("Additional managers (beyond table bundle) × %d", sel.ExtraManagers), Amount: amount,
 		})
@@ -203,41 +249,46 @@ func CalculateSubscriptionQuote(sel SubscriptionSelection) SubscriptionQuote {
 	}
 	if sel.HistoryExtended {
 		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "history_extended", Label: "Order history — 2 years", Amount: PriceHistoryExtendedINR,
+			ID: "history_extended", Label: "Order history — 2 years", Amount: pricing.HistoryExtended,
 		})
-		monthly += PriceHistoryExtendedINR
+		monthly += pricing.HistoryExtended
 	}
 	if sel.Inventory {
 		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "inventory", Label: "Inventory & stock updates", Amount: PriceInventoryINR,
+			ID: "inventory", Label: "Inventory & stock updates", Amount: pricing.Inventory,
 		})
-		monthly += PriceInventoryINR
+		monthly += pricing.Inventory
 	}
 	if sel.KitchenDineIn {
 		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "kitchen_dine_in", Label: "Kitchen updates — dine-in orders", Amount: PriceKitchenDineInINR,
+			ID: "kitchen_dine_in", Label: "Kitchen updates — dine-in orders", Amount: pricing.KitchenDineIn,
 		})
-		monthly += PriceKitchenDineInINR
+		monthly += pricing.KitchenDineIn
 	}
 	if sel.KitchenCounter {
 		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "kitchen_counter", Label: "Kitchen updates — counter / takeaway", Amount: PriceKitchenCounterINR,
+			ID: "kitchen_counter", Label: "Kitchen updates — counter / takeaway", Amount: pricing.KitchenCounter,
 		})
-		monthly += PriceKitchenCounterINR
+		monthly += pricing.KitchenCounter
 	}
 
-	annualTotal := monthly * 10
+	annualTotal := monthly * AnnualMultiplier
 	return SubscriptionQuote{
 		MonthlySubtotal:         monthly,
 		AnnualTotal:             annualTotal,
 		AnnualMonthlyEquivalent: int(math.Round(float64(annualTotal) / 12)),
-		AnnualSavings:           monthly * 2,
+		AnnualSavings:           monthly,
 		LineItems:               lineItems,
 		Selection:               sel,
 		BundledStaff:            bundledStaff + sel.ExtraStaff,
 		BundledManagers:         bundledManagers + sel.ExtraManagers,
 		TableBundles:            tableBundles,
+		CityTier:                tier,
 	}
+}
+
+func CalculateSubscriptionQuote(sel SubscriptionSelection) SubscriptionQuote {
+	return CalculateSubscriptionQuoteForTier(sel, CityTier2)
 }
 
 func SubscriptionConfigJSON(sel SubscriptionSelection, quote SubscriptionQuote) (json.RawMessage, error) {

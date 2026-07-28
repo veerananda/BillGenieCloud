@@ -73,3 +73,23 @@ func TestValidateSubscriptionSelection(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestCalculateSubscriptionQuoteTierMultipliers(t *testing.T) {
+	sel := DefaultSubscriptionSelection()
+	tier1 := CalculateSubscriptionQuoteForTier(sel, CityTier1)
+	tier2 := CalculateSubscriptionQuoteForTier(sel, CityTier2)
+	tier3 := CalculateSubscriptionQuoteForTier(sel, CityTier3)
+
+	if tier1.MonthlySubtotal != 999 {
+		t.Fatalf("expected tier 1 monthly 999, got %d", tier1.MonthlySubtotal)
+	}
+	if tier2.MonthlySubtotal != 799 {
+		t.Fatalf("expected tier 2 monthly 799, got %d", tier2.MonthlySubtotal)
+	}
+	if tier3.MonthlySubtotal != 599 {
+		t.Fatalf("expected tier 3 monthly 599, got %d", tier3.MonthlySubtotal)
+	}
+	if tier2.AnnualTotal != tier2.MonthlySubtotal*AnnualMultiplier {
+		t.Fatalf("expected annual total to use %d-month pricing", AnnualMultiplier)
+	}
+}

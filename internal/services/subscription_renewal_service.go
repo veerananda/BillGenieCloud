@@ -82,7 +82,7 @@ func (s *SubscriptionRenewalService) loadRestaurant(restaurantID string) (*model
 
 	cfg := ParseStoredSubscriptionConfig(&restaurant)
 	selection := cfg.Selection
-	quote := CalculateSubscriptionQuote(selection)
+	quote := CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
 	if cfg.Quote.MonthlySubtotal > 0 {
 		quote = cfg.Quote
 	}
@@ -100,12 +100,12 @@ func quoteAmounts(quote SubscriptionQuote, billingCycle string) (subtotal, gst, 
 	return
 }
 
-func (s *SubscriptionRenewalService) QuoteForSelection(selection SubscriptionSelection) (*RenewalQuote, error) {
+func (s *SubscriptionRenewalService) QuoteForSelection(selection SubscriptionSelection, cityTier string) (*RenewalQuote, error) {
 	validated, err := ValidateSubscriptionSelection(selection)
 	if err != nil {
 		return nil, err
 	}
-	quote := CalculateSubscriptionQuote(validated)
+	quote := CalculateSubscriptionQuoteForTier(validated, cityTier)
 	subtotal, gst, total, amountPaise := quoteAmounts(quote, validated.BillingCycle)
 	return &RenewalQuote{
 		BillingCycle:    validated.BillingCycle,
@@ -130,7 +130,7 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 	// Scheduled downgrade drives the next renewal amount unless caller overrides.
 	if selectionOverride == nil && cfg.PendingSelection != nil {
 		selection = *cfg.PendingSelection
-		quote = CalculateSubscriptionQuote(selection)
+		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
 	}
 
 	if selectionOverride != nil {
@@ -139,7 +139,7 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 			return nil, err
 		}
 		selection = validated
-		quote = CalculateSubscriptionQuote(selection)
+		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
 	}
 
 	billingCycle := selection.BillingCycle
@@ -180,7 +180,7 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 
 	if selectionOverride == nil && cfg.PendingSelection != nil {
 		selection = *cfg.PendingSelection
-		quote = CalculateSubscriptionQuote(selection)
+		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
 	}
 
 	if selectionOverride != nil {
@@ -189,7 +189,7 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 			return nil, err
 		}
 		selection = validated
-		quote = CalculateSubscriptionQuote(selection)
+		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
 	}
 
 	billingCycle := selection.BillingCycle
@@ -269,7 +269,7 @@ func (s *SubscriptionRenewalService) applyPaidSelection(restaurant *models.Resta
 	if err != nil {
 		return err
 	}
-	quote := CalculateSubscriptionQuote(validated)
+	quote := CalculateSubscriptionQuoteForTier(validated, restaurant.CityTier)
 
 	counterModes := "both"
 	isSelfService := false

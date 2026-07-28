@@ -10,6 +10,7 @@ primary_region = 'bom'
   dockerfile = 'Dockerfile'
 
 [env]
+  ENABLE_LOCALHOST_CORS_IN_PROD = 'true'
   ENABLE_LOGGING = 'true'
   ENABLE_WEBSOCKET = 'true'
   LOG_LEVEL = 'info'
