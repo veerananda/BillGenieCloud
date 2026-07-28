@@ -534,18 +534,17 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	if order.CustomerName != "" {
 		b.WriteString(fmt.Sprintf("Customer: %s\n", order.CustomerName))
 	}
-	b.WriteString(time.Now().Format("02 Jan 2006 3:04 PM"))
+	b.WriteString(time.Now().Format("02 Jan 2006 03:04 PM"))
 	b.WriteByte('\n')
 	b.WriteString(divider)
 	b.WriteByte('\n')
-	b.WriteString(printPadLine("Item", "Qty", 32))
-	b.WriteByte('\n')
-	b.WriteString(printPadLine("", "Rate   Price", 32))
-	b.WriteByte('\n')
+	const width = 32
+	const rightBlock = 19
+	nameWidth := width - rightBlock
+	b.WriteString(fmt.Sprintf("%-*s%3s %7s %7s\n", nameWidth, "Item", "Qty", "Rate", "Price"))
 	blocklist := ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
 	for _, it := range items {
 		name := printItemDisplayName(it, blocklist)
-		_, category := printItemNameAndCategory(it)
 		lineTotal := it.Total
 		if lineTotal <= 0 {
 			lineTotal = it.UnitRate * float64(it.Quantity)
@@ -554,26 +553,31 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 		if rate <= 0 && it.Quantity > 0 {
 			rate = lineTotal / float64(it.Quantity)
 		}
-		b.WriteString(printPadLine(name, fmt.Sprintf("%d", it.Quantity), 32))
-		b.WriteByte('\n')
-		if category != "" && IsBlockedDisplayCategory(category, blocklist) {
-			b.WriteString(fmt.Sprintf("   [%s]\n", category))
+		nameLines := wrapPrintWords(name, nameWidth)
+		first := nameLines[0]
+		if len(first) < nameWidth {
+			first = first + strings.Repeat(" ", nameWidth-len(first))
+		} else if len(first) > nameWidth {
+			first = first[:nameWidth]
 		}
-		b.WriteString(printPadLine("", fmt.Sprintf("Rs %.2f  Rs %.2f", rate, lineTotal), 32))
-		b.WriteByte('\n')
+		b.WriteString(fmt.Sprintf("%s%3d %7.2f %7.2f\n", first, it.Quantity, rate, lineTotal))
+		for i := 1; i < len(nameLines); i++ {
+			b.WriteString(nameLines[i])
+			b.WriteByte('\n')
+		}
 	}
 	b.WriteString(divider)
 	b.WriteByte('\n')
 	if order.SubTotal > 0 {
-		b.WriteString(fmt.Sprintf("Subtotal: Rs %.2f\n", order.SubTotal))
+		b.WriteString(fmt.Sprintf("Subtotal: %.2f\n", order.SubTotal))
 	}
 	if order.TaxAmount > 0 {
-		b.WriteString(fmt.Sprintf("GST: Rs %.2f\n", order.TaxAmount))
+		b.WriteString(fmt.Sprintf("GST: %.2f\n", order.TaxAmount))
 	}
 	if order.DiscountAmount > 0 {
-		b.WriteString(fmt.Sprintf("Discount: -Rs %.2f\n", order.DiscountAmount))
+		b.WriteString(fmt.Sprintf("Discount: -%.2f\n", order.DiscountAmount))
 	}
-	b.WriteString(fmt.Sprintf("Total: Rs %.2f\n", order.Total))
+	b.WriteString(fmt.Sprintf("TOTAL: Rs.%.2f\n", order.Total))
 	if order.PaymentMethod != "" {
 		b.WriteString(fmt.Sprintf("Payment: %s\n", strings.ToUpper(order.PaymentMethod)))
 	}
@@ -581,6 +585,50 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteByte('\n')
 	b.WriteString("Thank you!\n")
 	return b.String()
+}
+
+func wrapPrintWords(text string, width int) []string {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return []string{""}
+	}
+	if width <= 0 {
+		return []string{text}
+	}
+	var lines []string
+	current := ""
+	for _, word := range fields {
+		if current == "" {
+			if len(word) <= width {
+				current = word
+			} else {
+				for len(word) > width {
+					lines = append(lines, word[:width])
+					word = word[width:]
+				}
+				current = word
+			}
+			continue
+		}
+		if len(current)+1+len(word) <= width {
+			current = current + " " + word
+		} else {
+			lines = append(lines, current)
+			if len(word) <= width {
+				current = word
+			} else {
+				for len(word) > width {
+					lines = append(lines, word[:width])
+					word = word[width:]
+				}
+				current = word
+			}
+		}
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
 }
 
 func printPadLine(left, right string, width int) string {
