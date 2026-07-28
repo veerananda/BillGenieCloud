@@ -23,7 +23,10 @@ func customerBillStylesBlock() string {
     .body { padding: 18px 20px 24px; }
     table { width: 100%; border-collapse: collapse; font-size: .95rem; }
     th { text-align: left; color: #94a3b8; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
-    th.qty, th.amount, td.qty, td.amount { text-align: right; }
+    th.qty, th.rate, th.amount, td.qty, td.rate, td.amount { text-align: right; }
+    th.qty, td.qty { width: 12%; white-space: nowrap; }
+    th.rate, td.rate { width: 18%; white-space: nowrap; padding-left: 8px; }
+    th.amount, td.amount { width: 22%; white-space: nowrap; padding-left: 8px; }
     td { padding: 12px 0; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
     .item-name { padding-right: 10px; font-weight: 500; }
     .totals { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e2e8f0; }
@@ -71,9 +74,13 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 
 	var itemRows strings.Builder
 	for _, item := range summary.Items {
+		rate := item.UnitRate
+		if rate <= 0 && item.Quantity > 0 {
+			rate = item.Total / float64(item.Quantity)
+		}
 		itemRows.WriteString(fmt.Sprintf(
-			`<tr><td class="item-name">%s</td><td class="qty">%d</td><td class="amount">%s</td></tr>`,
-			escapeBillHTML(item.Name), item.Quantity, formatBillCurrency(item.Total),
+			`<tr><td class="item-name">%s</td><td class="qty">%d</td><td class="rate">%s</td><td class="amount">%s</td></tr>`,
+			escapeBillHTML(item.Name), item.Quantity, formatBillCurrency(rate), formatBillCurrency(item.Total),
 		))
 	}
 
@@ -106,6 +113,10 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 	if strings.TrimSpace(summary.ContactNumber) != "" {
 		contactLine = fmt.Sprintf(`<p class="meta">%s</p>`, escapeBillHTML(summary.ContactNumber))
 	}
+	gstLine := ""
+	if strings.TrimSpace(summary.GstNumber) != "" {
+		gstLine = fmt.Sprintf(`<p class="meta">GSTIN: %s</p>`, escapeBillHTML(summary.GstNumber))
+	}
 
 	meta := buildBillMetaLine(summary)
 	dateLine := formatBillDateTime(summary.CreatedAt)
@@ -127,6 +138,7 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
         <h1>%s</h1>
         %s
         %s
+        %s
         <p class="meta">%s</p>
         %s
         %s
@@ -134,7 +146,7 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
       </div>
       <div class="body">
         <table>
-          <thead><tr><th>Item</th><th class="qty">Qty</th><th class="amount">Amount</th></tr></thead>
+          <thead><tr><th>Item</th><th class="qty">Qty</th><th class="rate">Rate</th><th class="amount">Price</th></tr></thead>
           <tbody>%s</tbody>
         </table>
         <div class="totals">
@@ -152,6 +164,7 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 		escapeBillHTML(title),
 		addressLine,
 		contactLine,
+		gstLine,
 		meta,
 		dateLineHTML(dateLine),
 		customerLine+attendedLine,

@@ -64,6 +64,7 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"counter_service_modes":      counterModes,
 		"prices_include_gst":         restaurant.PricesIncludeGST,
 		"composite_scheme":           restaurant.CompositeScheme,
+		"gst_number":                 restaurant.GstNumber,
 		"subscription_end":           restaurant.SubscriptionEnd,
 		"subscription_plan":          restaurant.SubscriptionPlan,
 		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
@@ -102,6 +103,7 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 		CounterServiceModes string  `json:"counter_service_modes"`
 		PricesIncludeGST    *bool   `json:"prices_include_gst"`
 		CompositeScheme     *bool   `json:"composite_scheme"`
+		GstNumber           *string `json:"gst_number"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -162,6 +164,14 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	}
 	if input.PricesIncludeGST != nil && !restaurant.CompositeScheme {
 		restaurant.PricesIncludeGST = *input.PricesIncludeGST
+	}
+	if input.GstNumber != nil {
+		gst := strings.ToUpper(strings.TrimSpace(*input.GstNumber))
+		if gst != "" && len(gst) != 15 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "gst_number must be a 15-character GSTIN"})
+			return
+		}
+		restaurant.GstNumber = gst
 	}
 
 	if err := h.db.Save(&restaurant).Error; err != nil {

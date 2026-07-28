@@ -508,6 +508,11 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 		b.WriteString(contact)
 		b.WriteByte('\n')
 	}
+	if gst := strings.TrimSpace(restaurant.GstNumber); gst != "" {
+		b.WriteString("GSTIN: ")
+		b.WriteString(gst)
+		b.WriteByte('\n')
+	}
 	b.WriteString("BILL\n")
 	b.WriteString(divider)
 	b.WriteByte('\n')
@@ -528,6 +533,10 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteByte('\n')
 	b.WriteString(divider)
 	b.WriteByte('\n')
+	b.WriteString(printPadLine("Item", "Qty", 32))
+	b.WriteByte('\n')
+	b.WriteString(printPadLine("", "Rate   Price", 32))
+	b.WriteByte('\n')
 	for _, it := range items {
 		name, category := printItemNameAndCategory(it)
 		if it.VariantLabel != "" && !strings.EqualFold(it.VariantLabel, "regular") {
@@ -537,11 +546,17 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 		if lineTotal <= 0 {
 			lineTotal = it.UnitRate * float64(it.Quantity)
 		}
-		b.WriteString(fmt.Sprintf("%d x %s\n", it.Quantity, name))
+		rate := it.UnitRate
+		if rate <= 0 && it.Quantity > 0 {
+			rate = lineTotal / float64(it.Quantity)
+		}
+		b.WriteString(printPadLine(name, fmt.Sprintf("%d", it.Quantity), 32))
+		b.WriteByte('\n')
 		if category != "" {
 			b.WriteString(fmt.Sprintf("   [%s]\n", category))
 		}
-		b.WriteString(fmt.Sprintf("   Rs %.2f\n", lineTotal))
+		b.WriteString(printPadLine("", fmt.Sprintf("Rs %.2f  Rs %.2f", rate, lineTotal), 32))
+		b.WriteByte('\n')
 	}
 	b.WriteString(divider)
 	b.WriteByte('\n')
@@ -562,4 +577,31 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteByte('\n')
 	b.WriteString("Thank you!\n")
 	return b.String()
+}
+
+func printPadLine(left, right string, width int) string {
+	if width <= 0 {
+		width = 32
+	}
+	r := right
+	if len(r) > width {
+		r = r[len(r)-width:]
+	}
+	maxLeft := width - len(r) - 1
+	if maxLeft < 0 {
+		maxLeft = 0
+	}
+	l := left
+	if len(l) > maxLeft {
+		if maxLeft <= 1 {
+			l = ""
+		} else {
+			l = l[:maxLeft-1] + "."
+		}
+	}
+	spaces := width - len(l) - len(r)
+	if spaces < 1 {
+		spaces = 1
+	}
+	return l + strings.Repeat(" ", spaces) + r
 }

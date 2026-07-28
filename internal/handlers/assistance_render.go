@@ -177,8 +177,9 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
           sub.className = 'line-sub';
           const parts = [];
           if (item.category) parts.push(item.category);
-          parts.push((item.quantity || 0) + ' x ' + money(item.unit_rate));
-          sub.textContent = parts.join(' - ');
+          parts.push('Qty ' + (item.quantity || 0));
+          parts.push('Rate ' + money(item.unit_rate));
+          sub.textContent = parts.join(' · ');
           left.appendChild(name);
           left.appendChild(sub);
           const right = document.createElement('div');
