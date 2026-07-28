@@ -100,7 +100,7 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 		Address             string  `json:"address"`
 		City                string  `json:"city"`
 		State               string  `json:"state"`
-		District            string  `json:"district"`
+		District            string  `json:"district"` // ignored for tiering; city is source of truth
 		ContactNumber       string  `json:"contact_number"`
 		UPIID               *string `json:"upi_id"`
 		UPIQRCode           string  `json:"upi_qr_code"`
@@ -132,25 +132,23 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	if input.Address != "" {
 		restaurant.Address = input.Address
 	}
-	if input.City != "" {
-		restaurant.City = input.City
-	}
-	if input.State != "" || input.District != "" {
+	if input.State != "" || input.City != "" {
 		state := restaurant.State
 		if input.State != "" {
 			state = strings.TrimSpace(input.State)
 		}
-		district := restaurant.District
-		if input.District != "" {
-			district = strings.TrimSpace(input.District)
+		city := restaurant.City
+		if input.City != "" {
+			city = strings.TrimSpace(input.City)
 		}
-		tier, ok := services.ResolveCityTier(state, district)
+		tier, ok := services.ResolveCityTier(state, city)
 		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "selected district is not valid for the selected state"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "selected city is not valid for the selected state"})
 			return
 		}
 		restaurant.State = state
-		restaurant.District = district
+		restaurant.City = city
+		restaurant.District = ""
 		restaurant.CityTier = tier
 	}
 	if input.ContactNumber != "" {

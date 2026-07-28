@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"restaurant-api/internal/services"
 
@@ -22,7 +23,8 @@ func NewSubscriptionHandler(db *gorm.DB) *SubscriptionHandler {
 type subscriptionSelectionBody struct {
 	Selection services.SubscriptionSelection `json:"selection"`
 	State     string                         `json:"state"`
-	District  string                         `json:"district"`
+	City      string                         `json:"city"`
+	District  string                         `json:"district"` // deprecated alias; prefer city
 }
 
 // GetRenewalQuote returns the renewal amount for the restaurant's current or selected plan.
@@ -49,9 +51,13 @@ func (h *SubscriptionHandler) QuoteSignupPlan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	tier, ok := services.ResolveCityTier(body.State, body.District)
+	city := strings.TrimSpace(body.City)
+	if city == "" {
+		city = strings.TrimSpace(body.District)
+	}
+	tier, ok := services.ResolveCityTier(body.State, city)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "valid state and district are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid state and city are required"})
 		return
 	}
 	quote, err := h.renewalService.QuoteForSelection(body.Selection, tier)

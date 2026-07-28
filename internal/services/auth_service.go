@@ -60,7 +60,7 @@ type RegisterRequest struct {
 	Address        string `json:"address"`
 	City           string `json:"city"`
 	State          string `json:"state"`
-	District       string `json:"district"`
+	District       string `json:"district"` // deprecated; city dropdown is the source of truth
 	Cuisine        string `json:"cuisine"`
 	Subscription   *SubscriptionSelection `json:"subscription"`
 }
@@ -139,16 +139,16 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 	)
 
 	state := strings.TrimSpace(req.State)
-	district := strings.TrimSpace(req.District)
+	city := strings.TrimSpace(req.City)
 	if state == "" {
 		return nil, nil, errors.New("state is required")
 	}
-	if district == "" {
-		return nil, nil, errors.New("district is required")
+	if city == "" {
+		return nil, nil, errors.New("city is required")
 	}
-	cityTier, ok := ResolveCityTier(state, district)
+	cityTier, ok := ResolveCityTier(state, city)
 	if !ok {
-		return nil, nil, errors.New("selected district is not valid for the selected state")
+		return nil, nil, errors.New("selected city is not valid for the selected state")
 	}
 
 	if startMode == "trial" {
@@ -190,9 +190,9 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		Email:                    req.Email,
 		Phone:                    req.Phone,
 		Address:                  req.Address,
-		City:                     req.City,
+		City:                     city,
 		State:                    state,
-		District:                 district,
+		District:                 "",
 		CityTier:                 cityTier,
 		Cuisine:                  req.Cuisine,
 		IsActive:                 true,
