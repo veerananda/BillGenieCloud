@@ -115,7 +115,15 @@ func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus
 				}
 				category = item.MenuItem.Category
 			}
-			name = services.FormatOrderItemDisplayName(name, item.VariantLabel)
+			blocklist := []string(nil)
+			if restaurant != nil {
+				blocklist = services.ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
+			}
+			name = services.FormatItemDisplayName(name, category, item.VariantLabel, blocklist)
+			displayCategory := ""
+			if services.IsBlockedDisplayCategory(category, blocklist) {
+				displayCategory = category
+			}
 			lineTotal := item.Total
 			if lineTotal <= 0 {
 				lineTotal = unitRate * float64(item.Quantity)
@@ -125,7 +133,7 @@ func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus
 			if item.VariantID != nil {
 				variantKey = *item.VariantID
 			}
-			key := fmt.Sprintf("%s|%s|%s|%s|%.2f", item.MenuID, variantKey, strings.ToLower(name), strings.ToLower(category), unitRate)
+			key := fmt.Sprintf("%s|%s|%s|%s|%.2f", item.MenuID, variantKey, strings.ToLower(name), strings.ToLower(displayCategory), unitRate)
 			if idx, ok := groupedItems[key]; ok {
 				status.Items[idx].Quantity += item.Quantity
 				status.Items[idx].Total += lineTotal
@@ -138,7 +146,7 @@ func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus
 				Quantity: item.Quantity,
 				UnitRate: unitRate,
 				Total:    lineTotal,
-				Category: category,
+				Category: displayCategory,
 			})
 		}
 	}
