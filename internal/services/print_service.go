@@ -317,7 +317,10 @@ func (s *PrintService) enqueueBill(order *models.Order) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !settings.BillPrintingEnabled || strings.TrimSpace(settings.BillPrinterHost) == "" {
+	billHost := strings.TrimSpace(settings.BillPrinterHost)
+	kotHost := strings.TrimSpace(settings.KotPrinterHost)
+	// Single physical WiFi printer is often configured only under KOT host.
+	if !settings.BillPrintingEnabled || (billHost == "" && kotHost == "") {
 		return false, nil
 	}
 
@@ -328,7 +331,8 @@ func (s *PrintService) enqueueBill(order *models.Order) (bool, error) {
 	order = full
 
 	var restaurant models.Restaurant
-	_ = s.db.Select("name", "address", "contact_number", "phone").Where("id = ?", order.RestaurantID).First(&restaurant).Error
+	_ = s.db.Select("name", "address", "contact_number", "phone", "gst_number", "category_display_blocklist").
+		Where("id = ?", order.RestaurantID).First(&restaurant).Error
 
 	active := make([]models.OrderItem, 0, len(order.Items))
 	for _, it := range order.Items {
@@ -453,11 +457,17 @@ func resolvePrinter(settings *models.RestaurantPrintSettings, target string) (st
 		}
 		return strings.TrimSpace(settings.KotPrinterHost), port
 	}
+	host := strings.TrimSpace(settings.BillPrinterHost)
 	port := settings.BillPrinterPort
+	if host == "" {
+		// Same WiFi/LAN printer used for KOT
+		host = strings.TrimSpace(settings.KotPrinterHost)
+		port = settings.KotPrinterPort
+	}
 	if port <= 0 {
 		port = 9100
 	}
-	return strings.TrimSpace(settings.BillPrinterHost), port
+	return host, port
 }
 
 func (s *PrintService) CompleteJob(restaurantID, jobID string, failed bool, errMsg string) error {
@@ -546,27 +556,29 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	var b strings.Builder
 	divider := strings.Repeat("-", width)
 	if restaurant.Name != "" {
-		b.WriteString(restaurant.Name)
+		b.WriteString(printCenterLine(restaurant.Name, width))
 		b.WriteByte('\n')
 	}
 	if restaurant.Address != "" {
-		b.WriteString(restaurant.Address)
-		b.WriteByte('\n')
+		for _, line := range wrapPrintWords(restaurant.Address, width) {
+			b.WriteString(printCenterLine(line, width))
+			b.WriteByte('\n')
+		}
 	}
 	contact := restaurant.ContactNumber
 	if contact == "" {
 		contact = restaurant.Phone
 	}
 	if contact != "" {
-		b.WriteString(contact)
+		b.WriteString(printCenterLine("Ph: "+contact, width))
 		b.WriteByte('\n')
 	}
 	if gst := strings.TrimSpace(restaurant.GstNumber); gst != "" {
-		b.WriteString("GSTIN: ")
-		b.WriteString(gst)
+		b.WriteString(printCenterLine("GSTIN: "+gst, width))
 		b.WriteByte('\n')
 	}
-	b.WriteString("BILL\n")
+	b.WriteString(printCenterLine("BILL", width))
+	b.WriteByte('\n')
 	b.WriteString(divider)
 	b.WriteByte('\n')
 	num := order.TicketNumber
@@ -619,21 +631,26 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteString(divider)
 	b.WriteByte('\n')
 	if order.SubTotal > 0 {
-		b.WriteString(fmt.Sprintf("Subtotal: %.2f\n", order.SubTotal))
+		b.WriteString(printPadLine("Subtotal", fmt.Sprintf("%.2f", order.SubTotal), width))
+		b.WriteByte('\n')
 	}
 	if order.TaxAmount > 0 {
-		b.WriteString(fmt.Sprintf("GST: %.2f\n", order.TaxAmount))
+		b.WriteString(printPadLine("GST", fmt.Sprintf("%.2f", order.TaxAmount), width))
+		b.WriteByte('\n')
 	}
 	if order.DiscountAmount > 0 {
-		b.WriteString(fmt.Sprintf("Discount: -%.2f\n", order.DiscountAmount))
+		b.WriteString(printPadLine("Discount", fmt.Sprintf("-%.2f", order.DiscountAmount), width))
+		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf("TOTAL: Rs.%.2f\n", order.Total))
+	b.WriteString(printPadLine("TOTAL", fmt.Sprintf("Rs.%.2f", order.Total), width))
+	b.WriteByte('\n')
 	if order.PaymentMethod != "" {
 		b.WriteString(fmt.Sprintf("Payment: %s\n", strings.ToUpper(order.PaymentMethod)))
 	}
 	b.WriteString(divider)
 	b.WriteByte('\n')
-	b.WriteString("Thank you!\n")
+	b.WriteString(printCenterLine("Thank you!", width))
+	b.WriteByte('\n')
 	return b.String()
 }
 
@@ -706,4 +723,19 @@ func printPadLine(left, right string, width int) string {
 		spaces = 1
 	}
 	return l + strings.Repeat(" ", spaces) + r
+}
+
+func printCenterLine(text string, width int) string {
+	t := strings.TrimSpace(text)
+	if width <= 0 {
+		width = 32
+	}
+	if len(t) > width {
+		t = t[:width]
+	}
+	pad := width - len(t)
+	if pad <= 0 {
+		return t
+	}
+	return strings.Repeat(" ", pad/2) + t
 }
