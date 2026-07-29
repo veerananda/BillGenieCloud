@@ -149,7 +149,7 @@ func (h *ExpenseHandler) CreateExpense(c *gin.Context) {
 	})
 }
 
-// ListExpenses returns manual expenses for a month plus stock + total spend.
+// ListExpenses returns manual expenses for a month.
 func (h *ExpenseHandler) ListExpenses(c *gin.Context) {
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
@@ -177,11 +177,6 @@ func (h *ExpenseHandler) ListExpenses(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	stockTotal, err := sumStockExpenditure(h.db, restaurantID.(string), start, end)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"year":             year,
@@ -189,8 +184,8 @@ func (h *ExpenseHandler) ListExpenses(c *gin.Context) {
 		"period_label":     monthPeriodLabel(year, month),
 		"expenses":         manual,
 		"manual_total":     manualTotal,
-		"stock_total":      stockTotal,
-		"total":            manualTotal + stockTotal,
+		"stock_total":      0,
+		"total":            manualTotal,
 		"currency":         "INR",
 		"period_start":     start.Format(time.RFC3339),
 		"period_end":       end.Format(time.RFC3339),
@@ -237,12 +232,7 @@ func (h *ExpenseHandler) SettleReport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	stockTotal, err := sumStockExpenditure(h.db, restaurantID.(string), start, end)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	totalExpenses := manualTotal + stockTotal
+	totalExpenses := manualTotal
 
 	revenue, orders, aov, topItems, err := h.orderService.SalesStatsForRange(
 		restaurantID.(string), start.UTC(), end.UTC(), 5,
@@ -261,27 +251,10 @@ func (h *ExpenseHandler) SettleReport(c *gin.Context) {
 		Order("created_at DESC").
 		Find(&manual).Error
 
-	var stockRows []models.StockExpenditure
-	_ = h.db.Where("restaurant_id = ? AND created_at >= ? AND created_at < ?",
-		restaurantID.(string), start.UTC(), end.UTC()).
-		Order("created_at DESC").
-		Find(&stockRows).Error
-
-	lines := make([]ExpenseLine, 0, len(manual)+len(stockRows))
+	lines := make([]ExpenseLine, 0, len(manual))
 	for _, e := range manual {
 		lines = append(lines, ExpenseLine{
 			ID: e.ID, Name: e.Name, Amount: e.Amount, Source: "manual", CreatedAt: e.CreatedAt,
-		})
-	}
-	for _, s := range stockRows {
-		name := s.IngredientName
-		if name == "" {
-			name = "Stock refill"
-		} else {
-			name = "Stock refill: " + name
-		}
-		lines = append(lines, ExpenseLine{
-			ID: s.ID, Name: name, Amount: s.Amount, Source: "stock", CreatedAt: s.CreatedAt,
 		})
 	}
 
@@ -295,7 +268,7 @@ func (h *ExpenseHandler) SettleReport(c *gin.Context) {
 		"currency":            "INR",
 		"total_expenses":      totalExpenses,
 		"manual_expenses":     manualTotal,
-		"stock_expenses":      stockTotal,
+		"stock_expenses":      0,
 		"total_orders":        orders,
 		"total_revenue":       revenue,
 		"average_order_value": aov,
