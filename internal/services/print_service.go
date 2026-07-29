@@ -359,6 +359,86 @@ func (s *PrintService) enqueueBill(order *models.Order) (bool, error) {
 	return true, nil
 }
 
+// EnqueueTestPrint queues a short slip so staff can verify Wi‑Fi/LAN agent printing.
+// Target is "kot" or "bill". Returns queued=false when no printer host resolves.
+func (s *PrintService) EnqueueTestPrint(restaurantID, target string) (bool, error) {
+	settings, err := s.GetOrCreateSettings(restaurantID)
+	if err != nil {
+		return false, err
+	}
+
+	var jobType, printTarget string
+	var paperWidthMm int
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "kot":
+		jobType = PrintJobTypeKOT
+		printTarget = PrintTargetKOT
+		paperWidthMm = settings.KotPaperWidthMm
+	case "bill":
+		jobType = PrintJobTypeBill
+		printTarget = PrintTargetBill
+		paperWidthMm = settings.BillPaperWidthMm
+	default:
+		return false, fmt.Errorf("target must be kot or bill")
+	}
+
+	host, _ := resolvePrinter(settings, printTarget)
+	if host == "" {
+		return false, nil
+	}
+
+	var restaurant models.Restaurant
+	_ = s.db.Select("name").Where("id = ?", restaurantID).First(&restaurant).Error
+
+	text := buildTestPrintPayload(restaurant.Name, target, host, paperWidthMm)
+	job := models.PrintJob{
+		RestaurantID: restaurantID,
+		OrderID:      "",
+		JobType:      jobType,
+		Target:       printTarget,
+		PayloadText:  text,
+		Status:       PrintStatusPending,
+	}
+	if err := s.db.Create(&job).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func buildTestPrintPayload(restaurantName, target, host string, paperWidthMm int) string {
+	width := thermalColsForPaper(paperWidthMm)
+	divider := strings.Repeat("-", width)
+	label := "KOT"
+	if strings.EqualFold(target, "bill") {
+		label = "BILL"
+	}
+	var b strings.Builder
+	if name := strings.TrimSpace(restaurantName); name != "" {
+		b.WriteString(printCenterLine(name, width))
+		b.WriteByte('\n')
+	}
+	b.WriteString(printCenterLine("TEST PRINT", width))
+	b.WriteByte('\n')
+	b.WriteString(printCenterLine(label+" Wi-Fi / LAN", width))
+	b.WriteByte('\n')
+	b.WriteString(divider)
+	b.WriteByte('\n')
+	b.WriteString(fmt.Sprintf("Host: %s\n", host))
+	b.WriteString(time.Now().Format("02 Jan 2006 03:04 PM"))
+	b.WriteByte('\n')
+	b.WriteString(divider)
+	b.WriteByte('\n')
+	for _, line := range wrapPrintWords("If you can read this, the print agent can reach this printer.", width) {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	b.WriteString(divider)
+	b.WriteByte('\n')
+	b.WriteString(printCenterLine("BillGenie", width))
+	b.WriteByte('\n')
+	return b.String()
+}
+
 func (s *PrintService) loadOrderForPrint(orderID string) (*models.Order, error) {
 	var order models.Order
 	err := s.db.Preload("Items.MenuItem").Where("id = ?", orderID).First(&order).Error

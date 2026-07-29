@@ -34,6 +34,7 @@ func SetupPrintRoutes(router *gin.Engine, db *gorm.DB) {
 		restaurant.GET("/print-settings", middleware.RoleMiddleware("admin", "manager", "staff", "chef"), h.GetPrintSettings)
 		restaurant.PUT("/print-settings", middleware.RoleMiddleware("admin", "manager", "staff", "chef"), h.UpdatePrintSettings)
 		restaurant.POST("/print-settings/rotate-agent-key", middleware.RoleMiddleware("admin"), h.RotateAgentKey)
+		restaurant.POST("/print-settings/test", middleware.RoleMiddleware("admin", "manager", "staff", "chef"), h.EnqueueTestPrint)
 	}
 
 	orders := router.Group("/orders")
@@ -135,6 +136,62 @@ func (h *PrintHandler) RotateAgentKey(c *gin.Context) {
 		"settings":      settings,
 		"has_agent_key": true,
 		"message":       "Copy this key into the print agent now. It will not be shown again.",
+	})
+}
+
+func (h *PrintHandler) EnqueueTestPrint(c *gin.Context) {
+	restaurantID, _ := c.Get("restaurant_id")
+	roleVal, _ := c.Get("role")
+	role, _ := roleVal.(string)
+	var body struct {
+		Target string `json:"target"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	target := strings.ToLower(strings.TrimSpace(body.Target))
+	if target != "kot" && target != "bill" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "target must be kot or bill"})
+		return
+	}
+
+	settings, err := h.printService.GetOrCreateSettings(restaurantID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	isManager := role == "admin" || role == "manager"
+	if !isManager {
+		if target == "kot" && !settings.KotPrintingEnabled {
+			c.JSON(http.StatusForbidden, gin.H{"error": "KOT printing is disabled — ask an admin or manager to enable it"})
+			return
+		}
+		if target == "bill" && !settings.BillPrintingEnabled {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Bill printing is disabled — ask an admin or manager to enable it"})
+			return
+		}
+	}
+
+	queued, err := h.printService.EnqueueTestPrint(restaurantID.(string), target)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "queued": false})
+		return
+	}
+	if !queued {
+		label := "KOT"
+		if target == "bill" {
+			label = "bill"
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"queued":  false,
+			"message": label + " printer host is not set — save a Wi‑Fi / LAN IP first",
+		})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"queued":  true,
+		"message": "Test print queued. Keep the print agent running.",
 	})
 }
 
