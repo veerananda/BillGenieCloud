@@ -190,8 +190,9 @@ func (s *PrintService) FindRestaurantIDByAgentKey(rawKey string) (string, error)
 }
 
 // EnqueueKOTForOrder queues a kitchen slip when KOT printing is enabled.
-// isAddOn marks add-item fires (update order).
-func (s *PrintService) EnqueueKOTForOrder(order *models.Order, isAddOn bool) {
+// preferLatestBatch is kept for callers (create vs update); the ADD-ON label is
+// derived from whether an earlier KOT batch already exists on the order.
+func (s *PrintService) EnqueueKOTForOrder(order *models.Order, preferLatestBatch bool) {
 	if order == nil {
 		return
 	}
@@ -201,13 +202,13 @@ func (s *PrintService) EnqueueKOTForOrder(order *models.Order, isAddOn bool) {
 				log.Printf("print enqueue KOT panic: %v", r)
 			}
 		}()
-		if err := s.enqueueKOT(order, isAddOn); err != nil {
+		if err := s.enqueueKOT(order, preferLatestBatch); err != nil {
 			log.Printf("print enqueue KOT failed for order %s: %v", order.ID, err)
 		}
 	}()
 }
 
-func (s *PrintService) enqueueKOT(order *models.Order, isAddOn bool) error {
+func (s *PrintService) enqueueKOT(order *models.Order, preferLatestBatch bool) error {
 	settings, err := s.GetOrCreateSettings(order.RestaurantID)
 	if err != nil {
 		return err
@@ -229,39 +230,7 @@ func (s *PrintService) enqueueKOT(order *models.Order, isAddOn bool) error {
 	}
 	order = full
 
-	items := order.Items
-	if isAddOn {
-		latestSub := ""
-		for i := len(order.Items) - 1; i >= 0; i-- {
-			if order.Items[i].Status == "cancelled" {
-				continue
-			}
-			if order.Items[i].SubId != "" {
-				latestSub = order.Items[i].SubId
-				break
-			}
-		}
-		if latestSub != "" {
-			filtered := make([]models.OrderItem, 0)
-			for _, it := range order.Items {
-				if it.Status == "cancelled" {
-					continue
-				}
-				if it.SubId == latestSub {
-					filtered = append(filtered, it)
-				}
-			}
-			items = filtered
-		}
-	} else {
-		active := make([]models.OrderItem, 0, len(order.Items))
-		for _, it := range order.Items {
-			if it.Status != "cancelled" {
-				active = append(active, it)
-			}
-		}
-		items = active
-	}
+	items, isAddOn := selectKOTSlipItems(order.Items, preferLatestBatch)
 	if len(items) == 0 {
 		return nil
 	}
@@ -279,6 +248,55 @@ func (s *PrintService) enqueueKOT(order *models.Order, isAddOn bool) error {
 		Status:       PrintStatusPending,
 	}
 	return s.db.Create(&job).Error
+}
+
+// selectKOTSlipItems picks lines for the slip and whether to title it ADD-ON.
+// ADD-ON only when a prior non-cancelled kitchen batch (different sub_id) already exists.
+func selectKOTSlipItems(all []models.OrderItem, preferLatestBatch bool) (items []models.OrderItem, isAddOn bool) {
+	latestSub := ""
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].Status == "cancelled" {
+			continue
+		}
+		if all[i].SubId != "" {
+			latestSub = all[i].SubId
+			break
+		}
+	}
+
+	priorBatchExists := false
+	for _, it := range all {
+		if it.Status == "cancelled" {
+			continue
+		}
+		if latestSub != "" && preferLatestBatch {
+			if it.SubId == latestSub {
+				items = append(items, it)
+			} else {
+				priorBatchExists = true
+			}
+			continue
+		}
+		items = append(items, it)
+	}
+
+	if preferLatestBatch && latestSub != "" {
+		return items, priorBatchExists
+	}
+
+	// New order create: every active line shares one batch → never ADD-ON.
+	if latestSub == "" {
+		return items, false
+	}
+	for _, it := range all {
+		if it.Status == "cancelled" {
+			continue
+		}
+		if it.SubId != "" && it.SubId != latestSub {
+			return items, true
+		}
+	}
+	return items, false
 }
 
 // EnqueueBillForOrder queues a customer bill when bill printing is enabled.
