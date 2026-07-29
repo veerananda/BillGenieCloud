@@ -34,6 +34,7 @@ type BillSummaryView struct {
 	TicketNumber     int            `json:"ticket_number,omitempty"`
 	ServiceMode      string         `json:"service_mode,omitempty"`
 	CustomerName     string         `json:"customer_name,omitempty"`
+	CustomerPhone    string         `json:"customer_phone,omitempty"`
 	AttendedByName   string         `json:"attended_by_name,omitempty"`
 	Items            []BillItemView `json:"items"`
 	SubTotal         float64        `json:"sub_total"`
@@ -144,6 +145,7 @@ func BuildBillSummary(order *models.Order, restaurant *models.Restaurant) BillSu
 		TicketNumber:     ticketNumber,
 		ServiceMode:      order.ServiceMode,
 		CustomerName:     order.CustomerName,
+		CustomerPhone:    strings.TrimSpace(order.CustomerPhone),
 		AttendedByName:   AttendedByName(order),
 		Items:            items,
 		SubTotal:         subTotal,

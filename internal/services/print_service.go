@@ -671,8 +671,15 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	if order.TableNumber != "" && order.OrderType != "counter" {
 		b.WriteString(fmt.Sprintf("Table: %s\n", order.TableNumber))
 	}
-	if order.CustomerName != "" {
+	if order.CustomerName != "" &&
+		order.CustomerName != "Guest" &&
+		order.CustomerName != "Takeaway" &&
+		order.CustomerName != "Counter" &&
+		order.CustomerName != "Self Service" {
 		b.WriteString(fmt.Sprintf("Customer: %s\n", order.CustomerName))
+	}
+	if phone := strings.TrimSpace(order.CustomerPhone); phone != "" {
+		b.WriteString(fmt.Sprintf("Phone: %s\n", phone))
 	}
 	b.WriteString(time.Now().Format("02 Jan 2006 03:04 PM"))
 	b.WriteByte('\n')
