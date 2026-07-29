@@ -644,14 +644,14 @@ func buildKOTPayload(restaurant models.Restaurant, order *models.Order, items []
 		num = order.OrderNumber
 	}
 	if num > 0 {
-		b.WriteString(fmt.Sprintf("#%d\n", num))
+		b.WriteString(fmt.Sprintf("Order #%d\n", num))
 	}
 	if order.OrderType == "counter" {
 		mode := order.ServiceMode
 		if mode == "" {
 			mode = "eat_here"
 		}
-		b.WriteString(fmt.Sprintf("Counter · %s\n", mode))
+		b.WriteString(fmt.Sprintf("Counter - %s\n", mode))
 	} else if order.TableNumber != "" {
 		b.WriteString(fmt.Sprintf("Table: %s\n", order.TableNumber))
 	}
