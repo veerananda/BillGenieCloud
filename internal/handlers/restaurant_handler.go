@@ -134,25 +134,7 @@ func (h *RestaurantHandler) UpdateRestaurantProfile(c *gin.Context) {
 	if input.Address != "" {
 		restaurant.Address = input.Address
 	}
-	if input.State != "" || input.City != "" {
-		state := restaurant.State
-		if input.State != "" {
-			state = strings.TrimSpace(input.State)
-		}
-		city := restaurant.City
-		if input.City != "" {
-			city = strings.TrimSpace(input.City)
-		}
-		tier, ok := services.ResolveCityTier(state, city)
-		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "selected city is not valid for the selected state"})
-			return
-		}
-		restaurant.State = state
-		restaurant.City = city
-		restaurant.District = ""
-		restaurant.CityTier = tier
-	}
+	// State, city, and pricing tier are locked after signup — ignore any client updates.
 	if input.ContactNumber != "" {
 		restaurant.ContactNumber = input.ContactNumber
 	}
