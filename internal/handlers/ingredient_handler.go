@@ -163,40 +163,14 @@ func (h *IngredientHandler) CreateIngredient(c *gin.Context) {
 	// One inventory row per name within a unit family (e.g. onions grams/kg → onions kg).
 	existing, findErr := findIngredientByNameFamily(h.db, restaurantIDStr, name, req.Unit)
 	if findErr == nil {
-		updates := map[string]interface{}{}
-		if units.NormalizeUnit(existing.Unit) != canonical {
-			updates["unit"] = canonical
-			existing.Unit = canonical
-		}
-		if currentStock > 0 {
-			existing.CurrentStock += currentStock
-			updates["current_stock"] = existing.CurrentStock
-		}
-		if fullStock > existing.FullStock {
-			existing.FullStock = fullStock
-			updates["full_stock"] = fullStock
-		}
-		if alertQty > existing.AlertQuantity {
-			existing.AlertQuantity = alertQty
-			updates["alert_quantity"] = alertQty
-		}
-		if len(updates) > 0 {
-			if err := h.db.Model(&existing).Updates(updates).Error; err != nil {
-				log.Printf("❌ Ingredient merge update failed: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			_ = syncRecipeDenormalizedNames(h.db, restaurantIDStr, existing.ID, existing.Name, existing.Unit)
-		}
-
-		log.Printf("✅ Ingredient reused (no duplicate): %s [%s] (ID: %s)", existing.Name, existing.Unit, existing.ID)
-		if globalHub != nil {
-			BroadcastIngredientInventoryUpdate(globalHub, restaurantIDStr, existing)
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"message":    fmt.Sprintf("%s already exists in inventory (tracked as %s); duplicate not created", existing.Name, existing.Unit),
-			"ingredient": existing,
-			"reused":     true,
+		log.Printf("⚠️ Ingredient create rejected (already exists): %s [%s] (ID: %s)", existing.Name, existing.Unit, existing.ID)
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf(
+				"%s already exists in inventory (tracked as %s)",
+				existing.Name,
+				existing.Unit,
+			),
+			"ingredient_id": existing.ID,
 		})
 		return
 	}
