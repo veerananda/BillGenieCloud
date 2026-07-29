@@ -37,6 +37,7 @@ func (s *PrintService) GetOrCreateSettings(restaurantID string) (*models.Restaur
 	var settings models.RestaurantPrintSettings
 	err := s.db.Where("restaurant_id = ?", restaurantID).First(&settings).Error
 	if err == nil {
+		s.migrateLegacyAutoPrint(&settings)
 		return &settings, nil
 	}
 	if err != gorm.ErrRecordNotFound {
@@ -57,6 +58,22 @@ func (s *PrintService) GetOrCreateSettings(restaurantID string) (*models.Restaur
 	return &settings, nil
 }
 
+// migrateLegacyAutoPrint copies the old single checkout toggle onto dine-in + counter once.
+func (s *PrintService) migrateLegacyAutoPrint(settings *models.RestaurantPrintSettings) {
+	if settings == nil {
+		return
+	}
+	if !settings.BillAutoPrintOnCheckout || settings.BillAutoPrintDineIn || settings.BillAutoPrintCounter {
+		return
+	}
+	_ = s.db.Model(settings).Updates(map[string]interface{}{
+		"bill_auto_print_dine_in":  true,
+		"bill_auto_print_counter":  true,
+	}).Error
+	settings.BillAutoPrintDineIn = true
+	settings.BillAutoPrintCounter = true
+}
+
 type UpdatePrintSettingsInput struct {
 	BillPrinterHost     *string `json:"bill_printer_host"`
 	BillPrinterPort     *int    `json:"bill_printer_port"`
@@ -64,7 +81,9 @@ type UpdatePrintSettingsInput struct {
 	KotPrinterPort      *int    `json:"kot_printer_port"`
 	BillPrintingEnabled     *bool   `json:"bill_printing_enabled"`
 	KotPrintingEnabled      *bool   `json:"kot_printing_enabled"`
-	BillAutoPrintOnCheckout *bool   `json:"bill_auto_print_on_checkout"`
+	BillAutoPrintOnCheckout *bool   `json:"bill_auto_print_on_checkout"` // legacy: sets both channels
+	BillAutoPrintDineIn     *bool   `json:"bill_auto_print_dine_in"`
+	BillAutoPrintCounter    *bool   `json:"bill_auto_print_counter"`
 	BillPaperWidthMm        *int    `json:"bill_paper_width_mm"`
 	KotPaperWidthMm         *int    `json:"kot_paper_width_mm"`
 	TopFeedLines            *int    `json:"top_feed_lines"`
@@ -127,8 +146,20 @@ func (s *PrintService) UpdateSettings(restaurantID string, input UpdatePrintSett
 	if input.KotPrintingEnabled != nil {
 		updates["kot_printing_enabled"] = *input.KotPrintingEnabled
 	}
-	if input.BillAutoPrintOnCheckout != nil {
+	channelTouched := false
+	if input.BillAutoPrintDineIn != nil {
+		updates["bill_auto_print_dine_in"] = *input.BillAutoPrintDineIn
+		channelTouched = true
+	}
+	if input.BillAutoPrintCounter != nil {
+		updates["bill_auto_print_counter"] = *input.BillAutoPrintCounter
+		channelTouched = true
+	}
+	if input.BillAutoPrintOnCheckout != nil && !channelTouched {
+		// Older clients: one toggle applies to both channels.
 		updates["bill_auto_print_on_checkout"] = *input.BillAutoPrintOnCheckout
+		updates["bill_auto_print_dine_in"] = *input.BillAutoPrintOnCheckout
+		updates["bill_auto_print_counter"] = *input.BillAutoPrintOnCheckout
 	}
 	if input.BillPaperWidthMm != nil {
 		updates["bill_paper_width_mm"] = normalizePaperWidthMm(*input.BillPaperWidthMm)
@@ -148,7 +179,17 @@ func (s *PrintService) UpdateSettings(restaurantID string, input UpdatePrintSett
 	if err := s.db.Model(settings).Updates(updates).Error; err != nil {
 		return nil, err
 	}
-	return s.GetOrCreateSettings(restaurantID)
+	updated, err := s.GetOrCreateSettings(restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	// Keep legacy OR flag in sync for older app/web clients.
+	legacy := updated.BillAutoPrintDineIn || updated.BillAutoPrintCounter
+	if updated.BillAutoPrintOnCheckout != legacy {
+		_ = s.db.Model(updated).Update("bill_auto_print_on_checkout", legacy).Error
+		updated.BillAutoPrintOnCheckout = legacy
+	}
+	return updated, nil
 }
 
 // RotateAgentAPIKey generates a new agent key; plaintext is returned once.
@@ -738,6 +779,23 @@ func buildBillPayload(restaurant models.Restaurant, order *models.Order, items [
 	b.WriteByte('\n')
 	b.WriteString(printCenterLine("Thank you!", width))
 	b.WriteByte('\n')
+	if order.OrderType == "counter" {
+		if token := strings.TrimSpace(order.TrackingToken); token != "" {
+			trackingURL := BuildTrackingURL(token)
+			b.WriteString(divider)
+			b.WriteByte('\n')
+			b.WriteString(printCenterLine("Scan to track order", width))
+			b.WriteByte('\n')
+			b.WriteString("<<<BILLGENIE_QR>>>\n")
+			b.WriteString(trackingURL)
+			b.WriteByte('\n')
+			b.WriteString("<<<END_QR>>>\n")
+			for _, line := range wrapPrintWords(trackingURL, width) {
+				b.WriteString(printCenterLine(line, width))
+				b.WriteByte('\n')
+			}
+		}
+	}
 	return b.String()
 }
 

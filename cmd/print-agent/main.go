@@ -189,6 +189,61 @@ func clampFeed(n int) int {
 	return n
 }
 
+// expandBillGenieQRMarkers replaces <<<BILLGENIE_QR>>>...<<<END_QR>>> blocks with ESC/POS QR bytes.
+func expandBillGenieQRMarkers(text string) []byte {
+	const start = "<<<BILLGENIE_QR>>>"
+	const end = "<<<END_QR>>>"
+	var out bytes.Buffer
+	rest := text
+	for {
+		i := strings.Index(rest, start)
+		if i < 0 {
+			out.WriteString(rest)
+			break
+		}
+		out.WriteString(rest[:i])
+		rest = rest[i+len(start):]
+		j := strings.Index(rest, end)
+		if j < 0 {
+			out.WriteString(start)
+			out.WriteString(rest)
+			break
+		}
+		payload := strings.TrimSpace(rest[:j])
+		rest = rest[j+len(end):]
+		if payload != "" {
+			out.Write(buildESCPOSQRCode(payload, 5))
+			out.WriteByte('\n')
+		}
+	}
+	return out.Bytes()
+}
+
+// buildESCPOSQRCode encodes data as an Epson-compatible QR symbol (model 2).
+func buildESCPOSQRCode(data string, moduleSize byte) []byte {
+	if moduleSize < 1 {
+		moduleSize = 1
+	}
+	if moduleSize > 16 {
+		moduleSize = 16
+	}
+	payload := []byte(data)
+	var buf bytes.Buffer
+	// GS ( k — select model 2
+	buf.Write([]byte{0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00})
+	// module size
+	buf.Write([]byte{0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, moduleSize})
+	// error correction M (49)
+	buf.Write([]byte{0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31})
+	// store data
+	storeLen := len(payload) + 3
+	buf.Write([]byte{0x1d, 0x28, 0x6b, byte(storeLen & 0xff), byte((storeLen >> 8) & 0xff), 0x31, 0x50, 0x30})
+	buf.Write(payload)
+	// print
+	buf.Write([]byte{0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30})
+	return buf.Bytes()
+}
+
 func buildESCPOSPayload(text string, topFeed, bottomFeed int) []byte {
 	topFeed = clampFeed(topFeed)
 	bottomFeed = clampFeed(bottomFeed)
@@ -199,8 +254,9 @@ func buildESCPOSPayload(text string, topFeed, bottomFeed int) []byte {
 	}
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
 	normalized = strings.ReplaceAll(normalized, "\r", "\n")
-	buf.WriteString(normalized)
-	if !strings.HasSuffix(normalized, "\n") {
+	body := expandBillGenieQRMarkers(normalized)
+	buf.Write(body)
+	if len(body) == 0 || body[len(body)-1] != '\n' {
 		buf.WriteByte('\n')
 	}
 	// Advance paper past the print head before cutting (thermal head sits above cutter).
