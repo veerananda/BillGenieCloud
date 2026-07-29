@@ -146,8 +146,19 @@ func (h *PrintHandler) EnqueueBillPrint(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 		return
 	}
-	h.printService.EnqueueBillForOrder(order)
-	c.JSON(http.StatusAccepted, gin.H{"message": "bill print queued if enabled"})
+	queued, err := h.printService.EnqueueBillForOrder(order)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "queued": false})
+		return
+	}
+	if !queued {
+		c.JSON(http.StatusOK, gin.H{
+			"queued":  false,
+			"message": "bill print not queued (disabled or bill printer host not set)",
+		})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"queued": true, "message": "bill print queued"})
 }
 
 func (h *PrintHandler) ClaimJobs(c *gin.Context) {

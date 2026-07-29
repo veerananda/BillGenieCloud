@@ -404,7 +404,8 @@ func (h *OrderHandler) UpdateOrder(c *gin.Context) {
 		BroadcastIngredientInventoryUpdates(globalHub, restaurantID.(string), updatedIngredients)
 	}
 
-	if h.printService != nil {
+	// Only fire KOT when new items were added (not customer-name-only updates).
+	if h.printService != nil && len(req.Items) > 0 {
 		h.printService.EnqueueKOTForOrder(order, true)
 	}
 

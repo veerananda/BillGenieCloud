@@ -212,7 +212,14 @@ func (s *PrintService) enqueueKOT(order *models.Order, isAddOn bool) error {
 	if err != nil {
 		return err
 	}
-	if !settings.KotPrintingEnabled || strings.TrimSpace(settings.KotPrinterHost) == "" {
+	if !settings.KotPrintingEnabled {
+		return nil
+	}
+	if strings.TrimSpace(settings.KotPrinterHost) == "" {
+		log.Printf(
+			"print enqueue KOT skipped for order %s: kot printing enabled but kot_printer_host is empty (browser KOT may still print)",
+			order.ID,
+		)
 		return nil
 	}
 
@@ -260,9 +267,9 @@ func (s *PrintService) enqueueKOT(order *models.Order, isAddOn bool) error {
 	}
 
 	var restaurant models.Restaurant
-	_ = s.db.Select("name").Where("id = ?", order.RestaurantID).First(&restaurant).Error
+	_ = s.db.Select("name", "category_display_blocklist").Where("id = ?", order.RestaurantID).First(&restaurant).Error
 
-	text := buildKOTPayload(restaurant.Name, order, items, isAddOn)
+	text := buildKOTPayload(restaurant, order, items, isAddOn)
 	job := models.PrintJob{
 		RestaurantID: order.RestaurantID,
 		OrderID:      order.ID,
@@ -275,34 +282,30 @@ func (s *PrintService) enqueueKOT(order *models.Order, isAddOn bool) error {
 }
 
 // EnqueueBillForOrder queues a customer bill when bill printing is enabled.
-func (s *PrintService) EnqueueBillForOrder(order *models.Order) {
+// Returns whether a print job was actually created (false = disabled / no host / empty).
+func (s *PrintService) EnqueueBillForOrder(order *models.Order) (queued bool, err error) {
 	if order == nil {
-		return
+		return false, nil
 	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("print enqueue bill panic: %v", r)
-			}
-		}()
-		if err := s.enqueueBill(order); err != nil {
-			log.Printf("print enqueue bill failed for order %s: %v", order.ID, err)
-		}
-	}()
+	queued, err = s.enqueueBill(order)
+	if err != nil {
+		log.Printf("print enqueue bill failed for order %s: %v", order.ID, err)
+	}
+	return queued, err
 }
 
-func (s *PrintService) enqueueBill(order *models.Order) error {
+func (s *PrintService) enqueueBill(order *models.Order) (bool, error) {
 	settings, err := s.GetOrCreateSettings(order.RestaurantID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !settings.BillPrintingEnabled || strings.TrimSpace(settings.BillPrinterHost) == "" {
-		return nil
+		return false, nil
 	}
 
 	full, err := s.loadOrderForPrint(order.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	order = full
 
@@ -316,7 +319,7 @@ func (s *PrintService) enqueueBill(order *models.Order) error {
 		}
 	}
 	if len(active) == 0 {
-		return nil
+		return false, nil
 	}
 
 	text := buildBillPayload(restaurant, order, active, settings.BillPaperWidthMm)
@@ -328,7 +331,10 @@ func (s *PrintService) enqueueBill(order *models.Order) error {
 		PayloadText:  text,
 		Status:       PrintStatusPending,
 	}
-	return s.db.Create(&job).Error
+	if err := s.db.Create(&job).Error; err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *PrintService) loadOrderForPrint(orderID string) (*models.Order, error) {
@@ -470,11 +476,11 @@ func printItemDisplayName(it models.OrderItem, extraBlocklist []string) string {
 	return FormatItemDisplayName(name, category, it.VariantLabel, extraBlocklist)
 }
 
-func buildKOTPayload(restaurantName string, order *models.Order, items []models.OrderItem, isAddOn bool) string {
+func buildKOTPayload(restaurant models.Restaurant, order *models.Order, items []models.OrderItem, isAddOn bool) string {
 	var b strings.Builder
 	divider := "--------------------------------"
-	if restaurantName != "" {
-		b.WriteString(restaurantName)
+	if restaurant.Name != "" {
+		b.WriteString(restaurant.Name)
 		b.WriteByte('\n')
 	}
 	if isAddOn {
@@ -504,15 +510,10 @@ func buildKOTPayload(restaurantName string, order *models.Order, items []models.
 	b.WriteByte('\n')
 	b.WriteString(divider)
 	b.WriteByte('\n')
+	blocklist := ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
 	for _, it := range items {
-		name, category := printItemNameAndCategory(it)
-		if it.VariantLabel != "" && !strings.EqualFold(it.VariantLabel, "regular") {
-			name = fmt.Sprintf("%s (%s)", name, it.VariantLabel)
-		}
+		name := printItemDisplayName(it, blocklist)
 		b.WriteString(fmt.Sprintf("%d x %s\n", it.Quantity, name))
-		if category != "" {
-			b.WriteString(fmt.Sprintf("   [%s]\n", category))
-		}
 		if notes := strings.TrimSpace(it.Notes); notes != "" {
 			b.WriteString(fmt.Sprintf("   * %s\n", notes))
 		}
