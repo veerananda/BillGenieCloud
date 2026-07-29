@@ -592,14 +592,11 @@ func contextUserID(c *gin.Context) string {
 }
 
 // applyRestockItems adds stock for each item in a single transaction and returns updated rows.
-// Optional Price on each item is recorded as stock expenditure for monthly totals.
-func (h *IngredientHandler) applyRestockItems(restaurantID, createdBy string, items []RestockItem) ([]models.Ingredient, float64, error) {
+// Purchase price / stock expenditure is no longer recorded on restock.
+func (h *IngredientHandler) applyRestockItems(restaurantID, _createdBy string, items []RestockItem) ([]models.Ingredient, float64, error) {
 	type qtyLine struct {
-		id    string
-		qty   float64
-		price float64
-		name  string
-		unit  string
+		id  string
+		qty float64
 	}
 
 	// Load ingredients first so we can convert entry units → inventory units.
@@ -643,22 +640,14 @@ func (h *IngredientHandler) applyRestockItems(restaurantID, createdBy string, it
 		if err != nil {
 			return nil, 0, fmt.Errorf("ingredient %s: %w", id, err)
 		}
-		price := item.Price
-		if price < 0 {
-			price = 0
-		}
 		if idx, exists := indexByID[id]; exists {
 			ordered[idx].qty += qty
-			ordered[idx].price += price
 			continue
 		}
 		indexByID[id] = len(ordered)
 		ordered = append(ordered, qtyLine{
-			id:    id,
-			qty:   qty,
-			price: price,
-			name:  ing.Name,
-			unit:  ing.Unit,
+			id:  id,
+			qty: qty,
 		})
 	}
 	if len(ordered) == 0 {
@@ -666,7 +655,6 @@ func (h *IngredientHandler) applyRestockItems(restaurantID, createdBy string, it
 	}
 
 	updated := make([]models.Ingredient, 0, len(ordered))
-	var expenditureAdded float64
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		for _, line := range ordered {
 			var ingredient models.Ingredient
@@ -685,31 +673,13 @@ func (h *IngredientHandler) applyRestockItems(restaurantID, createdBy string, it
 				return err
 			}
 			updated = append(updated, ingredient)
-
-			if line.price > 0 {
-				ingID := line.id
-				entry := models.StockExpenditure{
-					RestaurantID:   restaurantID,
-					IngredientID:   &ingID,
-					IngredientName: line.name,
-					Amount:         line.price,
-					Quantity:       line.qty,
-					Unit:           line.unit,
-					Source:         "restock",
-					CreatedBy:      createdBy,
-				}
-				if err := tx.Create(&entry).Error; err != nil {
-					return err
-				}
-				expenditureAdded += line.price
-			}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, 0, err
 	}
-	return updated, expenditureAdded, nil
+	return updated, 0, nil
 }
 
 // RestockIngredient adds quantity to current_stock (refill) for one ingredient.
