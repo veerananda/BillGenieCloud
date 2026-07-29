@@ -813,7 +813,10 @@ type RestaurantPrintSettings struct {
 	KotPrinterPort       int       `json:"kot_printer_port" gorm:"default:9100"`
 	BillPrintingEnabled  bool      `json:"bill_printing_enabled" gorm:"default:false"`
 	KotPrintingEnabled   bool      `json:"kot_printing_enabled" gorm:"default:false"`
-	BillAutoPrintOnCheckout bool   `json:"bill_auto_print_on_checkout" gorm:"default:false"` // print bill after dine-in/counter payment
+	// BillAutoPrintOnCheckout is legacy; kept as dine-in OR counter for older clients.
+	BillAutoPrintOnCheckout bool `json:"bill_auto_print_on_checkout" gorm:"default:false"`
+	BillAutoPrintDineIn     bool `json:"bill_auto_print_dine_in" gorm:"default:false"`
+	BillAutoPrintCounter    bool `json:"bill_auto_print_counter" gorm:"default:false"`
 	BillPaperWidthMm     int       `json:"bill_paper_width_mm" gorm:"default:58"` // 58 or 80
 	KotPaperWidthMm      int       `json:"kot_paper_width_mm" gorm:"default:58"`  // 58 or 80
 	TopFeedLines         int       `json:"top_feed_lines" gorm:"default:0"`    // blank lines before slip content
