@@ -37,6 +37,8 @@ type RenewalQuote struct {
 	SubscriptionPhase     string                 `json:"subscription_phase"`
 	RequiresPlanSelection bool                   `json:"requires_plan_selection"`
 	RequiresPayment       bool                   `json:"requires_payment"`
+	AwaitingCustomDeal    bool                   `json:"awaiting_custom_deal"`
+	CustomDealRequest     *CustomDealRequest     `json:"custom_deal_request,omitempty"`
 	CurrentSelection      *SubscriptionSelection `json:"current_selection,omitempty"`
 }
 
@@ -126,6 +128,12 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 
 	requiresPlan := AllowsPlanReview(restaurant)
 	requiresPayment := cfg.Phase == SubscriptionPhasePendingPayment || IsSubscriptionAccessBlocked(restaurant)
+	awaitingCustom := HasPendingCustomDealRequest(cfg) && !cfg.IsCustomDeal()
+	if awaitingCustom {
+		// Payment opens only after platform applies negotiated pricing.
+		requiresPayment = false
+		requiresPlan = false
+	}
 
 	// Scheduled downgrade drives the next renewal amount unless caller overrides.
 	if selectionOverride == nil && cfg.PendingSelection != nil && !cfg.IsCustomDeal() {
@@ -136,6 +144,9 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 	if selectionOverride != nil {
 		if SelfServePlanChangesLocked(cfg) {
 			return nil, errors.New("this restaurant has a custom commercial deal — plan changes are managed by BillGenie")
+		}
+		if awaitingCustom {
+			return nil, errors.New("your custom plan request is being reviewed — wait for BillGenie to confirm pricing")
 		}
 		validated, err := ValidateSubscriptionSelection(*selectionOverride)
 		if err != nil {
@@ -153,6 +164,9 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 		billingCycle = "monthly"
 	}
 	subtotal, gst, total, amountPaise := quoteAmounts(quote, billingCycle)
+	if awaitingCustom {
+		subtotal, gst, total, amountPaise = 0, 0, 0, 0
+	}
 	daysRemaining := int(time.Until(restaurant.SubscriptionEnd).Hours() / 24)
 	currentSelection := selection
 
@@ -169,6 +183,8 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 		SubscriptionPhase:     cfg.Phase,
 		RequiresPlanSelection: requiresPlan,
 		RequiresPayment:       requiresPayment,
+		AwaitingCustomDeal:    awaitingCustom,
+		CustomDealRequest:     cfg.CustomDealRequest,
 		CurrentSelection:      &currentSelection,
 	}, nil
 }
@@ -179,17 +195,27 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 		return nil, err
 	}
 
+	if HasPendingCustomDealRequest(cfg) && !cfg.IsCustomDeal() {
+		return nil, errors.New("your custom plan request is being reviewed — payment opens after BillGenie confirms pricing")
+	}
+
 	requiresPlan := AllowsPlanReview(restaurant)
-	if requiresPlan && selectionOverride == nil && cfg.Phase != SubscriptionPhasePendingPayment {
+	if requiresPlan && selectionOverride == nil && cfg.Phase != SubscriptionPhasePendingPayment && !cfg.IsCustomDeal() {
 		return nil, errors.New("choose a subscription plan before payment")
 	}
 
-	if selectionOverride == nil && cfg.PendingSelection != nil {
+	if selectionOverride == nil && cfg.PendingSelection != nil && !cfg.IsCustomDeal() {
 		selection = *cfg.PendingSelection
 		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
 	}
 
-	if selectionOverride != nil {
+	if cfg.IsCustomDeal() {
+		selection = cfg.EffectiveSelection()
+		quote = QuoteFromCustomDeal(*cfg.CustomDeal)
+	} else if selectionOverride != nil {
+		if SelfServePlanChangesLocked(cfg) {
+			return nil, errors.New("this restaurant has a custom commercial deal — plan changes are managed by BillGenie")
+		}
 		validated, err := ValidateSubscriptionSelection(*selectionOverride)
 		if err != nil {
 			return nil, err
@@ -519,4 +545,59 @@ func (s *SubscriptionRenewalService) completeRenewalPayment(
 		return nil, err
 	}
 	return &result, nil
+}
+
+// RequestCustomDeal stores or updates a pending commercial-plan request for a restaurant.
+func (s *SubscriptionRenewalService) RequestCustomDeal(restaurantID string, req CustomDealRequest) (*CustomDealRequest, error) {
+	validated, err := ValidateCustomDealRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		return nil, err
+	}
+	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	if cfg.IsCustomDeal() {
+		return nil, errors.New("this restaurant already has a custom commercial deal — contact BillGenie to change it")
+	}
+
+	now := time.Now()
+	validated.Status = CustomDealRequestPending
+	validated.RequestedAt = &now
+	if validated.ContactPhone == "" {
+		validated.ContactPhone = strings.TrimSpace(restaurant.Phone)
+	}
+
+	cfg.CustomDealRequest = &validated
+	sel := SelectionFromCustomDealRequest(validated)
+	cfg.Selection = sel
+	cfg.Quote = SubscriptionQuote{
+		Selection: sel,
+		LineItems: []SubscriptionLineItem{{
+			ID:     "custom_deal_request",
+			Label:  "Custom plan request (awaiting quote)",
+			Amount: 0,
+		}},
+		BundledStaff:    IncludedStaffINR + sel.ExtraStaff,
+		BundledChefs:    IncludedChefsINR + sel.ExtraChefs,
+		BundledManagers: IncludedManagersINR + sel.ExtraManagers,
+	}
+	if restaurant.SubscriptionPlan == "" || restaurant.SubscriptionPlan == "trial" {
+		// keep trial plan label
+	} else if !cfg.HasEverPaid {
+		restaurant.SubscriptionPlan = "custom_pending"
+	}
+	restaurant.SubscriptionMonthlyPrice = 0
+
+	configJSON, err := MarshalSubscriptionConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	restaurant.SubscriptionConfig = configJSON
+	if err := s.db.Save(&restaurant).Error; err != nil {
+		return nil, err
+	}
+	return &validated, nil
 }
