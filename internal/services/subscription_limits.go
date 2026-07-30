@@ -50,12 +50,11 @@ type SubscriptionUsage struct {
 func LimitsFromSelection(sel SubscriptionSelection, monthlyPriceHint int) SubscriptionLimits {
 	sel, _ = ValidateSubscriptionSelection(sel)
 
-	maxStaff := IncludedStaffINR + sel.ExtraStaff
-	maxChefs := IncludedChefsINR + sel.ExtraChefs
+	maxStaff, maxChefs, maxManagers := BandSeatBundle(sel.MaxTables)
 	limits := SubscriptionLimits{
 		OperationMode:    "both",
 		MaxTables:        sel.MaxTables,
-		MaxManagers:      IncludedManagersINR + sel.ExtraManagers,
+		MaxManagers:      maxManagers,
 		MaxStaff:         maxStaff,
 		MaxChefs:         maxChefs,
 		MaxStaffAndChefs: maxStaff + maxChefs,
