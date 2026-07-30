@@ -49,14 +49,25 @@ const (
 	PriceInventoryINR       = 299
 	PriceExpensesINR        = 79
 
-	MaxExtraStaff    = 5
-	MaxExtraChefs    = 3
-	MaxExtraManagers = 2
+	MaxExtraStaff    = 0 // catalog seats are fixed per band; extras only via custom deal
+	MaxExtraChefs    = 0
+	MaxExtraManagers = 0
+
+	// Catalog seat bundles (totals, not add-ons).
+	StarterStaffINR    = 2
+	StarterChefsINR    = 1
+	StarterManagersINR = 1
+	GrowthStaffINR     = 4
+	GrowthChefsINR     = 2
+	GrowthManagersINR  = 1
+	ScaleStaffINR      = 5
+	ScaleChefsINR      = 3
+	ScaleManagersINR   = 1
 
 	IncludedAdminsINR      = 1
-	IncludedManagersINR    = 1
-	IncludedStaffINR       = 2
-	IncludedChefsINR       = 1
+	IncludedManagersINR    = StarterManagersINR // starter baseline / trial
+	IncludedStaffINR       = StarterStaffINR
+	IncludedChefsINR       = StarterChefsINR
 	IncludedHistoryDaysINR = 90
 	ExtendedHistoryDays    = 730
 	AnnualMultiplier       = 11
@@ -175,6 +186,18 @@ func NormalizeMaxTables(maxTables int) int {
 	return PlanScaleTables
 }
 
+// BandSeatBundle returns included staff/chef/manager seats for a catalog table band.
+func BandSeatBundle(maxTables int) (staff, chefs, managers int) {
+	switch PlanBandFromTables(maxTables) {
+	case PlanBandGrowth:
+		return GrowthStaffINR, GrowthChefsINR, GrowthManagersINR
+	case PlanBandScale:
+		return ScaleStaffINR, ScaleChefsINR, ScaleManagersINR
+	default:
+		return StarterStaffINR, StarterChefsINR, StarterManagersINR
+	}
+}
+
 func ValidateSubscriptionSelection(sel SubscriptionSelection) (SubscriptionSelection, error) {
 	switch sel.BillingCycle {
 	case "", "monthly":
@@ -188,10 +211,10 @@ func ValidateSubscriptionSelection(sel SubscriptionSelection) (SubscriptionSelec
 	sel.MaxTables = NormalizeMaxTables(sel.MaxTables)
 	sel.KitchenDineIn = true
 	sel.KitchenCounter = true
-
-	sel.ExtraStaff = clampCount(sel.ExtraStaff, MaxExtraStaff)
-	sel.ExtraChefs = clampCount(sel.ExtraChefs, MaxExtraChefs)
-	sel.ExtraManagers = clampCount(sel.ExtraManagers, MaxExtraManagers)
+	// Catalog plans bundle seats by band — self-serve extras are not sold.
+	sel.ExtraStaff = 0
+	sel.ExtraChefs = 0
+	sel.ExtraManagers = 0
 	return sel, nil
 }
 
@@ -256,41 +279,18 @@ func CalculateSubscriptionQuoteForTier(sel SubscriptionSelection, tier string) S
 	planPrice := bandMonthlyForTier(band, tier)
 	pricing := PricingForTier(tier)
 
-	bundledStaff := IncludedStaffINR + sel.ExtraStaff
-	bundledChefs := IncludedChefsINR + sel.ExtraChefs
-	bundledManagers := IncludedManagersINR + sel.ExtraManagers
+	bundledStaff, bundledChefs, bundledManagers := BandSeatBundle(sel.MaxTables)
 
 	lineItems := []SubscriptionLineItem{{
 		ID: "plan_" + band,
 		Label: fmt.Sprintf(
 			"%s — up to %d tables, dine-in + counter, kitchen, 1 admin + %d manager + %d staff + %d chef, %d-day history",
-			planBandDisplayName(band), sel.MaxTables, IncludedManagersINR, IncludedStaffINR, IncludedChefsINR, IncludedHistoryDaysINR,
+			planBandDisplayName(band), sel.MaxTables, bundledManagers, bundledStaff, bundledChefs, IncludedHistoryDaysINR,
 		),
 		Amount: planPrice,
 	}}
 	monthly := planPrice
 
-	if sel.ExtraStaff > 0 {
-		amount := sel.ExtraStaff * pricing.ExtraStaff
-		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "extra_staff", Label: fmt.Sprintf("Additional staff × %d", sel.ExtraStaff), Amount: amount,
-		})
-		monthly += amount
-	}
-	if sel.ExtraChefs > 0 {
-		amount := sel.ExtraChefs * pricing.ExtraChef
-		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "extra_chefs", Label: fmt.Sprintf("Additional chefs × %d", sel.ExtraChefs), Amount: amount,
-		})
-		monthly += amount
-	}
-	if sel.ExtraManagers > 0 {
-		amount := sel.ExtraManagers * pricing.ExtraManager
-		lineItems = append(lineItems, SubscriptionLineItem{
-			ID: "extra_managers", Label: fmt.Sprintf("Additional managers × %d", sel.ExtraManagers), Amount: amount,
-		})
-		monthly += amount
-	}
 	if sel.HistoryExtended {
 		lineItems = append(lineItems, SubscriptionLineItem{
 			ID: "history_extended", Label: "Order history — 2 years", Amount: pricing.HistoryExtended,

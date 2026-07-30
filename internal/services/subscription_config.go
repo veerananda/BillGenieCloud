@@ -32,12 +32,11 @@ func FixedTrialSelection() SubscriptionSelection {
 }
 
 func TrialSubscriptionLimits() SubscriptionLimits {
-	maxStaff := IncludedStaffINR
-	maxChefs := IncludedChefsINR
+	maxStaff, maxChefs, maxManagers := BandSeatBundle(PlanStarterTables)
 	return SubscriptionLimits{
 		OperationMode:    "both",
 		MaxTables:        PlanStarterTables,
-		MaxManagers:      IncludedManagersINR,
+		MaxManagers:      maxManagers,
 		MaxStaff:         maxStaff,
 		MaxChefs:         maxChefs,
 		MaxStaffAndChefs: maxStaff + maxChefs,

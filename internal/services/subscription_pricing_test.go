@@ -10,8 +10,8 @@ func TestCalculateSubscriptionQuoteStarter(t *testing.T) {
 	if quote.PlanBand != PlanBandStarter {
 		t.Fatalf("expected starter band, got %s", quote.PlanBand)
 	}
-	if quote.BundledStaff != IncludedStaffINR {
-		t.Fatalf("expected %d bundled staff, got %d", IncludedStaffINR, quote.BundledStaff)
+	if quote.BundledStaff != StarterStaffINR || quote.BundledChefs != StarterChefsINR {
+		t.Fatalf("starter seats: staff=%d chefs=%d", quote.BundledStaff, quote.BundledChefs)
 	}
 	if quote.Selection.MaxTables != PlanStarterTables {
 		t.Fatalf("expected %d tables, got %d", PlanStarterTables, quote.Selection.MaxTables)
@@ -28,6 +28,9 @@ func TestCalculateSubscriptionQuoteGrowthAndScale(t *testing.T) {
 	if gq.MonthlySubtotal != GrowthMonthlyTier2INR {
 		t.Fatalf("growth price: got %d want %d", gq.MonthlySubtotal, GrowthMonthlyTier2INR)
 	}
+	if gq.BundledStaff != GrowthStaffINR || gq.BundledChefs != GrowthChefsINR {
+		t.Fatalf("growth seats: staff=%d chefs=%d", gq.BundledStaff, gq.BundledChefs)
+	}
 
 	scale := DefaultSubscriptionSelection()
 	scale.MaxTables = 25
@@ -35,10 +38,14 @@ func TestCalculateSubscriptionQuoteGrowthAndScale(t *testing.T) {
 	if sq.PlanBand != PlanBandScale || sq.MonthlySubtotal != ScaleMonthlyTier2INR {
 		t.Fatalf("scale: band=%s price=%d", sq.PlanBand, sq.MonthlySubtotal)
 	}
+	if sq.BundledStaff != ScaleStaffINR || sq.BundledChefs != ScaleChefsINR {
+		t.Fatalf("scale seats: staff=%d chefs=%d", sq.BundledStaff, sq.BundledChefs)
+	}
 }
 
 func TestCalculateSubscriptionQuoteWithAddons(t *testing.T) {
 	sel := DefaultSubscriptionSelection()
+	// Catalog ignores seat extras — only optional add-ons are charged.
 	sel.ExtraStaff = 2
 	sel.ExtraChefs = 1
 	sel.ExtraManagers = 1
@@ -48,17 +55,17 @@ func TestCalculateSubscriptionQuoteWithAddons(t *testing.T) {
 
 	quote := CalculateSubscriptionQuote(sel)
 	want := StarterMonthlyTier2INR +
-		2*PriceExtraStaffINR +
-		PriceExtraChefINR +
-		PriceExtraManagerINR +
 		PriceHistoryExtendedINR +
 		PriceInventoryINR +
 		PriceExpensesINR
 	if quote.MonthlySubtotal != want {
 		t.Fatalf("expected %d, got %d", want, quote.MonthlySubtotal)
 	}
-	if quote.BundledStaff != IncludedStaffINR+2 {
-		t.Fatalf("expected %d staff seats, got %d", IncludedStaffINR+2, quote.BundledStaff)
+	if quote.BundledStaff != StarterStaffINR {
+		t.Fatalf("expected %d staff seats, got %d", StarterStaffINR, quote.BundledStaff)
+	}
+	if quote.Selection.ExtraStaff != 0 {
+		t.Fatalf("catalog extras should be cleared, got %d", quote.Selection.ExtraStaff)
 	}
 }
 
@@ -104,7 +111,7 @@ func TestValidateSubscriptionSelectionRejectsBadCycle(t *testing.T) {
 	}
 }
 
-func TestExtraSeatCaps(t *testing.T) {
+func TestCatalogClearsSeatExtras(t *testing.T) {
 	sel, err := ValidateSubscriptionSelection(SubscriptionSelection{
 		MaxTables:     10,
 		ExtraStaff:    99,
@@ -114,8 +121,8 @@ func TestExtraSeatCaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.ExtraStaff != MaxExtraStaff || sel.ExtraChefs != MaxExtraChefs || sel.ExtraManagers != MaxExtraManagers {
-		t.Fatalf("caps: staff=%d chefs=%d managers=%d", sel.ExtraStaff, sel.ExtraChefs, sel.ExtraManagers)
+	if sel.ExtraStaff != 0 || sel.ExtraChefs != 0 || sel.ExtraManagers != 0 {
+		t.Fatalf("extras should be 0, got staff=%d chefs=%d managers=%d", sel.ExtraStaff, sel.ExtraChefs, sel.ExtraManagers)
 	}
 }
 
@@ -149,11 +156,11 @@ func TestLimitsFromSelection(t *testing.T) {
 	if limits.MaxTables != PlanGrowthTables {
 		t.Fatalf("max tables: got %d", limits.MaxTables)
 	}
-	if limits.MaxStaff != IncludedStaffINR+1 {
-		t.Fatalf("max staff: got %d", limits.MaxStaff)
+	if limits.MaxStaff != GrowthStaffINR {
+		t.Fatalf("max staff: got %d want %d", limits.MaxStaff, GrowthStaffINR)
 	}
-	if limits.MaxChefs != IncludedChefsINR+2 {
-		t.Fatalf("max chefs: got %d", limits.MaxChefs)
+	if limits.MaxChefs != GrowthChefsINR {
+		t.Fatalf("max chefs: got %d want %d", limits.MaxChefs, GrowthChefsINR)
 	}
 	if limits.HistoryDays != IncludedHistoryDaysINR {
 		t.Fatalf("history days: got %d", limits.HistoryDays)
