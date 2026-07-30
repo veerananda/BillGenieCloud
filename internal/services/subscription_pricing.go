@@ -49,9 +49,9 @@ const (
 	PriceInventoryINR       = 299
 	PriceExpensesINR        = 79
 
-	MaxExtraStaff    = 5
-	MaxExtraChefs    = 3
-	MaxExtraManagers = 2
+	MaxExtraStaff    = 3 // total staff seats = IncludedStaffINR (2) + extras ≤ 5
+	MaxExtraChefs    = 2 // total chefs = IncludedChefsINR (1) + extras ≤ 3
+	MaxExtraManagers = 1 // total managers = IncludedManagersINR (1) + extras ≤ 2
 
 	IncludedAdminsINR      = 1
 	IncludedManagersINR    = 1
