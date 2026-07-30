@@ -55,6 +55,12 @@ func main() {
 
 	// Create router
 	router := gin.New()
+	// Fly sets Fly-Client-IP; never trust client-supplied X-Forwarded-For alone.
+	if cfg.Environment == "production" {
+		router.TrustedPlatform = "Fly-Client-IP"
+	} else if err := router.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
+		log.Printf("⚠️  SetTrustedProxies: %v", err)
+	}
 	router.Use(gin.Recovery())
 	if cfg.EnableLogging {
 		router.Use(gin.Logger())

@@ -28,6 +28,14 @@ fly secrets set CORS_ALLOWED_ORIGINS="https://thebillgenie.com,https://www.thebi
 
 No `*`. Include any staging origins you actually use.
 
+Also ensure localhost CORS is off in production (`fly.toml` sets `ENABLE_LOCALHOST_CORS_IN_PROD=false`). Redeploy after changing `fly.toml`, or unset any override:
+
+```bash
+fly secrets unset ENABLE_LOCALHOST_CORS_IN_PROD -a billgenie-api
+```
+
+(If the secret is unset, the `fly.toml` `[env]` value applies.)
+
 ### 3. Rotate if secrets were ever shared locally
 
 If `scripts/fly-secrets.env` (gitignored) held production values:
@@ -61,16 +69,20 @@ Deployed with `feat/security-p1-hardening`:
 
 ## Week 3 P2 (client token storage + public HTML / anti-enumeration)
 
-- Web: access JWT in `sessionStorage`; refresh JWT in httpOnly `bg_refresh` cookie (`SameSite=None; Secure` in production).
+- Web: access JWT in memory only (restored via httpOnly `bg_refresh` cookie on load); refresh JWT in httpOnly cookie (`SameSite=None; Secure` in production).
 - Mobile: access + refresh JWTs in `expo-secure-store` (migrates from AsyncStorage once).
 - Public track/bill error HTML escapes messages; forgot-password / login-recovery responses avoid account enumeration.
+- Login credential failures return a single generic message; account-state messages only after password verification.
 
 ### Verify P2
 
-- [ ] Web login sets `bg_refresh` cookie; refresh works after clearing `localStorage.refresh_token`
-- [ ] Closing the browser tab clears access token (cookie refresh still works next visit)
+- [ ] Web login sets `bg_refresh` cookie; refresh works after clearing any legacy `localStorage.refresh_token`
+- [ ] Full page reload restores session via cookie refresh (access token is not in sessionStorage)
 - [ ] Mobile login stores tokens in SecureStore
 - [ ] Forgot-password for unknown email returns the generic success message
+- [ ] Wrong password and unknown login number return the same error text
+- [ ] `ENABLE_LOCALHOST_CORS_IN_PROD=false` on Fly; CORS allowlist is production web origins only
+- [ ] Vercel security headers present (CSP, HSTS, X-Frame-Options)
 
 ## Week 4 P3 (platform ops + deps + public token review)
 
