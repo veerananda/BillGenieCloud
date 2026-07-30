@@ -207,8 +207,14 @@ type MenuItem struct {
 	CostPrice        float64   `json:"cost_price" gorm:"type:numeric(10,2)"` // For margin calculation
 	IsVeg            bool      `json:"is_veg" gorm:"default:false"`
 	IsAvailable      bool      `json:"is_available" gorm:"default:true"`
-	ReadilyAvailable bool      `json:"readily_available" gorm:"default:false"` // skip kitchen (e.g. water, packaged items)
-	IsTaxable        bool      `json:"is_taxable" gorm:"default:true"`         // false for MRP items already taxed (e.g. water bottle)
+	// AvailableChannels lists order channels where this item appears when is_available is true.
+	// Values: dine_in, counter_eat_here, counter_takeaway, swiggy, zomato.
+	AvailableChannels []string `json:"available_channels" gorm:"serializer:json;type:jsonb"`
+	// ChannelPrices maps channel id → unit price for that channel (base/Regular price).
+	// Missing channel falls back to Price / default variant price.
+	ChannelPrices map[string]float64 `json:"channel_prices" gorm:"serializer:json;type:jsonb"`
+	ReadilyAvailable bool `json:"readily_available" gorm:"default:false"` // skip kitchen (e.g. water, packaged items)
+	IsTaxable        bool `json:"is_taxable" gorm:"default:true"`         // false for MRP items already taxed (e.g. water bottle)
 	CreatedAt        time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt        time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 

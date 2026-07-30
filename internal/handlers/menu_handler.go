@@ -19,28 +19,32 @@ type MenuHandler struct {
 }
 
 type CreateMenuItemRequest struct {
-	Name             string                   `json:"name" validate:"required"`
-	Category         string                   `json:"category"`
-	Description      string                   `json:"description"`
-	Price            float64                  `json:"price" validate:"required,gt=0"`
-	CostPrice        float64                  `json:"cost_price"`
-	IsVeg            bool                     `json:"is_veg"`
-	ReadilyAvailable bool                     `json:"readily_available"`
-	IsTaxable        *bool                    `json:"is_taxable"`
-	Variants         []services.VariantInput  `json:"variants"`
+	Name              string                  `json:"name" validate:"required"`
+	Category          string                  `json:"category"`
+	Description       string                  `json:"description"`
+	Price             float64                 `json:"price" validate:"required,gt=0"`
+	CostPrice         float64                 `json:"cost_price"`
+	IsVeg             bool                    `json:"is_veg"`
+	ReadilyAvailable  bool                    `json:"readily_available"`
+	IsTaxable         *bool                   `json:"is_taxable"`
+	AvailableChannels []string                `json:"available_channels"`
+	ChannelPrices     map[string]float64      `json:"channel_prices"`
+	Variants          []services.VariantInput `json:"variants"`
 }
 
 type UpdateMenuItemRequest struct {
-	Name             string                   `json:"name"`
-	Category         string                   `json:"category"`
-	Description      string                   `json:"description"`
-	Price            float64                  `json:"price"`
-	CostPrice        float64                  `json:"cost_price"`
-	IsVeg            *bool                    `json:"is_veg"`
-	IsAvailable      *bool                    `json:"is_available"`
-	ReadilyAvailable *bool                    `json:"readily_available"`
-	IsTaxable        *bool                    `json:"is_taxable"`
-	Variants         *[]services.VariantInput `json:"variants"`
+	Name              string                   `json:"name"`
+	Category          string                   `json:"category"`
+	Description       string                   `json:"description"`
+	Price             float64                  `json:"price"`
+	CostPrice         float64                  `json:"cost_price"`
+	IsVeg             *bool                    `json:"is_veg"`
+	IsAvailable       *bool                    `json:"is_available"`
+	ReadilyAvailable  *bool                    `json:"readily_available"`
+	IsTaxable         *bool                    `json:"is_taxable"`
+	AvailableChannels *[]string                `json:"available_channels"`
+	ChannelPrices     *map[string]float64      `json:"channel_prices"`
+	Variants          *[]services.VariantInput `json:"variants"`
 }
 
 // NewMenuHandler creates a new menu handler
@@ -70,6 +74,8 @@ func isAvailabilityOnlyUpdate(req UpdateMenuItemRequest) bool {
 		req.IsVeg == nil &&
 		req.ReadilyAvailable == nil &&
 		req.IsTaxable == nil &&
+		req.AvailableChannels == nil &&
+		req.ChannelPrices == nil &&
 		req.Variants == nil
 }
 
@@ -118,6 +124,18 @@ func (h *MenuHandler) CreateMenuItem(c *gin.Context) {
 	if req.IsTaxable != nil {
 		menuItem.IsTaxable = *req.IsTaxable
 	}
+	channels, err := services.NormalizeMenuAvailableChannels(req.AvailableChannels, true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	menuItem.AvailableChannels = channels
+	channelPrices, err := services.NormalizeMenuChannelPrices(channels, req.ChannelPrices, req.Price)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	menuItem.ChannelPrices = channelPrices
 
 	if err := h.db.Create(menuItem).Error; err != nil {
 		log.Printf("❌ Menu item creation failed: %v", err)
@@ -340,6 +358,36 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 	}
 	if req.IsTaxable != nil {
 		updates["is_taxable"] = *req.IsTaxable
+	}
+	if req.AvailableChannels != nil {
+		channels, normErr := services.NormalizeMenuAvailableChannels(*req.AvailableChannels, false)
+		if normErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": normErr.Error()})
+			return
+		}
+		updates["available_channels"] = channels
+	}
+	if req.ChannelPrices != nil || req.AvailableChannels != nil {
+		channelsForPrices := item.AvailableChannels
+		if req.AvailableChannels != nil {
+			channelsForPrices = updates["available_channels"].([]string)
+		}
+		basePrice := item.Price
+		if req.Price > 0 {
+			basePrice = req.Price
+		}
+		var incomingPrices map[string]float64
+		if req.ChannelPrices != nil {
+			incomingPrices = *req.ChannelPrices
+		} else {
+			incomingPrices = item.ChannelPrices
+		}
+		channelPrices, priceErr := services.NormalizeMenuChannelPrices(channelsForPrices, incomingPrices, basePrice)
+		if priceErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": priceErr.Error()})
+			return
+		}
+		updates["channel_prices"] = channelPrices
 	}
 
 	if err := h.db.Model(&item).Updates(updates).Error; err != nil {

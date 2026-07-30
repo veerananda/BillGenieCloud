@@ -126,14 +126,15 @@ func (s *PlatformOpsService) BulkUploadMenu(restaurantID string, req BulkMenuUpl
 
 		if err == gorm.ErrRecordNotFound {
 			item := models.MenuItem{
-				ID:               uuid.New().String(),
-				RestaurantID:     restaurantID,
-				Name:             name,
-				Category:         category,
-				Price:            price,
-				IsVeg:            row.IsVeg,
-				IsAvailable:      row.IsAvailable,
-				ReadilyAvailable: row.IsReadilyAvailable,
+				ID:                uuid.New().String(),
+				RestaurantID:      restaurantID,
+				Name:              name,
+				Category:          category,
+				Price:             price,
+				IsVeg:             row.IsVeg,
+				IsAvailable:       row.IsAvailable,
+				ReadilyAvailable:  row.IsReadilyAvailable,
+				AvailableChannels: append([]string(nil), DefaultMenuAvailableChannels...),
 			}
 			if err := s.db.Create(&item).Error; err != nil {
 				result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Message: err.Error()})
