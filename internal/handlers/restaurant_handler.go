@@ -46,7 +46,7 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 	limits, _ := services.LoadSubscriptionLimits(h.db, &restaurant)
 	usage, _ := services.LoadSubscriptionUsage(h.db, restaurant.ID)
 	cfg := services.ParseStoredSubscriptionConfig(&restaurant)
-	selection := cfg.Selection
+	selection := cfg.EffectiveSelection()
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":                         restaurant.ID,
@@ -73,6 +73,7 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"subscription_plan":          restaurant.SubscriptionPlan,
 		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
 		"subscription_phase":         cfg.Phase,
+		"pricing_mode":               cfg.PricingMode,
 		"requires_plan_selection":    services.NeedsPlanSelection(&restaurant),
 		"can_change_plan":            services.CanChangePlanMidCycle(&restaurant),
 		"pending_selection":          cfg.PendingSelection,

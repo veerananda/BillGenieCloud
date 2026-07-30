@@ -81,9 +81,9 @@ func (s *SubscriptionRenewalService) loadRestaurant(restaurantID string) (*model
 	}
 
 	cfg := ParseStoredSubscriptionConfig(&restaurant)
-	selection := cfg.Selection
-	quote := CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
-	if cfg.Quote.MonthlySubtotal > 0 {
+	selection := cfg.EffectiveSelection()
+	quote := QuoteFromConfig(cfg, restaurant.CityTier)
+	if !cfg.IsCustomDeal() && cfg.Quote.MonthlySubtotal > 0 {
 		quote = cfg.Quote
 	}
 	return &restaurant, cfg, selection, quote, nil
@@ -128,18 +128,24 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 	requiresPayment := cfg.Phase == SubscriptionPhasePendingPayment || IsSubscriptionAccessBlocked(restaurant)
 
 	// Scheduled downgrade drives the next renewal amount unless caller overrides.
-	if selectionOverride == nil && cfg.PendingSelection != nil {
+	if selectionOverride == nil && cfg.PendingSelection != nil && !cfg.IsCustomDeal() {
 		selection = *cfg.PendingSelection
 		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
 	}
 
 	if selectionOverride != nil {
+		if SelfServePlanChangesLocked(cfg) {
+			return nil, errors.New("this restaurant has a custom commercial deal — plan changes are managed by BillGenie")
+		}
 		validated, err := ValidateSubscriptionSelection(*selectionOverride)
 		if err != nil {
 			return nil, err
 		}
 		selection = validated
 		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
+	} else if cfg.IsCustomDeal() {
+		quote = QuoteFromConfig(cfg, restaurant.CityTier)
+		selection = cfg.EffectiveSelection()
 	}
 
 	billingCycle := selection.BillingCycle
@@ -265,11 +271,28 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 }
 
 func (s *SubscriptionRenewalService) applyPaidSelection(restaurant *models.Restaurant, cfg StoredSubscriptionConfig, selection SubscriptionSelection, billingCycle string) error {
-	validated, err := ValidateSubscriptionSelection(selection)
-	if err != nil {
-		return err
+	var validated SubscriptionSelection
+	var quote SubscriptionQuote
+	var err error
+
+	if cfg.IsCustomDeal() {
+		// Renewals keep the negotiated deal price and selection.
+		validated = cfg.CustomDeal.Selection
+		if selection.BillingCycle != "" {
+			validated.BillingCycle = selection.BillingCycle
+			cfg.CustomDeal.Selection.BillingCycle = selection.BillingCycle
+		}
+		quote = QuoteFromCustomDeal(*cfg.CustomDeal)
+		cfg.PricingMode = PricingModeCustom
+	} else {
+		validated, err = ValidateSubscriptionSelection(selection)
+		if err != nil {
+			return err
+		}
+		quote = CalculateSubscriptionQuoteForTier(validated, restaurant.CityTier)
+		cfg.PricingMode = PricingModeCatalog
+		cfg.CustomDeal = nil
 	}
-	quote := CalculateSubscriptionQuoteForTier(validated, restaurant.CityTier)
 
 	counterModes := "both"
 	isSelfService := false
@@ -278,7 +301,11 @@ func (s *SubscriptionRenewalService) applyPaidSelection(restaurant *models.Resta
 	restaurant.IsSelfService = isSelfService
 	restaurant.CounterServiceModes = counterModes
 	restaurant.SubscriptionMonthlyPrice = quote.MonthlySubtotal
-	restaurant.SubscriptionPlan = SubscriptionPlanFromSelection(validated)
+	if cfg.IsCustomDeal() {
+		restaurant.SubscriptionPlan = "custom"
+	} else {
+		restaurant.SubscriptionPlan = SubscriptionPlanFromSelection(validated)
+	}
 
 	startMode := cfg.StartMode
 	if startMode == "" {

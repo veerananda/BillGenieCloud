@@ -114,6 +114,42 @@ func (h *PlatformHandler) UpdateSelection(c *gin.Context) {
 	})
 }
 
+// SetCustomDeal applies a negotiated commercial deal (price + capacity) for a restaurant.
+func (h *PlatformHandler) SetCustomDeal(c *gin.Context) {
+	var req services.SetCustomDealRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	restaurant, err := h.ops.SetCustomDeal(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Custom commercial deal applied",
+		"restaurant": h.ops.BuildSummaryPublic(restaurant),
+	})
+}
+
+// ClearCustomDeal reverts a restaurant to catalog pricing using its current selection.
+func (h *PlatformHandler) ClearCustomDeal(c *gin.Context) {
+	var req services.ClearCustomDealRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	restaurant, err := h.ops.ClearCustomDeal(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Custom deal cleared; catalog pricing restored",
+		"restaurant": h.ops.BuildSummaryPublic(restaurant),
+	})
+}
+
 // SetActive suspends or reactivates a restaurant tenant.
 func (h *PlatformHandler) SetActive(c *gin.Context) {
 	var req services.SetActiveRequest
