@@ -13,69 +13,64 @@ import (
 const (
 	// Legacy restaurants without subscription_config get generous grandfathered limits.
 	legacyMaxManagers   = 1
-	legacyMaxStaffChefs = 3
+	legacyMaxStaff      = 3
+	legacyMaxChefs      = 3
+	legacyMaxStaffChefs = 6
 	legacyMaxTables     = 50
 )
 
 type SubscriptionLimits struct {
-	IsLegacy              bool   `json:"is_legacy"`
-	OperationMode         string `json:"operation_mode"`
-	MaxTables             int    `json:"max_tables"`
-	MaxManagers           int    `json:"max_managers"`
-	MaxStaffAndChefs      int    `json:"max_staff_and_chefs"`
-	MaxChefs              int    `json:"max_chefs,omitempty"`
-	HistoryDays           int    `json:"history_days"`
-	KitchenDineIn         bool   `json:"kitchen_dine_in"`
-	KitchenCounter bool `json:"kitchen_counter"`
-	Inventory      bool `json:"inventory"`
-	DineInEnabled  bool `json:"dine_in_enabled"`
-	CounterEnabled        bool   `json:"counter_enabled"`
-	MonthlyPrice          int    `json:"monthly_price"`
+	IsLegacy         bool   `json:"is_legacy"`
+	OperationMode    string `json:"operation_mode"`
+	MaxTables        int    `json:"max_tables"`
+	MaxManagers      int    `json:"max_managers"`
+	MaxStaff         int    `json:"max_staff"`
+	MaxChefs         int    `json:"max_chefs"`
+	MaxStaffAndChefs int    `json:"max_staff_and_chefs"` // MaxStaff + MaxChefs (compat)
+	HistoryDays      int    `json:"history_days"`
+	KitchenDineIn    bool   `json:"kitchen_dine_in"`
+	KitchenCounter   bool   `json:"kitchen_counter"`
+	Inventory        bool   `json:"inventory"`
+	Expenses         bool   `json:"expenses"`
+	DineInEnabled    bool   `json:"dine_in_enabled"`
+	CounterEnabled   bool   `json:"counter_enabled"`
+	MonthlyPrice     int    `json:"monthly_price"`
 }
 
 type SubscriptionUsage struct {
-	Tables         int64 `json:"tables"`
-	Managers       int64 `json:"managers"`
-	StaffAndChefs  int64 `json:"staff_and_chefs"`
-	Admins         int64 `json:"admins"`
+	Tables        int64 `json:"tables"`
+	Managers      int64 `json:"managers"`
+	Staff         int64 `json:"staff"`
+	Chefs         int64 `json:"chefs"`
+	StaffAndChefs int64 `json:"staff_and_chefs"`
+	Admins        int64 `json:"admins"`
 }
 
 // LimitsFromSelection builds enforcement limits from a plan selection.
 func LimitsFromSelection(sel SubscriptionSelection, monthlyPriceHint int) SubscriptionLimits {
-	maxTables := 0
-	if sel.OperationMode != "counter" {
-		maxTables = NormalizeMaxTables(sel.MaxTables)
-	}
+	sel, _ = ValidateSubscriptionSelection(sel)
 
+	maxStaff := IncludedStaffINR + sel.ExtraStaff
+	maxChefs := IncludedChefsINR + sel.ExtraChefs
 	limits := SubscriptionLimits{
-		OperationMode:    sel.OperationMode,
-		MaxManagers:      BundledManagersFromTables(maxTables) + sel.ExtraManagers,
-		MaxStaffAndChefs: BundledStaffFromTables(maxTables) + sel.ExtraStaff,
+		OperationMode:    "both",
+		MaxTables:        sel.MaxTables,
+		MaxManagers:      IncludedManagersINR + sel.ExtraManagers,
+		MaxStaff:         maxStaff,
+		MaxChefs:         maxChefs,
+		MaxStaffAndChefs: maxStaff + maxChefs,
 		HistoryDays:      IncludedHistoryDaysINR,
-		KitchenDineIn:    sel.KitchenDineIn,
-		KitchenCounter:   sel.KitchenCounter,
+		KitchenDineIn:    true,
+		KitchenCounter:   true,
 		Inventory:        sel.Inventory,
+		Expenses:         sel.Expenses,
+		DineInEnabled:    true,
+		CounterEnabled:   true,
 		MonthlyPrice:     monthlyPriceHint,
 	}
 	if sel.HistoryExtended {
 		limits.HistoryDays = ExtendedHistoryDays
 	}
-
-	switch sel.OperationMode {
-	case "counter":
-		limits.CounterEnabled = true
-		limits.DineInEnabled = false
-		limits.MaxTables = 0
-	case "both":
-		limits.CounterEnabled = true
-		limits.DineInEnabled = true
-		limits.MaxTables = NormalizeMaxTables(sel.MaxTables)
-	default:
-		limits.DineInEnabled = true
-		limits.CounterEnabled = false
-		limits.MaxTables = NormalizeMaxTables(sel.MaxTables)
-	}
-
 	if limits.MonthlyPrice <= 0 {
 		limits.MonthlyPrice = CalculateSubscriptionQuote(sel).MonthlySubtotal
 	}
@@ -93,7 +88,13 @@ func UsageExceedsLimits(usage SubscriptionUsage, limits SubscriptionLimits) erro
 	if int(usage.Managers) > limits.MaxManagers {
 		return fmt.Errorf("you currently have %d managers but the new plan allows %d — remove managers before downgrading", usage.Managers, limits.MaxManagers)
 	}
-	if int(usage.StaffAndChefs) > limits.MaxStaffAndChefs {
+	if limits.MaxStaff > 0 && int(usage.Staff) > limits.MaxStaff {
+		return fmt.Errorf("you currently have %d staff but the new plan allows %d — remove staff before downgrading", usage.Staff, limits.MaxStaff)
+	}
+	if limits.MaxChefs > 0 && int(usage.Chefs) > limits.MaxChefs {
+		return fmt.Errorf("you currently have %d chefs but the new plan allows %d — remove chefs before downgrading", usage.Chefs, limits.MaxChefs)
+	}
+	if limits.MaxStaff == 0 && limits.MaxChefs == 0 && int(usage.StaffAndChefs) > limits.MaxStaffAndChefs {
 		return fmt.Errorf("you currently have %d staff/chefs but the new plan allows %d — remove staff before downgrading", usage.StaffAndChefs, limits.MaxStaffAndChefs)
 	}
 	return nil
@@ -114,23 +115,26 @@ func LoadSubscriptionLimits(db *gorm.DB, restaurant *models.Restaurant) (Subscri
 		return limits, nil
 	}
 
-	return LimitsFromSelection(stored.Selection, restaurant.SubscriptionMonthlyPrice), nil
+	return LimitsFromConfig(stored, restaurant.SubscriptionMonthlyPrice), nil
 }
 
 func legacySubscriptionLimits(restaurant *models.Restaurant) SubscriptionLimits {
 	return SubscriptionLimits{
-		IsLegacy:              true,
-		OperationMode:         "both",
-		MaxTables:             legacyMaxTables,
-		MaxManagers:           legacyMaxManagers,
-		MaxStaffAndChefs:      legacyMaxStaffChefs,
-		HistoryDays:           ExtendedHistoryDays,
-		KitchenDineIn:         true,
-		KitchenCounter: true,
-		Inventory:      true,
-		DineInEnabled:  true,
-		CounterEnabled:        true,
-		MonthlyPrice:          restaurant.SubscriptionMonthlyPrice,
+		IsLegacy:         true,
+		OperationMode:    "both",
+		MaxTables:        legacyMaxTables,
+		MaxManagers:      legacyMaxManagers,
+		MaxStaff:         legacyMaxStaff,
+		MaxChefs:         legacyMaxChefs,
+		MaxStaffAndChefs: legacyMaxStaffChefs,
+		HistoryDays:      ExtendedHistoryDays,
+		KitchenDineIn:    true,
+		KitchenCounter:   true,
+		Inventory:        true,
+		Expenses:         true,
+		DineInEnabled:    true,
+		CounterEnabled:   true,
+		MonthlyPrice:     restaurant.SubscriptionMonthlyPrice,
 	}
 }
 
@@ -142,9 +146,13 @@ func LoadSubscriptionUsage(db *gorm.DB, restaurantID string) (SubscriptionUsage,
 	if err := db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "manager", true).Count(&usage.Managers).Error; err != nil {
 		return usage, err
 	}
-	if err := db.Model(&models.User{}).Where("restaurant_id = ? AND role IN ? AND is_active = ?", restaurantID, []string{"staff", "chef"}, true).Count(&usage.StaffAndChefs).Error; err != nil {
+	if err := db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "staff", true).Count(&usage.Staff).Error; err != nil {
 		return usage, err
 	}
+	if err := db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "chef", true).Count(&usage.Chefs).Error; err != nil {
+		return usage, err
+	}
+	usage.StaffAndChefs = usage.Staff + usage.Chefs
 	if err := db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "admin", true).Count(&usage.Admins).Error; err != nil {
 		return usage, err
 	}
@@ -192,7 +200,7 @@ func EnforceCreateTable(db *gorm.DB, restaurantID string) error {
 		return err
 	}
 	if int(count) >= limits.MaxTables {
-		return fmt.Errorf("table limit reached (%d/%d) — upgrade your plan to add more tables", count, limits.MaxTables)
+		return fmt.Errorf("table limit reached (%d/%d). Your plan allows up to %d tables; need more? Ask for a custom plan", count, limits.MaxTables, limits.MaxTables)
 	}
 	return nil
 }
@@ -207,32 +215,23 @@ func EnforceCreateUser(db *gorm.DB, restaurantID string, role string) error {
 		return err
 	}
 
-	var managers, staffChefs int64
+	var managers, staffCount, chefCount int64
 	db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "manager", true).Count(&managers)
-	db.Model(&models.User{}).Where("restaurant_id = ? AND role IN ? AND is_active = ?", restaurantID, []string{"staff", "chef"}, true).Count(&staffChefs)
+	db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "staff", true).Count(&staffCount)
+	db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "chef", true).Count(&chefCount)
 
 	switch role {
 	case "manager":
 		if int(managers) >= limits.MaxManagers {
-			return fmt.Errorf("manager limit reached (%d/%d) — increase table capacity or add manager seats in your subscription", managers, limits.MaxManagers)
+			return fmt.Errorf("manager limit reached (%d/%d) — add manager seats in your subscription", managers, limits.MaxManagers)
 		}
 	case "chef":
-		if !limits.KitchenDineIn && !limits.KitchenCounter {
-			return errors.New("chef accounts require a kitchen add-on on your plan")
-		}
-		if limits.MaxChefs > 0 {
-			var chefCount int64
-			db.Model(&models.User{}).Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurantID, "chef", true).Count(&chefCount)
-			if int(chefCount) >= limits.MaxChefs {
-				return fmt.Errorf("chef limit reached (%d/%d) on your plan", chefCount, limits.MaxChefs)
-			}
-		}
-		if int(staffChefs) >= limits.MaxStaffAndChefs {
-			return fmt.Errorf("staff limit reached (%d/%d) — increase table capacity or add staff seats in your subscription", staffChefs, limits.MaxStaffAndChefs)
+		if int(chefCount) >= limits.MaxChefs {
+			return fmt.Errorf("chef limit reached (%d/%d) — add chef seats in your subscription", chefCount, limits.MaxChefs)
 		}
 	case "staff":
-		if int(staffChefs) >= limits.MaxStaffAndChefs {
-			return fmt.Errorf("staff limit reached (%d/%d) — increase table capacity or add staff seats in your subscription", staffChefs, limits.MaxStaffAndChefs)
+		if int(staffCount) >= limits.MaxStaff {
+			return fmt.Errorf("staff limit reached (%d/%d) — add staff seats in your subscription", staffCount, limits.MaxStaff)
 		}
 	default:
 		return errors.New("invalid role")
@@ -322,6 +321,21 @@ func EnforceInventoryAccess(db *gorm.DB, restaurantID string) error {
 	}
 	if !limits.Inventory {
 		return errors.New("inventory management is not included in your plan")
+	}
+	return nil
+}
+
+func EnforceExpensesAccess(db *gorm.DB, restaurantID string) error {
+	var restaurant models.Restaurant
+	if err := db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		return err
+	}
+	limits, err := LoadSubscriptionLimits(db, &restaurant)
+	if err != nil {
+		return err
+	}
+	if !limits.Expenses {
+		return errors.New("expenses is not included in your plan — add the Expenses add-on")
 	}
 	return nil
 }

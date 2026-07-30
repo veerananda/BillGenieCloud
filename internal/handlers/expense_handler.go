@@ -107,11 +107,24 @@ func sumManualExpenses(db *gorm.DB, restaurantID string, start, end time.Time) (
 	return total, err
 }
 
-// CreateExpense adds a named expense to the restaurant ledger.
-func (h *ExpenseHandler) CreateExpense(c *gin.Context) {
-	restaurantID, exists := c.Get("restaurant_id")
+func (h *ExpenseHandler) requireExpensesAddon(c *gin.Context) (restaurantID string, ok bool) {
+	raw, exists := c.Get("restaurant_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return "", false
+	}
+	id := raw.(string)
+	if err := services.EnforceExpensesAccess(h.db, id); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "expenses_addon_required"})
+		return "", false
+	}
+	return id, true
+}
+
+// CreateExpense adds a named expense to the restaurant ledger.
+func (h *ExpenseHandler) CreateExpense(c *gin.Context) {
+	restaurantID, ok := h.requireExpensesAddon(c)
+	if !ok {
 		return
 	}
 
@@ -132,7 +145,7 @@ func (h *ExpenseHandler) CreateExpense(c *gin.Context) {
 	}
 
 	expense := models.Expense{
-		RestaurantID: restaurantID.(string),
+		RestaurantID: restaurantID,
 		Name:         name,
 		Amount:       req.Amount,
 		CreatedBy:    contextUserID(c),
@@ -151,9 +164,8 @@ func (h *ExpenseHandler) CreateExpense(c *gin.Context) {
 
 // ListExpenses returns manual expenses for a month.
 func (h *ExpenseHandler) ListExpenses(c *gin.Context) {
-	restaurantID, exists := c.Get("restaurant_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+	restaurantID, ok := h.requireExpensesAddon(c)
+	if !ok {
 		return
 	}
 
@@ -165,14 +177,14 @@ func (h *ExpenseHandler) ListExpenses(c *gin.Context) {
 
 	var manual []models.Expense
 	if err := h.db.Where("restaurant_id = ? AND created_at >= ? AND created_at < ?",
-		restaurantID.(string), start.UTC(), end.UTC()).
+		restaurantID, start.UTC(), end.UTC()).
 		Order("created_at DESC").
 		Find(&manual).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	manualTotal, err := sumManualExpenses(h.db, restaurantID.(string), start, end)
+	manualTotal, err := sumManualExpenses(h.db, restaurantID, start, end)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -194,14 +206,13 @@ func (h *ExpenseHandler) ListExpenses(c *gin.Context) {
 
 // DeleteExpense removes a manual expense entry.
 func (h *ExpenseHandler) DeleteExpense(c *gin.Context) {
-	restaurantID, exists := c.Get("restaurant_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+	restaurantID, ok := h.requireExpensesAddon(c)
+	if !ok {
 		return
 	}
 
 	id := c.Param("expense_id")
-	res := h.db.Where("id = ? AND restaurant_id = ?", id, restaurantID.(string)).Delete(&models.Expense{})
+	res := h.db.Where("id = ? AND restaurant_id = ?", id, restaurantID).Delete(&models.Expense{})
 	if res.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
 		return
@@ -215,9 +226,8 @@ func (h *ExpenseHandler) DeleteExpense(c *gin.Context) {
 
 // SettleReport builds a monthly settlement report: expenses + sales KPIs + top items.
 func (h *ExpenseHandler) SettleReport(c *gin.Context) {
-	restaurantID, exists := c.Get("restaurant_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+	restaurantID, ok := h.requireExpensesAddon(c)
+	if !ok {
 		return
 	}
 
@@ -227,7 +237,7 @@ func (h *ExpenseHandler) SettleReport(c *gin.Context) {
 		return
 	}
 
-	manualTotal, err := sumManualExpenses(h.db, restaurantID.(string), start, end)
+	manualTotal, err := sumManualExpenses(h.db, restaurantID, start, end)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -235,7 +245,7 @@ func (h *ExpenseHandler) SettleReport(c *gin.Context) {
 	totalExpenses := manualTotal
 
 	revenue, orders, aov, topItems, err := h.orderService.SalesStatsForRange(
-		restaurantID.(string), start.UTC(), end.UTC(), 5,
+		restaurantID, start.UTC(), end.UTC(), 5,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -243,11 +253,11 @@ func (h *ExpenseHandler) SettleReport(c *gin.Context) {
 	}
 
 	var restaurant models.Restaurant
-	_ = h.db.Select("id", "name").Where("id = ?", restaurantID.(string)).First(&restaurant).Error
+	_ = h.db.Select("id", "name").Where("id = ?", restaurantID).First(&restaurant).Error
 
 	var manual []models.Expense
 	_ = h.db.Where("restaurant_id = ? AND created_at >= ? AND created_at < ?",
-		restaurantID.(string), start.UTC(), end.UTC()).
+		restaurantID, start.UTC(), end.UTC()).
 		Order("created_at DESC").
 		Find(&manual).Error
 

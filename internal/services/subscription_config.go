@@ -19,27 +19,33 @@ func FixedTrialSelection() SubscriptionSelection {
 	return SubscriptionSelection{
 		BillingCycle:    "monthly",
 		OperationMode:   "both",
-		MaxTables:       IncludedTablesBasic,
+		MaxTables:       PlanStarterTables,
 		ExtraStaff:      0,
+		ExtraChefs:      0,
 		ExtraManagers:   0,
 		HistoryExtended: false,
 		Inventory:       false,
+		Expenses:        false,
 		KitchenDineIn:   true,
 		KitchenCounter:  true,
 	}
 }
 
 func TrialSubscriptionLimits() SubscriptionLimits {
+	maxStaff := IncludedStaffINR
+	maxChefs := IncludedChefsINR
 	return SubscriptionLimits{
 		OperationMode:    "both",
-		MaxTables:        IncludedTablesBasic,
-		MaxManagers:      1,
-		MaxStaffAndChefs: 3,
-		MaxChefs:         1,
+		MaxTables:        PlanStarterTables,
+		MaxManagers:      IncludedManagersINR,
+		MaxStaff:         maxStaff,
+		MaxChefs:         maxChefs,
+		MaxStaffAndChefs: maxStaff + maxChefs,
 		HistoryDays:      IncludedHistoryDaysINR,
 		KitchenDineIn:    true,
 		KitchenCounter:   true,
 		Inventory:        false,
+		Expenses:         false,
 		DineInEnabled:    true,
 		CounterEnabled:   true,
 	}
@@ -51,6 +57,8 @@ type StoredSubscriptionConfig struct {
 	Quote            SubscriptionQuote      `json:"quote"`
 	HasEverPaid      bool                   `json:"has_ever_paid"`
 	StartMode        string                 `json:"start_mode,omitempty"`
+	PricingMode      string                 `json:"pricing_mode,omitempty"` // catalog | custom
+	CustomDeal       *CustomDeal            `json:"custom_deal,omitempty"`
 	PendingSelection *SubscriptionSelection `json:"pending_selection,omitempty"`
 	PendingChangeAt  *time.Time             `json:"pending_change_at,omitempty"`
 	PeriodStartedAt  *time.Time             `json:"period_started_at,omitempty"`
@@ -61,6 +69,7 @@ func ParseStoredSubscriptionConfig(restaurant *models.Restaurant) StoredSubscrip
 		Phase:       SubscriptionPhaseTrial,
 		Selection:   DefaultSubscriptionSelection(),
 		HasEverPaid: false,
+		PricingMode: PricingModeCatalog,
 	}
 	if restaurant == nil || len(restaurant.SubscriptionConfig) == 0 {
 		return cfg
@@ -68,7 +77,19 @@ func ParseStoredSubscriptionConfig(restaurant *models.Restaurant) StoredSubscrip
 	if err := json.Unmarshal(restaurant.SubscriptionConfig, &cfg); err != nil {
 		return cfg
 	}
-	if validated, err := ValidateSubscriptionSelection(cfg.Selection); err == nil {
+	if cfg.PricingMode == "" {
+		if cfg.CustomDeal != nil && cfg.CustomDeal.MonthlyPrice > 0 {
+			cfg.PricingMode = PricingModeCustom
+		} else {
+			cfg.PricingMode = PricingModeCatalog
+		}
+	}
+	if cfg.IsCustomDeal() {
+		if validated, err := ValidateCustomDeal(*cfg.CustomDeal); err == nil {
+			cfg.CustomDeal = &validated
+			cfg.Selection = validated.Selection
+		}
+	} else if validated, err := ValidateSubscriptionSelection(cfg.Selection); err == nil {
 		cfg.Selection = validated
 	}
 	if cfg.PendingSelection != nil {
@@ -142,6 +163,9 @@ func CanChangePlanMidCycle(restaurant *models.Restaurant) bool {
 		return false
 	}
 	cfg := ParseStoredSubscriptionConfig(restaurant)
+	if SelfServePlanChangesLocked(cfg) {
+		return false
+	}
 	if cfg.Phase != SubscriptionPhaseActive || !cfg.HasEverPaid {
 		return false
 	}

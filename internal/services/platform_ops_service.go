@@ -51,10 +51,23 @@ type PlatformRestaurantDetail struct {
 	Usage          SubscriptionUsage            `json:"usage"`
 	HasEverPaid    bool                         `json:"has_ever_paid"`
 	StartMode      string                       `json:"start_mode"`
+	PricingMode    string                       `json:"pricing_mode"`
+	CustomDeal     *CustomDeal                  `json:"custom_deal,omitempty"`
 	IsSelfService  bool                         `json:"is_self_service"`
 	CounterModes   string                       `json:"counter_service_modes"`
 	RecentRenewals []models.SubscriptionRenewal `json:"recent_renewals"`
 	AdminLoginHint string                       `json:"admin_login_hint,omitempty"`
+}
+
+type SetCustomDealRequest struct {
+	Deal         CustomDeal `json:"deal"`
+	Activate     bool       `json:"activate"`       // set phase active + has_ever_paid
+	DurationDays int        `json:"duration_days"`  // optional extend/set end from now
+	Reason       string     `json:"reason" validate:"required"`
+}
+
+type ClearCustomDealRequest struct {
+	Reason string `json:"reason" validate:"required"`
 }
 
 type GrantSubscriptionRequest struct {
@@ -169,11 +182,13 @@ func (s *PlatformOpsService) GetRestaurant(restaurantID string) (*PlatformRestau
 
 	return &PlatformRestaurantDetail{
 		PlatformRestaurantSummary: summary,
-		Selection:                 cfg.Selection,
+		Selection:                 cfg.EffectiveSelection(),
 		Limits:                    limits,
 		Usage:                     usage,
 		HasEverPaid:               cfg.HasEverPaid,
 		StartMode:                 cfg.StartMode,
+		PricingMode:               cfg.PricingMode,
+		CustomDeal:                cfg.CustomDeal,
 		IsSelfService:             restaurant.IsSelfService,
 		CounterModes:              restaurant.CounterServiceModes,
 		RecentRenewals:            renewals,
@@ -299,6 +314,9 @@ func (s *PlatformOpsService) UpdateSelection(restaurantID string, req UpdateSele
 
 	oldSnapshot, _ := json.Marshal(restaurant)
 	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	if cfg.IsCustomDeal() {
+		return nil, errors.New("restaurant has a custom commercial deal; update or clear the deal instead of catalog selection")
+	}
 	quote := CalculateSubscriptionQuote(validated)
 
 	counterModes := "both"
@@ -336,6 +354,129 @@ func (s *PlatformOpsService) UpdateSelection(restaurantID string, req UpdateSele
 	}
 
 	s.writePlatformAudit(restaurantID, actor, "platform_update_selection", reason, oldSnapshot, restaurant)
+	return &restaurant, nil
+}
+
+func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDealRequest, actor string) (*models.Restaurant, error) {
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		return nil, errors.New("reason is required")
+	}
+	deal, err := ValidateCustomDeal(req.Deal)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	deal.SetBy = actor
+	deal.SetAt = &now
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("restaurant not found")
+		}
+		return nil, err
+	}
+
+	oldSnapshot, _ := json.Marshal(restaurant)
+	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	quote := QuoteFromCustomDeal(deal)
+
+	cfg.PricingMode = PricingModeCustom
+	cfg.CustomDeal = &deal
+	cfg.Selection = deal.Selection
+	cfg.Quote = quote
+	cfg.PendingSelection = nil
+	cfg.PendingChangeAt = nil
+
+	if req.Activate {
+		cfg.Phase = SubscriptionPhaseActive
+		cfg.HasEverPaid = true
+		if cfg.StartMode == "" {
+			cfg.StartMode = "paid"
+		}
+		if cfg.PeriodStartedAt == nil {
+			cfg.PeriodStartedAt = &now
+		}
+	}
+
+	counterModes := "both"
+	isSelfService := false
+	ApplyOperationModeToRestaurant(&isSelfService, &counterModes, deal.Selection.OperationMode)
+	restaurant.IsSelfService = isSelfService
+	restaurant.CounterServiceModes = counterModes
+	restaurant.SubscriptionMonthlyPrice = deal.MonthlyPrice
+	restaurant.SubscriptionPlan = "custom"
+
+	if req.DurationDays > 0 {
+		restaurant.SubscriptionEnd = time.Now().AddDate(0, 0, req.DurationDays)
+	} else if req.Activate && (restaurant.SubscriptionEnd.IsZero() || restaurant.SubscriptionEnd.Before(time.Now())) {
+		cycle := deal.Selection.BillingCycle
+		if cycle == "" {
+			cycle = "monthly"
+		}
+		restaurant.SubscriptionEnd = NextSubscriptionEnd(time.Time{}, cycle)
+	}
+
+	configJSON, err := MarshalSubscriptionConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	restaurant.SubscriptionConfig = configJSON
+
+	if err := s.db.Save(&restaurant).Error; err != nil {
+		return nil, err
+	}
+
+	s.writePlatformAudit(restaurantID, actor, "platform_set_custom_deal", reason, oldSnapshot, restaurant)
+	return &restaurant, nil
+}
+
+func (s *PlatformOpsService) ClearCustomDeal(restaurantID string, req ClearCustomDealRequest, actor string) (*models.Restaurant, error) {
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		return nil, errors.New("reason is required")
+	}
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("restaurant not found")
+		}
+		return nil, err
+	}
+
+	oldSnapshot, _ := json.Marshal(restaurant)
+	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	sel := cfg.Selection
+	if cfg.CustomDeal != nil {
+		sel = cfg.CustomDeal.Selection
+	}
+	validated, err := ValidateSubscriptionSelection(sel)
+	if err != nil {
+		validated = DefaultSubscriptionSelection()
+	}
+	quote := CalculateSubscriptionQuoteForTier(validated, restaurant.CityTier)
+
+	cfg.PricingMode = PricingModeCatalog
+	cfg.CustomDeal = nil
+	cfg.Selection = validated
+	cfg.Quote = quote
+
+	restaurant.SubscriptionMonthlyPrice = quote.MonthlySubtotal
+	restaurant.SubscriptionPlan = SubscriptionPlanFromSelection(validated)
+
+	configJSON, err := MarshalSubscriptionConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	restaurant.SubscriptionConfig = configJSON
+
+	if err := s.db.Save(&restaurant).Error; err != nil {
+		return nil, err
+	}
+
+	s.writePlatformAudit(restaurantID, actor, "platform_clear_custom_deal", reason, oldSnapshot, restaurant)
 	return &restaurant, nil
 }
 

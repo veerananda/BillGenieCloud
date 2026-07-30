@@ -406,6 +406,8 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 		platform.POST("/restaurants/:restaurant_id/grant-subscription", platformHandler.GrantSubscription)
 		platform.POST("/restaurants/:restaurant_id/extend-trial", platformHandler.ExtendTrial)
 		platform.PUT("/restaurants/:restaurant_id/selection", platformHandler.UpdateSelection)
+		platform.PUT("/restaurants/:restaurant_id/custom-deal", platformHandler.SetCustomDeal)
+		platform.DELETE("/restaurants/:restaurant_id/custom-deal", platformHandler.ClearCustomDeal)
 		platform.PUT("/restaurants/:restaurant_id/active", platformHandler.SetActive)
 		platform.POST("/restaurants/:restaurant_id/approve", platformHandler.ApproveRestaurant)
 		platform.DELETE("/restaurants/:restaurant_id", platformHandler.DeleteRestaurant)

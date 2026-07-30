@@ -93,6 +93,9 @@ func (s *SubscriptionRenewalService) QuotePlanChange(restaurantID string, newSel
 		return nil, err
 	}
 	if !CanChangePlanMidCycle(restaurant) {
+		if SelfServePlanChangesLocked(cfg) {
+			return nil, errors.New("this restaurant has a custom commercial deal — contact BillGenie to change the plan")
+		}
 		return nil, errors.New("plan changes are only available for an active paid subscription; renew instead")
 	}
 
@@ -186,9 +189,11 @@ func selectionEqual(a, b SubscriptionSelection) bool {
 		a.OperationMode == b.OperationMode &&
 		a.MaxTables == b.MaxTables &&
 		a.ExtraStaff == b.ExtraStaff &&
+		a.ExtraChefs == b.ExtraChefs &&
 		a.ExtraManagers == b.ExtraManagers &&
 		a.HistoryExtended == b.HistoryExtended &&
 		a.Inventory == b.Inventory &&
+		a.Expenses == b.Expenses &&
 		a.KitchenDineIn == b.KitchenDineIn &&
 		a.KitchenCounter == b.KitchenCounter
 }
