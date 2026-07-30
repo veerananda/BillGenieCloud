@@ -2,6 +2,38 @@ package services
 
 import "testing"
 
+func TestValidateCustomDealRequestDefaults(t *testing.T) {
+	req, err := ValidateCustomDealRequest(CustomDealRequest{MaxTables: 10, Notes: " need 40 tables "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTables != PlanScaleTables+1 {
+		t.Fatalf("expected min tables %d, got %d", PlanScaleTables+1, req.MaxTables)
+	}
+	if req.BillingCycle != "monthly" {
+		t.Fatalf("expected monthly cycle")
+	}
+	if req.Notes != "need 40 tables" {
+		t.Fatalf("notes not trimmed: %q", req.Notes)
+	}
+	if req.Status != CustomDealRequestPending {
+		t.Fatalf("expected pending status")
+	}
+}
+
+func TestHasPendingCustomDealRequest(t *testing.T) {
+	cfg := StoredSubscriptionConfig{
+		CustomDealRequest: &CustomDealRequest{Status: CustomDealRequestPending, MaxTables: 40},
+	}
+	if !HasPendingCustomDealRequest(cfg) {
+		t.Fatal("expected pending")
+	}
+	cfg.CustomDealRequest.Status = CustomDealRequestFulfilled
+	if HasPendingCustomDealRequest(cfg) {
+		t.Fatal("fulfilled should not be pending")
+	}
+}
+
 func TestQuoteFromCustomDeal(t *testing.T) {
 	deal := CustomDeal{
 		MonthlyPrice: 4999,
@@ -33,19 +65,19 @@ func TestLimitsFromConfigCustomDeal(t *testing.T) {
 	deal := CustomDeal{
 		MonthlyPrice: 7999,
 		Selection: SubscriptionSelection{
-			BillingCycle:     "monthly",
-			MaxTables:        40,
-			ExtraStaff:       5,
-			ExtraChefs:       3,
-			ExtraManagers:    2,
-			Inventory:        true,
-			Expenses:         true,
-			HistoryExtended:  true,
-			KitchenDineIn:    true,
-			KitchenCounter:   true,
-			OperationMode:    "both",
+			BillingCycle:    "monthly",
+			MaxTables:       40,
+			ExtraStaff:      5,
+			ExtraChefs:      3,
+			ExtraManagers:   2,
+			Inventory:       true,
+			Expenses:        true,
+			HistoryExtended: true,
+			KitchenDineIn:   true,
+			KitchenCounter:  true,
+			OperationMode:   "both",
 		},
-		LimitsOverride: &CustomLimitsOverride{MaxTables: &tables},
+		LimitsOverride:       &CustomLimitsOverride{MaxTables: &tables},
 		LockSelfServeChanges: true,
 	}
 	cfg := StoredSubscriptionConfig{

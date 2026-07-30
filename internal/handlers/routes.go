@@ -374,6 +374,7 @@ func SetupSubscriptionRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("/verify-change-payment", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.VerifyPlanChangePayment)
 		protected.POST("/schedule-change", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.SchedulePlanChange)
 		protected.POST("/cancel-scheduled-change", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.CancelScheduledPlanChange)
+		protected.POST("/request-custom-deal", middleware.RoleMiddleware("admin"), subscriptionHandler.RequestCustomDeal)
 	}
 
 	log.Println("✅ Subscription routes registered")

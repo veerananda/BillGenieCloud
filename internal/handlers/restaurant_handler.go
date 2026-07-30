@@ -74,6 +74,8 @@ func (h *RestaurantHandler) GetRestaurantProfile(c *gin.Context) {
 		"subscription_monthly_price": restaurant.SubscriptionMonthlyPrice,
 		"subscription_phase":         cfg.Phase,
 		"pricing_mode":               cfg.PricingMode,
+		"awaiting_custom_deal":       services.HasPendingCustomDealRequest(cfg) && !cfg.IsCustomDeal(),
+		"custom_deal_request":        cfg.CustomDealRequest,
 		"requires_plan_selection":    services.NeedsPlanSelection(&restaurant),
 		"can_change_plan":            services.CanChangePlanMidCycle(&restaurant),
 		"pending_selection":          cfg.PendingSelection,

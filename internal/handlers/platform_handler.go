@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"restaurant-api/internal/services"
 
@@ -30,10 +31,11 @@ func (h *PlatformHandler) platformActor(c *gin.Context) string {
 func (h *PlatformHandler) ListRestaurants(c *gin.Context) {
 	search := c.Query("search")
 	phase := c.Query("phase")
+	customPending := strings.EqualFold(c.Query("custom_deal_pending"), "true") || c.Query("custom_deal_pending") == "1"
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	items, total, err := h.ops.ListRestaurants(search, phase, limit, offset)
+	items, total, err := h.ops.ListRestaurants(search, phase, customPending, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

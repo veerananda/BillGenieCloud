@@ -35,6 +35,83 @@ type CustomDeal struct {
 	SetAt                *time.Time             `json:"set_at,omitempty"`
 }
 
+const (
+	CustomDealRequestPending   = "pending"
+	CustomDealRequestFulfilled = "fulfilled"
+	CustomDealRequestCancelled = "cancelled"
+)
+
+// CustomDealRequest is submitted from app/web when the restaurant needs a negotiated plan.
+// Price is never set by the customer — platform ops applies a CustomDeal after review.
+type CustomDealRequest struct {
+	MaxTables       int        `json:"max_tables"`
+	ExtraStaff      int        `json:"extra_staff"`
+	ExtraChefs      int        `json:"extra_chefs"`
+	ExtraManagers   int        `json:"extra_managers"`
+	Inventory       bool       `json:"inventory"`
+	Expenses        bool       `json:"expenses"`
+	HistoryExtended bool       `json:"history_extended"`
+	BillingCycle    string     `json:"billing_cycle"`
+	Notes           string     `json:"notes,omitempty"`
+	ContactPhone    string     `json:"contact_phone,omitempty"`
+	Status          string     `json:"status"`
+	RequestedAt     *time.Time `json:"requested_at,omitempty"`
+}
+
+func HasPendingCustomDealRequest(cfg StoredSubscriptionConfig) bool {
+	return cfg.CustomDealRequest != nil &&
+		strings.EqualFold(strings.TrimSpace(cfg.CustomDealRequest.Status), CustomDealRequestPending)
+}
+
+func ValidateCustomDealRequest(req CustomDealRequest) (CustomDealRequest, error) {
+	switch req.BillingCycle {
+	case "", "monthly":
+		req.BillingCycle = "monthly"
+	case "annual":
+	default:
+		return req, errors.New("billing_cycle must be monthly or annual")
+	}
+	if req.MaxTables < PlanScaleTables+1 {
+		req.MaxTables = PlanScaleTables + 1 // custom starts above catalog Scale (25)
+	}
+	if req.MaxTables > MaxTablesCustomDeal {
+		req.MaxTables = MaxTablesCustomDeal
+	}
+	req.ExtraStaff = clampCount(req.ExtraStaff, 100)
+	req.ExtraChefs = clampCount(req.ExtraChefs, 50)
+	req.ExtraManagers = clampCount(req.ExtraManagers, 50)
+	req.Notes = strings.TrimSpace(req.Notes)
+	req.ContactPhone = strings.TrimSpace(req.ContactPhone)
+	if len(req.Notes) > 2000 {
+		return req, errors.New("notes must be at most 2000 characters")
+	}
+	if req.Status == "" {
+		req.Status = CustomDealRequestPending
+	}
+	return req, nil
+}
+
+func SelectionFromCustomDealRequest(req CustomDealRequest) SubscriptionSelection {
+	sel := SubscriptionSelection{
+		BillingCycle:    req.BillingCycle,
+		OperationMode:   "both",
+		MaxTables:       req.MaxTables,
+		ExtraStaff:      req.ExtraStaff,
+		ExtraChefs:      req.ExtraChefs,
+		ExtraManagers:   req.ExtraManagers,
+		HistoryExtended: req.HistoryExtended,
+		Inventory:       req.Inventory,
+		Expenses:        req.Expenses,
+		KitchenDineIn:   true,
+		KitchenCounter:  true,
+	}
+	validated, err := ValidateCustomDealSelection(sel)
+	if err != nil {
+		return sel
+	}
+	return validated
+}
+
 func (cfg StoredSubscriptionConfig) IsCustomDeal() bool {
 	mode := strings.ToLower(strings.TrimSpace(cfg.PricingMode))
 	return mode == PricingModeCustom && cfg.CustomDeal != nil && cfg.CustomDeal.MonthlyPrice > 0

@@ -50,19 +50,20 @@ type AuthResponse struct {
 }
 
 type RegisterRequest struct {
-	StartMode      string `json:"start_mode" validate:"required,oneof=trial paid"`
-	RestaurantName string `json:"restaurant_name" validate:"required"`
-	OwnerName      string `json:"owner_name" validate:"required"`
-	Email          string `json:"email" validate:"required,email"`
-	Phone          string `json:"phone" validate:"required"`
-	Password       string `json:"password" validate:"required,min=8"`
-	LoginID        string `json:"login_id" validate:"required"`
-	Address        string `json:"address"`
-	City           string `json:"city"`
-	State          string `json:"state"`
-	District       string `json:"district"` // deprecated; city dropdown is the source of truth
-	Cuisine        string `json:"cuisine"`
-	Subscription   *SubscriptionSelection `json:"subscription"`
+	StartMode         string              `json:"start_mode" validate:"required,oneof=trial paid custom_request"`
+	RestaurantName    string              `json:"restaurant_name" validate:"required"`
+	OwnerName         string              `json:"owner_name" validate:"required"`
+	Email             string              `json:"email" validate:"required,email"`
+	Phone             string              `json:"phone" validate:"required"`
+	Password          string              `json:"password" validate:"required,min=8"`
+	LoginID           string              `json:"login_id" validate:"required"`
+	Address           string              `json:"address"`
+	City              string              `json:"city"`
+	State             string              `json:"state"`
+	District          string              `json:"district"` // deprecated; city dropdown is the source of truth
+	Cuisine           string              `json:"cuisine"`
+	Subscription      *SubscriptionSelection `json:"subscription"`
+	CustomDealRequest *CustomDealRequest  `json:"custom_deal_request"`
 }
 
 type LoginRequest struct {
@@ -117,16 +118,44 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 	}
 
 	startMode := strings.ToLower(strings.TrimSpace(req.StartMode))
-	if startMode != "trial" && startMode != "paid" {
-		return nil, nil, errors.New("start_mode must be trial or paid")
+	if startMode != "trial" && startMode != "paid" && startMode != "custom_request" {
+		return nil, nil, errors.New("start_mode must be trial, paid, or custom_request")
+	}
+
+	var pendingCustomRequest *CustomDealRequest
+	if req.CustomDealRequest != nil || startMode == "custom_request" {
+		raw := CustomDealRequest{}
+		if req.CustomDealRequest != nil {
+			raw = *req.CustomDealRequest
+		}
+		validatedReq, err := ValidateCustomDealRequest(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		now := time.Now()
+		validatedReq.Status = CustomDealRequestPending
+		validatedReq.RequestedAt = &now
+		if validatedReq.ContactPhone == "" {
+			validatedReq.ContactPhone = strings.TrimSpace(req.Phone)
+		}
+		pendingCustomRequest = &validatedReq
 	}
 
 	trialService := NewTrialEligibilityService(s.db)
+	if startMode == "custom_request" {
+		// Prefer trial while commercial pricing is negotiated; otherwise hold for payment after deal.
+		if err := trialService.EnsureTrialAvailable(req.Email, req.Phone); err == nil {
+			startMode = "trial"
+		} else {
+			startMode = "paid"
+		}
+	}
+
 	if startMode == "trial" {
 		if err := trialService.EnsureTrialAvailable(req.Email, req.Phone); err != nil {
 			return nil, nil, err
 		}
-	} else if req.Subscription == nil {
+	} else if pendingCustomRequest == nil && req.Subscription == nil {
 		return nil, nil, errors.New("subscription plan is required for paid registration")
 	}
 
@@ -156,6 +185,11 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		phase = SubscriptionPhaseTrial
 		subscriptionEnd = time.Now().AddDate(0, 0, TrialDurationDays)
 		hasEverPaid = false
+	} else if pendingCustomRequest != nil {
+		subSelection = SelectionFromCustomDealRequest(*pendingCustomRequest)
+		phase = SubscriptionPhasePendingPayment
+		subscriptionEnd = time.Now()
+		hasEverPaid = false
 	} else {
 		validated, err := ValidateSubscriptionSelection(*req.Subscription)
 		if err != nil {
@@ -168,9 +202,32 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 	}
 
 	quote := CalculateSubscriptionQuoteForTier(subSelection, cityTier)
+	if pendingCustomRequest != nil {
+		// No catalog price until platform applies a deal.
+		quote = SubscriptionQuote{
+			Selection: subSelection,
+			LineItems: []SubscriptionLineItem{{
+				ID:     "custom_deal_request",
+				Label:  "Custom plan request (awaiting quote)",
+				Amount: 0,
+			}},
+			BundledStaff:    IncludedStaffINR + subSelection.ExtraStaff,
+			BundledChefs:    IncludedChefsINR + subSelection.ExtraChefs,
+			BundledManagers: IncludedManagersINR + subSelection.ExtraManagers,
+		}
+	}
 	subConfig, err := BuildSubscriptionConfigJSON(phase, startMode, subSelection, quote, hasEverPaid)
 	if err != nil {
 		return nil, nil, err
+	}
+	if pendingCustomRequest != nil {
+		cfg := ParseStoredSubscriptionConfig(&models.Restaurant{SubscriptionConfig: subConfig})
+		cfg.CustomDealRequest = pendingCustomRequest
+		cfg.PricingMode = PricingModeCatalog
+		subConfig, err = MarshalSubscriptionConfig(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	counterModes := "both"
@@ -179,7 +236,13 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 
 	subscriptionPlan := "trial"
 	if startMode == "paid" {
-		subscriptionPlan = SubscriptionPlanFromSelection(subSelection)
+		if pendingCustomRequest != nil {
+			subscriptionPlan = "custom_pending"
+		} else {
+			subscriptionPlan = SubscriptionPlanFromSelection(subSelection)
+		}
+	} else if pendingCustomRequest != nil {
+		subscriptionPlan = "trial"
 	}
 
 	restaurant := &models.Restaurant{

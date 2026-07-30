@@ -57,11 +57,12 @@ type StoredSubscriptionConfig struct {
 	Quote            SubscriptionQuote      `json:"quote"`
 	HasEverPaid      bool                   `json:"has_ever_paid"`
 	StartMode        string                 `json:"start_mode,omitempty"`
-	PricingMode      string                 `json:"pricing_mode,omitempty"` // catalog | custom
-	CustomDeal       *CustomDeal            `json:"custom_deal,omitempty"`
-	PendingSelection *SubscriptionSelection `json:"pending_selection,omitempty"`
-	PendingChangeAt  *time.Time             `json:"pending_change_at,omitempty"`
-	PeriodStartedAt  *time.Time             `json:"period_started_at,omitempty"`
+	PricingMode       string                 `json:"pricing_mode,omitempty"` // catalog | custom
+	CustomDeal        *CustomDeal            `json:"custom_deal,omitempty"`
+	CustomDealRequest *CustomDealRequest     `json:"custom_deal_request,omitempty"`
+	PendingSelection  *SubscriptionSelection `json:"pending_selection,omitempty"`
+	PendingChangeAt   *time.Time             `json:"pending_change_at,omitempty"`
+	PeriodStartedAt   *time.Time             `json:"period_started_at,omitempty"`
 }
 
 func ParseStoredSubscriptionConfig(restaurant *models.Restaurant) StoredSubscriptionConfig {

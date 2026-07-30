@@ -42,21 +42,25 @@ type PlatformRestaurantSummary struct {
 	// MonthRevenue is this month's billed revenue including GST (sum of order totals).
 	MonthRevenue float64   `json:"month_revenue"`
 	CreatedAt    time.Time `json:"created_at"`
+	// CustomDealRequestPending is true when the restaurant asked for a negotiated plan.
+	CustomDealRequestPending bool `json:"custom_deal_request_pending"`
+	RequestedMaxTables       int  `json:"requested_max_tables,omitempty"`
 }
 
 type PlatformRestaurantDetail struct {
 	PlatformRestaurantSummary
-	Selection      SubscriptionSelection        `json:"selection"`
-	Limits         SubscriptionLimits           `json:"limits"`
-	Usage          SubscriptionUsage            `json:"usage"`
-	HasEverPaid    bool                         `json:"has_ever_paid"`
-	StartMode      string                       `json:"start_mode"`
-	PricingMode    string                       `json:"pricing_mode"`
-	CustomDeal     *CustomDeal                  `json:"custom_deal,omitempty"`
-	IsSelfService  bool                         `json:"is_self_service"`
-	CounterModes   string                       `json:"counter_service_modes"`
-	RecentRenewals []models.SubscriptionRenewal `json:"recent_renewals"`
-	AdminLoginHint string                       `json:"admin_login_hint,omitempty"`
+	Selection         SubscriptionSelection        `json:"selection"`
+	Limits            SubscriptionLimits           `json:"limits"`
+	Usage             SubscriptionUsage            `json:"usage"`
+	HasEverPaid       bool                         `json:"has_ever_paid"`
+	StartMode         string                       `json:"start_mode"`
+	PricingMode       string                       `json:"pricing_mode"`
+	CustomDeal        *CustomDeal                  `json:"custom_deal,omitempty"`
+	CustomDealRequest *CustomDealRequest           `json:"custom_deal_request,omitempty"`
+	IsSelfService     bool                         `json:"is_self_service"`
+	CounterModes      string                       `json:"counter_service_modes"`
+	RecentRenewals    []models.SubscriptionRenewal `json:"recent_renewals"`
+	AdminLoginHint    string                       `json:"admin_login_hint,omitempty"`
 }
 
 type SetCustomDealRequest struct {
@@ -113,7 +117,7 @@ func NewPlatformOpsService(db *gorm.DB) *PlatformOpsService {
 	}
 }
 
-func (s *PlatformOpsService) ListRestaurants(search string, phase string, limit, offset int) ([]PlatformRestaurantSummary, int64, error) {
+func (s *PlatformOpsService) ListRestaurants(search string, phase string, customDealPending bool, limit, offset int) ([]PlatformRestaurantSummary, int64, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -145,6 +149,9 @@ func (s *PlatformOpsService) ListRestaurants(search string, phase string, limit,
 	for i := range restaurants {
 		summary := s.buildSummary(&restaurants[i])
 		if phase != "" && summary.SubscriptionPhase != phase {
+			continue
+		}
+		if customDealPending && !summary.CustomDealRequestPending {
 			continue
 		}
 		summaries = append(summaries, summary)
@@ -189,6 +196,7 @@ func (s *PlatformOpsService) GetRestaurant(restaurantID string) (*PlatformRestau
 		StartMode:                 cfg.StartMode,
 		PricingMode:               cfg.PricingMode,
 		CustomDeal:                cfg.CustomDeal,
+		CustomDealRequest:         cfg.CustomDealRequest,
 		IsSelfService:             restaurant.IsSelfService,
 		CounterModes:              restaurant.CounterServiceModes,
 		RecentRenewals:            renewals,
@@ -380,6 +388,14 @@ func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDea
 
 	oldSnapshot, _ := json.Marshal(restaurant)
 	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	// Prefill empty capacity from the restaurant's pending request when ops omits it.
+	if HasPendingCustomDealRequest(cfg) && deal.Selection.MaxTables <= 0 {
+		deal.Selection = SelectionFromCustomDealRequest(*cfg.CustomDealRequest)
+		deal, err = ValidateCustomDeal(deal)
+		if err != nil {
+			return nil, err
+		}
+	}
 	quote := QuoteFromCustomDeal(deal)
 
 	cfg.PricingMode = PricingModeCustom
@@ -388,6 +404,11 @@ func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDea
 	cfg.Quote = quote
 	cfg.PendingSelection = nil
 	cfg.PendingChangeAt = nil
+	if cfg.CustomDealRequest != nil {
+		fulfilled := *cfg.CustomDealRequest
+		fulfilled.Status = CustomDealRequestFulfilled
+		cfg.CustomDealRequest = &fulfilled
+	}
 
 	if req.Activate {
 		cfg.Phase = SubscriptionPhaseActive
@@ -398,6 +419,9 @@ func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDea
 		if cfg.PeriodStartedAt == nil {
 			cfg.PeriodStartedAt = &now
 		}
+	} else if !cfg.HasEverPaid && cfg.Phase != SubscriptionPhaseTrial {
+		// Deal quoted — restaurant pays from app before going active.
+		cfg.Phase = SubscriptionPhasePendingPayment
 	}
 
 	counterModes := "both"
@@ -725,30 +749,38 @@ func (s *PlatformOpsService) buildSummary(r *models.Restaurant) PlatformRestaura
 
 	monthOrders, monthRevenue := s.monthOrderStats(r.ID)
 
+	pendingRequest := HasPendingCustomDealRequest(cfg)
+	requestedTables := 0
+	if pendingRequest {
+		requestedTables = cfg.CustomDealRequest.MaxTables
+	}
+
 	return PlatformRestaurantSummary{
-		ID:                  r.ID,
-		RestaurantCode:      r.RestaurantCode,
-		Name:                r.Name,
-		OwnerName:           r.OwnerName,
-		Email:               r.Email,
-		Phone:               r.Phone,
-		City:                r.City,
-		SubscriptionPlan:    r.SubscriptionPlan,
-		SubscriptionPhase:   cfg.Phase,
-		SubscriptionEnd:     r.SubscriptionEnd,
-		DaysRemaining:       daysRemaining,
-		IsActive:            r.IsActive,
-		IsAccessBlocked:     IsSubscriptionAccessBlocked(r),
-		IsEmailVerified:     r.IsEmailVerified,
-		IsApproved:          r.IsApproved,
-		MonthlyPrice:        r.SubscriptionMonthlyPrice,
-		MonthlyPriceWithGST: SubscriptionPriceWithGST(r.SubscriptionMonthlyPrice),
-		AdminCount:          adminCount,
-		StaffCount:          staffCount,
-		TableCount:          tableCount,
-		MonthOrders:         monthOrders,
-		MonthRevenue:        monthRevenue,
-		CreatedAt:           r.CreatedAt,
+		ID:                       r.ID,
+		RestaurantCode:           r.RestaurantCode,
+		Name:                     r.Name,
+		OwnerName:                r.OwnerName,
+		Email:                    r.Email,
+		Phone:                    r.Phone,
+		City:                     r.City,
+		SubscriptionPlan:         r.SubscriptionPlan,
+		SubscriptionPhase:        cfg.Phase,
+		SubscriptionEnd:          r.SubscriptionEnd,
+		DaysRemaining:            daysRemaining,
+		IsActive:                 r.IsActive,
+		IsAccessBlocked:          IsSubscriptionAccessBlocked(r),
+		IsEmailVerified:          r.IsEmailVerified,
+		IsApproved:               r.IsApproved,
+		MonthlyPrice:             r.SubscriptionMonthlyPrice,
+		MonthlyPriceWithGST:      SubscriptionPriceWithGST(r.SubscriptionMonthlyPrice),
+		AdminCount:               adminCount,
+		StaffCount:               staffCount,
+		TableCount:               tableCount,
+		MonthOrders:              monthOrders,
+		MonthRevenue:             monthRevenue,
+		CreatedAt:                r.CreatedAt,
+		CustomDealRequestPending: pendingRequest,
+		RequestedMaxTables:       requestedTables,
 	}
 }
 

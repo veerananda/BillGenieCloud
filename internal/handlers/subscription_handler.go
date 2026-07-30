@@ -165,3 +165,23 @@ func (h *SubscriptionHandler) CancelScheduledPlanChange(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Scheduled plan change cancelled"})
 }
+
+// RequestCustomDeal lets an admin ask for a negotiated commercial plan from the app/web.
+func (h *SubscriptionHandler) RequestCustomDeal(c *gin.Context) {
+	restaurantID, _ := c.Get("restaurant_id")
+	var req services.CustomDealRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	saved, err := h.renewalService.RequestCustomDeal(restaurantID.(string), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":              "Custom plan request submitted — BillGenie will confirm pricing shortly",
+		"custom_deal_request":  saved,
+		"awaiting_custom_deal": true,
+	})
+}
