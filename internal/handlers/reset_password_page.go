@@ -9,6 +9,7 @@ import (
 )
 
 // ResetPasswordPage serves a mobile-friendly web page for password reset links from email.
+// Reset tokens stay on this HTTPS page only — never forwarded onto claimable custom schemes.
 func (h *AuthHandler) ResetPasswordPage(c *gin.Context) {
 	token := strings.TrimSpace(c.Query("token"))
 	if token == "" {
@@ -113,7 +114,7 @@ const resetPasswordPageHTML = `<!DOCTYPE html>
 <body>
   <div class="card">
     <h1>Reset your password</h1>
-    <p class="sub">Choose a new password for your BillGenie admin account. This link expires in 1 hour.</p>
+    <p class="sub">Choose a new password for your BillGenie admin account. This link expires in 1 hour. Complete the form on this page — do not share this link.</p>
 
     <form id="reset-form">
       <label for="password">New password</label>
@@ -125,23 +126,15 @@ const resetPasswordPageHTML = `<!DOCTYPE html>
       <button type="submit" id="submit-btn">Update password</button>
     </form>
 
-    <a class="app-link" id="open-app" href="#">Open in BillGenie app</a>
-    <p class="hint">On your phone, you can reset here in the browser or open the app.</p>
+    <a class="app-link" id="open-app" href="billgenie://login">Open BillGenie app to sign in</a>
+    <p class="hint">Reset completes securely in this browser. The app link never includes your reset token.</p>
     <div id="message" class="msg"></div>
   </div>
 
   <script>
     (function () {
       var token = "{{TOKEN}}";
-      var deepLink = "billgenie://reset-password?token=" + encodeURIComponent(token);
       var openApp = document.getElementById("open-app");
-      openApp.href = deepLink;
-
-      var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-      if (isMobile) {
-        window.location.replace(deepLink);
-      }
-
       var form = document.getElementById("reset-form");
       var msg = document.getElementById("message");
       var btn = document.getElementById("submit-btn");
@@ -176,6 +169,7 @@ const resetPasswordPageHTML = `<!DOCTYPE html>
               showMsg(result.data.message || "Password updated. You can now sign in to BillGenie.", true);
               form.style.display = "none";
               openApp.textContent = "Open BillGenie app to sign in";
+              openApp.href = "billgenie://login";
             } else {
               showMsg(result.data.error || "Reset failed. The link may have expired.", false);
               btn.disabled = false;

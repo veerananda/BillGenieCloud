@@ -14,7 +14,8 @@ type rateBucket struct {
 }
 
 // RateLimit returns a simple per-process rate limiter keyed by client IP + route.
-// Good enough for P0; multi-instance Fly needs Redis-backed limits later.
+// ClientIP must come from TrustedPlatform / TrustedProxies (see main.go) so
+// spoofed X-Forwarded-For cannot bypass limits.
 func RateLimit(maxRequests int, window time.Duration) gin.HandlerFunc {
 	var mu sync.Mutex
 	buckets := make(map[string]*rateBucket)

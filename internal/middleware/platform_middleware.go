@@ -166,12 +166,9 @@ func parseIPAllowlist(raw string) []ipRule {
 }
 
 func clientIPAllowed(c *gin.Context, rules []ipRule) bool {
+	// Relies on Gin TrustedPlatform / TrustedProxies (configured in main).
+	// Do not prefer raw X-Forwarded-For — clients can spoof it.
 	ipStr := strings.TrimSpace(c.ClientIP())
-	// Prefer first X-Forwarded-For hop when Fly/proxy sets it (Gin ClientIP already handles this
-	// when TrustedProxies are configured; fall back to RemoteAddr host).
-	if fwd := strings.TrimSpace(c.GetHeader("X-Forwarded-For")); fwd != "" {
-		ipStr = strings.TrimSpace(strings.Split(fwd, ",")[0])
-	}
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return false

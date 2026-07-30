@@ -363,41 +363,60 @@ func (s *AuthService) ResendVerificationEmail(restaurantID, email string) error 
 	return nil
 }
 
+// loginTimingHash is a valid bcrypt hash used only so failed lookups still spend
+// comparable CPU time (does not correspond to any real account password).
+var loginTimingHash = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy")
+
+const loginGenericErr = "invalid login number or password"
+
 // Login authenticates user and returns tokens.
 // Accepts 8-digit admin login number (100xxxxx), 6-digit staff key, or legacy SK_ key.
+// Wrong credentials always return the same message. Account-state messages are only
+// returned after a successful password check (avoids user enumeration).
 func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	var user models.User
 	var err error
+	userFound := false
 
 	identifier := strings.TrimSpace(req.Identifier)
 
 	switch {
 	case loginAdminKeyPattern.MatchString(identifier):
 		err = s.db.Where("staff_key = ?", identifier).First(&user).Error
-		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("invalid login number or password")
+		if err == nil {
+			userFound = true
+		} else if err != gorm.ErrRecordNotFound {
+			return nil, err
 		}
 	case strings.HasPrefix(identifier, "SK_") || loginStaffKeyPattern.MatchString(identifier):
 		err = s.db.Where("staff_key = ?", identifier).First(&user).Error
-		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("invalid login number or password")
+		if err == nil {
+			userFound = true
+		} else if err != gorm.ErrRecordNotFound {
+			return nil, err
 		}
 	default:
 		return nil, errors.New("invalid login number format. Use your 8-digit admin number or 6-digit staff key")
 	}
 
-	if err != nil && err != gorm.ErrRecordNotFound {
-		return nil, err
+	// Always run bcrypt so timing does not leak whether the login number exists.
+	if userFound {
+		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
+			return nil, errors.New(loginGenericErr)
+		}
+	} else {
+		_ = bcrypt.CompareHashAndPassword(loginTimingHash, []byte(req.Password))
+		return nil, errors.New(loginGenericErr)
 	}
 
-	// Check if user is active
+	// Account-state checks only after a valid password (legitimate owner UX).
 	if !user.IsActive {
 		return nil, errors.New("user account is inactive")
 	}
 
 	var restaurant models.Restaurant
 	if err := s.db.Where("id = ?", user.RestaurantID).First(&restaurant).Error; err != nil {
-		return nil, errors.New("restaurant not found")
+		return nil, errors.New(loginGenericErr)
 	}
 	if !restaurant.IsActive {
 		return nil, errors.New("restaurant account is suspended. Contact BillGenie support")
@@ -417,11 +436,6 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	}
 	if !restaurant.IsApproved {
 		return nil, errors.New("your email is verified. Your restaurant is pending BillGenie approval — we'll email you as soon as you're approved and can sign in")
-	}
-
-	// Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		return nil, errors.New("invalid password")
 	}
 
 	// Single active session per user (all roles): revoke previous sessions and refresh tokens.
