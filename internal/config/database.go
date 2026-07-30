@@ -160,6 +160,12 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Println("✅ BackfillMenuItemVariants migration completed")
 	}
 
+	if err := migrations.BackfillMenuAvailableChannels(db); err != nil {
+		log.Printf("⚠️  Migration BackfillMenuAvailableChannels skipped or failed: %v", err)
+	} else {
+		log.Println("✅ BackfillMenuAvailableChannels migration completed")
+	}
+
 	if err := migrations.NullEmptyAttendedByUserID(db); err != nil {
 		log.Printf("⚠️  Migration NullEmptyAttendedByUserID skipped or failed: %v", err)
 	} else {
