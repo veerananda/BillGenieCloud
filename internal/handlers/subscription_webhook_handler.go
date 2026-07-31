@@ -26,9 +26,10 @@ func NewSubscriptionWebhookHandler(db *gorm.DB) *SubscriptionWebhookHandler {
 
 // HandleRazorpayWebhook processes Razorpay payment webhooks for subscription orders.
 func (h *SubscriptionWebhookHandler) HandleRazorpayWebhook(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20) // 1 MiB
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or oversized request body"})
 		return
 	}
 

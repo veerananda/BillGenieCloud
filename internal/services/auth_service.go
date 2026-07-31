@@ -752,9 +752,9 @@ func (s *AuthService) ValidateUserSession(userID string, accessToken string) (bo
 	return false, errors.New("session invalidated. Another device has logged in with your account")
 }
 
-// RevokeAllSessionsForUser deactivates sessions and invalidates refresh tokens for a user.
-func (s *AuthService) RevokeAllSessionsForUser(userID string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
+// RevokeAllSessionsForUserDB deactivates sessions and deletes refresh tokens for a user.
+func RevokeAllSessionsForUserDB(db *gorm.DB, userID string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&models.UserSession{}).
 			Where("user_id = ? AND is_active = true", userID).
 			Update("is_active", false).Error; err != nil {
@@ -765,6 +765,11 @@ func (s *AuthService) RevokeAllSessionsForUser(userID string) error {
 		}
 		return nil
 	})
+}
+
+// RevokeAllSessionsForUser deactivates sessions and invalidates refresh tokens for a user.
+func (s *AuthService) RevokeAllSessionsForUser(userID string) error {
+	return RevokeAllSessionsForUserDB(s.db, userID)
 }
 
 // RevokeRestaurantSessionsExceptCurrent kicks every active session in the restaurant
