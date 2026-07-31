@@ -60,12 +60,19 @@ func AuthMiddleware(authService *services.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		// Store user info in context
+		user, err := authService.GetUserByID(claims.UserID)
+		if err != nil || user == nil || !user.IsActive {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "account is inactive or not found"})
+			c.Abort()
+			return
+		}
+
+		// Store user info in context — role from DB so demotions take effect immediately.
 		c.Set("user_id", claims.UserID)
 		c.Set("restaurant_id", claims.RestaurantID)
-		c.Set("role", claims.Role)
+		c.Set("role", user.Role)
 
-		log.Printf("✅ User authenticated: %s (Role: %s)", claims.UserID, claims.Role)
+		log.Printf("✅ User authenticated: %s (Role: %s)", claims.UserID, user.Role)
 
 		c.Next()
 	}

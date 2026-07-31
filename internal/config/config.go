@@ -99,6 +99,7 @@ func LoadConfig() *Config {
 
 	validateJWTSecrets(cfg)
 	validateCORSOrigins(cfg)
+	warnPlatformOpsAllowlist(cfg)
 
 	log.Printf("✅ Configuration loaded (Environment: %s)", cfg.Environment)
 	return cfg
@@ -171,6 +172,15 @@ func validateCORSOrigins(cfg *Config) {
 		return
 	}
 	cfg.CORSAllowedOrigins = origins
+}
+
+func warnPlatformOpsAllowlist(cfg *Config) {
+	if cfg.Environment != "production" {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("PLATFORM_OPS_IP_ALLOWLIST")) == "" {
+		log.Println("⚠️  PLATFORM_OPS_IP_ALLOWLIST is empty in production — any IP with the platform API key can call /platform/*")
+	}
 }
 
 func localhostCORSOrigins() []string {

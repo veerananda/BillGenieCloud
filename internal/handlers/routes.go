@@ -37,6 +37,7 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 		public.POST("/auth/register", authStrict, authHandler.Register)
 		public.POST("/auth/login", authStrict, authHandler.Login)
 		public.POST("/auth/refresh", authRefresh, authHandler.RefreshToken)
+		public.POST("/auth/logout", authHandler.Logout)
 		public.POST("/auth/forgot-password", authStrict, authHandler.ForgotPassword)
 		public.GET("/reset-password", authHandler.ResetPasswordPage)
 		public.POST("/auth/reset-password", authStrict, authHandler.ResetPassword)
@@ -52,7 +53,6 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 	protected.Use(middleware.AuthMiddleware(authService))
 	{
 		protected.GET("/auth/profile", authHandler.GetProfile)
-		protected.POST("/auth/logout", authHandler.Logout)
 	}
 
 	log.Println("✅ Auth routes registered")

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -84,7 +85,8 @@ func originMatchesRequestHost(r *http.Request, origin string) bool {
 	return strings.EqualFold(u.Host, reqHost)
 }
 
-// ExtractWebSocketToken prefers Sec-WebSocket-Protocol (billgenie,<jwt>); falls back to ?token=.
+// ExtractWebSocketToken prefers Sec-WebSocket-Protocol (billgenie,<jwt>).
+// Query-string ?token= is only allowed outside production (deprecated).
 func ExtractWebSocketToken(r *http.Request) (token string, viaQuery bool) {
 	header := r.Header.Get("Sec-WebSocket-Protocol")
 	if header != "" {
@@ -100,6 +102,10 @@ func ExtractWebSocketToken(r *http.Request) (token string, viaQuery bool) {
 				return cleaned[i+1], false
 			}
 		}
+	}
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("SERVER_ENV")))
+	if env == "production" || env == "prod" {
+		return "", false
 	}
 	if q := strings.TrimSpace(r.URL.Query().Get("token")); q != "" {
 		return q, true

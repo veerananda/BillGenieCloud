@@ -129,20 +129,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, authResponse)
 }
 
-// Logout deactivates the current session.
+// Logout deactivates the current session when a bearer token is present,
+// and always clears the httpOnly refresh cookie.
 func (h *AuthHandler) Logout(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	authHeader := c.GetHeader("Authorization")
 	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid authorization header"})
-		return
-	}
-
-	if err := h.authService.LogoutUser(userID.(string), parts[1]); err != nil {
-		log.Printf("❌ Logout failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "logout failed"})
-		return
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.TrimSpace(parts[1]) != "" {
+		token := strings.TrimSpace(parts[1])
+		if claims, err := h.authService.ValidateToken(token); err == nil && claims != nil {
+			if err := h.authService.LogoutUser(claims.UserID, token); err != nil {
+				log.Printf("❌ Logout session revoke failed: %v", err)
+			}
+		}
 	}
 
 	clearRefreshTokenCookie(c)
@@ -371,7 +369,8 @@ func (h *AuthHandler) VerifyLoginRecovery(c *gin.Context) {
 	loginID, err := h.authService.VerifyLoginRecovery(req.Identifier, req.OTP)
 	if err != nil {
 		log.Printf("❌ Verify login recovery error: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Generic failure to avoid account enumeration.
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification code"})
 		return
 	}
 

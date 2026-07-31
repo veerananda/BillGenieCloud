@@ -382,6 +382,17 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		return nil, fmt.Errorf("failed to update user: %w", err)
 	}
 
+	shouldRevokeSessions := req.Password != "" ||
+		(req.IsActive != nil && !*req.IsActive)
+	if _, roleChanged := updates["role"]; roleChanged {
+		shouldRevokeSessions = true
+	}
+	if shouldRevokeSessions {
+		if err := RevokeAllSessionsForUserDB(s.db, user.ID); err != nil {
+			log.Printf("⚠️  Failed to revoke sessions after user update %s: %v", user.ID, err)
+		}
+	}
+
 	// Refresh user data
 	if err := s.db.First(user).Error; err != nil {
 		return nil, fmt.Errorf("failed to refresh user data: %w", err)

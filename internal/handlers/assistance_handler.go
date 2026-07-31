@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"restaurant-api/internal/middleware"
 	"restaurant-api/internal/models"
 	"restaurant-api/internal/services"
 
@@ -30,10 +31,11 @@ func SetupAssistanceRoutes(router *gin.Engine, db *gorm.DB) {
 		orderService: services.NewOrderService(db),
 		hub:          globalAssistanceHub,
 	}
+	callWaiterLimit := middleware.RateLimit(20, 15*time.Minute)
 	router.GET("/a/:token", handler.AssistancePage)
 	router.GET("/a/:token/status", handler.AssistanceStatus)
 	router.GET("/a/:token/events", handler.AssistanceEvents)
-	router.POST("/a/:token/call-waiter", handler.CallWaiter)
+	router.POST("/a/:token/call-waiter", callWaiterLimit, handler.CallWaiter)
 	log.Println("✅ Customer assistance routes registered at /a/:token")
 }
 
