@@ -338,6 +338,8 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 // SetupPublicRoutes registers public endpoints (no authentication required)
 func SetupPublicRoutes(router *gin.Engine, db *gorm.DB) {
 	publicHandler := NewPublicHandler(db)
+	leadHandler := NewCustomPlanLeadHandler(services.NewCustomPlanLeadService(db))
+	leadLimit := middleware.RateLimit(10, 15*time.Minute)
 
 	public := router.Group("/public")
 	{
@@ -347,6 +349,9 @@ func SetupPublicRoutes(router *gin.Engine, db *gorm.DB) {
 
 		// Restaurant info endpoint
 		public.GET("/restaurant", publicHandler.GetPublicRestaurant)
+
+		// Signup custom-plan sales lead (no account created)
+		public.POST("/custom-plan-leads", leadLimit, leadHandler.CreateLead)
 	}
 
 	log.Println("✅ Public routes registered")
@@ -394,6 +399,7 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 	ops := services.NewPlatformOpsService(db)
 	platformHandler := NewPlatformHandler(ops)
 	supportHandler := NewSupportIssueHandler(services.NewSupportIssueService(db))
+	leadHandler := NewCustomPlanLeadHandler(services.NewCustomPlanLeadService(db))
 
 	platform := router.Group("/platform")
 	platform.Use(middleware.PlatformAuthMiddleware())
@@ -401,6 +407,8 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 		platform.GET("/support-issues", supportHandler.ListPlatformIssues)
 		platform.PUT("/support-issues/:issue_id", supportHandler.UpdatePlatformIssue)
 		platform.GET("/support-issues/:issue_id/screenshots", supportHandler.GetPlatformIssueScreenshots)
+		platform.GET("/custom-plan-leads", leadHandler.ListPlatformLeads)
+		platform.PUT("/custom-plan-leads/:lead_id", leadHandler.UpdatePlatformLead)
 		platform.GET("/restaurants", platformHandler.ListRestaurants)
 		platform.GET("/restaurants/:restaurant_id", platformHandler.GetRestaurant)
 		platform.GET("/audit-logs", platformHandler.ListAuditLogs)
