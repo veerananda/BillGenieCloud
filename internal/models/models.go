@@ -869,3 +869,35 @@ func (j *PrintJob) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// CustomPlanLead is a sales inquiry from signup (no account created).
+type CustomPlanLead struct {
+	ID             string    `gorm:"primaryKey" json:"id"`
+	Name           string    `json:"name" gorm:"type:varchar(160);not null"`
+	Phone          string    `json:"phone" gorm:"type:varchar(32);not null;index"`
+	RestaurantName string    `json:"restaurant_name" gorm:"type:varchar(200);not null;index"`
+	Address        string    `json:"address" gorm:"type:text"`
+	City           string    `json:"city" gorm:"type:varchar(120);index"`
+	State          string    `json:"state" gorm:"type:varchar(120);index"`
+	Notes          string    `json:"notes,omitempty" gorm:"type:text"`
+	Source         string    `json:"source,omitempty" gorm:"type:varchar(32);index"` // app | web
+	Status         string    `json:"status" gorm:"type:varchar(32);default:pending;index"`
+	InternalNote   string    `json:"internal_note,omitempty" gorm:"type:text"`
+	UpdatedBy      string    `json:"updated_by,omitempty" gorm:"type:varchar(120)"`
+	CreatedAt      time.Time `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt      time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+func (CustomPlanLead) TableName() string {
+	return "custom_plan_leads"
+}
+
+func (l *CustomPlanLead) BeforeCreate(tx *gorm.DB) error {
+	if l.ID == "" {
+		l.ID = uuid.New().String()
+	}
+	if l.Status == "" {
+		l.Status = "pending"
+	}
+	return nil
+}
+
