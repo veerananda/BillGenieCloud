@@ -245,11 +245,14 @@ type MenuItemVariant struct {
 	Label        string    `json:"label" gorm:"type:varchar(80);not null"` // Half, Full, Family…
 	Price        float64   `json:"price" gorm:"type:numeric(10,2);not null"`
 	RecipeScale  float64   `json:"recipe_scale" gorm:"type:numeric(10,3);default:1"` // multiplies parent recipe BOM
-	IsDefault    bool      `json:"is_default" gorm:"default:false"`
-	IsAvailable  bool      `json:"is_available" gorm:"default:true"`
-	SortOrder    int       `json:"sort_order" gorm:"default:0"`
-	CreatedAt    time.Time `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	// ChannelPrices maps channel id → unit price for this portion (e.g. Swiggy Half vs Zomato Half).
+	// Missing channel falls back to Price (and for default Regular, item.channel_prices).
+	ChannelPrices map[string]float64 `json:"channel_prices,omitempty" gorm:"serializer:json;type:jsonb"`
+	IsDefault     bool               `json:"is_default" gorm:"default:false"`
+	IsAvailable   bool               `json:"is_available" gorm:"default:true"`
+	SortOrder     int                `json:"sort_order" gorm:"default:0"`
+	CreatedAt     time.Time          `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt     time.Time          `json:"updated_at" gorm:"autoUpdateTime"`
 
 	MenuItem   *MenuItem   `json:"-" gorm:"foreignKey:MenuItemID"`
 	Restaurant *Restaurant `json:"-" gorm:"foreignKey:RestaurantID"`

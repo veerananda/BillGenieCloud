@@ -80,3 +80,35 @@ func NormalizeMenuChannelPrices(
 	}
 	return out, nil
 }
+
+// NormalizeVariantChannelPrices validates optional per-portion channel prices.
+// Empty/nil input returns nil (caller falls back to variant.Price / item prices).
+func NormalizeVariantChannelPrices(prices map[string]float64) (map[string]float64, error) {
+	if len(prices) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]float64, len(prices))
+	for ch, p := range prices {
+		if _, ok := allowedMenuChannels[ch]; !ok {
+			return nil, fmt.Errorf("invalid channel_prices key: %s", ch)
+		}
+		if p < 0 {
+			return nil, fmt.Errorf("channel_prices[%s] must be >= 0", ch)
+		}
+		out[ch] = p
+	}
+	return out, nil
+}
+
+// MenuChannelForOrder maps order type + service mode to a menu channel id.
+func MenuChannelForOrder(orderType, serviceMode string) string {
+	switch orderType {
+	case "counter":
+		if serviceMode == "takeaway" {
+			return "counter_takeaway"
+		}
+		return "counter_eat_here"
+	default:
+		return "dine_in"
+	}
+}
