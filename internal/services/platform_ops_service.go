@@ -702,6 +702,24 @@ func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRes
 	if err := deleteWhere(&models.UserSession{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete user sessions: %w", err)
 	}
+	// Support issues + audit logs reference users (fk_support_issues_user / user_id).
+	// Delete them before users or restaurant delete fails with SQLSTATE 23503.
+	if err := deleteWhere(&models.SupportIssue{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete support issues: %w", err)
+	}
+	if len(userIDs) > 0 {
+		if err := deleteWhere(&models.SupportIssue{}, "user_id IN ?", userIDs); err != nil {
+			return fmt.Errorf("delete support issues by user: %w", err)
+		}
+	}
+	if err := deleteWhere(&models.AuditLog{}, "restaurant_id = ?", restaurantID); err != nil {
+		return fmt.Errorf("delete audit logs: %w", err)
+	}
+	if len(userIDs) > 0 {
+		if err := deleteWhere(&models.AuditLog{}, "user_id IN ?", userIDs); err != nil {
+			return fmt.Errorf("delete audit logs by user: %w", err)
+		}
+	}
 	if err := deleteWhere(&models.User{}, "restaurant_id = ?", restaurantID); err != nil {
 		return fmt.Errorf("delete users: %w", err)
 	}
@@ -716,12 +734,6 @@ func (s *PlatformOpsService) DeleteRestaurant(restaurantID string, req DeleteRes
 	}
 	// Keep trial_eligibilities rows so the same email/phone cannot claim another free trial
 	// after the restaurant is deleted.
-	if err := deleteWhere(&models.SupportIssue{}, "restaurant_id = ?", restaurantID); err != nil {
-		return fmt.Errorf("delete support issues: %w", err)
-	}
-	if err := deleteWhere(&models.AuditLog{}, "restaurant_id = ?", restaurantID); err != nil {
-		return fmt.Errorf("delete audit logs: %w", err)
-	}
 	if err := tx.Delete(&restaurant).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("delete restaurant: %w", err)
