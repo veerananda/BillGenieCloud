@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -359,19 +360,24 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 	if req.IsTaxable != nil {
 		updates["is_taxable"] = *req.IsTaxable
 	}
+
+	channelsForPrices := item.AvailableChannels
 	if req.AvailableChannels != nil {
 		channels, normErr := services.NormalizeMenuAvailableChannels(*req.AvailableChannels, false)
 		if normErr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": normErr.Error()})
 			return
 		}
-		updates["available_channels"] = channels
+		channelsJSON, marshalErr := json.Marshal(channels)
+		if marshalErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode available_channels"})
+			return
+		}
+		// GORM Updates(map) skips serializer:json — must pass JSON bytes for jsonb columns.
+		updates["available_channels"] = channelsJSON
+		channelsForPrices = channels
 	}
 	if req.ChannelPrices != nil || req.AvailableChannels != nil {
-		channelsForPrices := item.AvailableChannels
-		if req.AvailableChannels != nil {
-			channelsForPrices = updates["available_channels"].([]string)
-		}
 		basePrice := item.Price
 		if req.Price > 0 {
 			basePrice = req.Price
@@ -387,7 +393,12 @@ func (h *MenuHandler) UpdateMenuItem(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": priceErr.Error()})
 			return
 		}
-		updates["channel_prices"] = channelPrices
+		pricesJSON, marshalErr := json.Marshal(channelPrices)
+		if marshalErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode channel_prices"})
+			return
+		}
+		updates["channel_prices"] = pricesJSON
 	}
 
 	if err := h.db.Model(&item).Updates(updates).Error; err != nil {
