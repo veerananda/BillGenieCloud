@@ -229,6 +229,7 @@ func (s *OrderService) CreateOrder(restaurantID string, userID string, req Creat
 		itemID := uuid.New().String()
 		unitPrice, variantLabel, recipeScale, variantIDPtr, err := ResolveOrderVariant(
 			tx, restaurantID, menuItem.ID, itemReq.VariantID, menuItem.Price,
+			MenuChannelForOrder(orderType, req.ServiceMode), menuItem.ChannelPrices,
 		)
 		if err != nil {
 			log.Printf("❌ [CreateOrder] Item %d: variant resolve failed: %v", i+1, err)
@@ -416,6 +417,7 @@ func (s *OrderService) UpdateOrder(restaurantID string, orderID string, req Crea
 		itemID := uuid.New().String()
 		unitPrice, variantLabel, recipeScale, variantIDPtr, err := ResolveOrderVariant(
 			tx, restaurantID, menuItem.ID, itemReq.VariantID, menuItem.Price,
+			MenuChannelForOrder(order.OrderType, order.ServiceMode), menuItem.ChannelPrices,
 		)
 		if err != nil {
 			tx.Rollback()

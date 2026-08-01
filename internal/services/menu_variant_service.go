@@ -12,13 +12,14 @@ import (
 
 // VariantInput is used when creating/updating menu item portion options.
 type VariantInput struct {
-	ID          string  `json:"id,omitempty"`
-	Label       string  `json:"label"`
-	Price       float64 `json:"price"`
-	RecipeScale float64 `json:"recipe_scale"`
-	IsDefault   bool    `json:"is_default"`
-	IsAvailable *bool   `json:"is_available,omitempty"`
-	SortOrder   int     `json:"sort_order"`
+	ID            string             `json:"id,omitempty"`
+	Label         string             `json:"label"`
+	Price         float64            `json:"price"`
+	RecipeScale   float64            `json:"recipe_scale"`
+	ChannelPrices map[string]float64 `json:"channel_prices,omitempty"`
+	IsDefault     bool               `json:"is_default"`
+	IsAvailable   *bool              `json:"is_available,omitempty"`
+	SortOrder     int                `json:"sort_order"`
 }
 
 func normalizeRecipeScale(scale float64) float64 {
@@ -28,7 +29,7 @@ func normalizeRecipeScale(scale float64) float64 {
 	return scale
 }
 
-// EnsureDefaultMenuItemVariant creates a Regular variant when none exist.
+// EnsureDefaultMenuItemVariant creates a Full variant when none exist.
 func EnsureDefaultMenuItemVariant(db *gorm.DB, item models.MenuItem) error {
 	var count int64
 	if err := db.Model(&models.MenuItemVariant{}).
@@ -43,7 +44,7 @@ func EnsureDefaultMenuItemVariant(db *gorm.DB, item models.MenuItem) error {
 		ID:           uuid.New().String(),
 		RestaurantID: item.RestaurantID,
 		MenuItemID:   item.ID,
-		Label:        "Regular",
+		Label:        "Full",
 		Price:        item.Price,
 		RecipeScale:  1,
 		IsDefault:    true,
@@ -54,7 +55,7 @@ func EnsureDefaultMenuItemVariant(db *gorm.DB, item models.MenuItem) error {
 }
 
 // SyncMenuItemVariants replaces variants for a menu item from the provided list.
-// If variants is empty, ensures a single Regular variant matching item.Price.
+// If variants is empty, ensures a single Full variant matching item.Price.
 func SyncMenuItemVariants(db *gorm.DB, item models.MenuItem, variants []VariantInput) ([]models.MenuItemVariant, error) {
 	if len(variants) == 0 {
 		if err := EnsureDefaultMenuItemVariant(db, item); err != nil {
@@ -84,6 +85,10 @@ func SyncMenuItemVariants(db *gorm.DB, item models.MenuItem, variants []VariantI
 			available = *in.IsAvailable
 		}
 		scale := normalizeRecipeScale(in.RecipeScale)
+		channelPrices, err := NormalizeVariantChannelPrices(in.ChannelPrices)
+		if err != nil {
+			return nil, err
+		}
 		isDefault := in.IsDefault
 		if isDefault {
 			hasDefault = true
@@ -105,6 +110,7 @@ func SyncMenuItemVariants(db *gorm.DB, item models.MenuItem, variants []VariantI
 			existing.Label = label
 			existing.Price = in.Price
 			existing.RecipeScale = scale
+			existing.ChannelPrices = channelPrices
 			existing.IsDefault = isDefault
 			existing.IsAvailable = available
 			existing.SortOrder = sortOrder
@@ -117,15 +123,16 @@ func SyncMenuItemVariants(db *gorm.DB, item models.MenuItem, variants []VariantI
 		}
 
 		row := models.MenuItemVariant{
-			ID:           uuid.New().String(),
-			RestaurantID: item.RestaurantID,
-			MenuItemID:   item.ID,
-			Label:        label,
-			Price:        in.Price,
-			RecipeScale:  scale,
-			IsDefault:    isDefault,
-			IsAvailable:  available,
-			SortOrder:    sortOrder,
+			ID:            uuid.New().String(),
+			RestaurantID:  item.RestaurantID,
+			MenuItemID:    item.ID,
+			Label:         label,
+			Price:         in.Price,
+			RecipeScale:   scale,
+			ChannelPrices: channelPrices,
+			IsDefault:     isDefault,
+			IsAvailable:   available,
+			SortOrder:     sortOrder,
 		}
 		if err := db.Create(&row).Error; err != nil {
 			return nil, err
@@ -181,7 +188,14 @@ func SyncMenuItemVariants(db *gorm.DB, item models.MenuItem, variants []VariantI
 
 // ResolveOrderVariant picks the variant for an order line.
 // Empty variantID uses the default (or sole) variant; missing variants fall back to menu price.
-func ResolveOrderVariant(db *gorm.DB, restaurantID, menuItemID, variantID string, menuPrice float64) (price float64, label string, scale float64, variantIDOut *string, err error) {
+// When channel is set, prefers variant.channel_prices[channel], then item channel prices for Regular.
+func ResolveOrderVariant(
+	db *gorm.DB,
+	restaurantID, menuItemID, variantID string,
+	menuPrice float64,
+	channel string,
+	itemChannelPrices map[string]float64,
+) (price float64, label string, scale float64, variantIDOut *string, err error) {
 	price = menuPrice
 	label = ""
 	scale = 1
@@ -193,6 +207,11 @@ func ResolveOrderVariant(db *gorm.DB, restaurantID, menuItemID, variantID string
 		return price, label, scale, nil, err
 	}
 	if len(variants) == 0 {
+		if channel != "" && itemChannelPrices != nil {
+			if p, ok := itemChannelPrices[channel]; ok && p >= 0 {
+				price = p
+			}
+		}
 		return price, label, scale, nil, nil
 	}
 
@@ -231,17 +250,41 @@ func ResolveOrderVariant(db *gorm.DB, restaurantID, menuItemID, variantID string
 	}
 
 	id := chosen.ID
-	return chosen.Price, chosen.Label, normalizeRecipeScale(chosen.RecipeScale), &id, nil
+	return resolveVariantUnitPrice(chosen, channel, itemChannelPrices), chosen.Label, normalizeRecipeScale(chosen.RecipeScale), &id, nil
 }
 
-// FormatOrderItemDisplayName returns "Dish (Half)" when variant is non-Regular.
+func resolveVariantUnitPrice(
+	chosen *models.MenuItemVariant,
+	channel string,
+	itemChannelPrices map[string]float64,
+) float64 {
+	if chosen == nil {
+		return 0
+	}
+	if channel != "" && chosen.ChannelPrices != nil {
+		if p, ok := chosen.ChannelPrices[channel]; ok && p >= 0 {
+			return p
+		}
+	}
+	isDefault := chosen.IsDefault ||
+		strings.EqualFold(strings.TrimSpace(chosen.Label), "Regular") ||
+		strings.EqualFold(strings.TrimSpace(chosen.Label), "Full")
+	if channel != "" && isDefault && itemChannelPrices != nil {
+		if p, ok := itemChannelPrices[channel]; ok && p >= 0 {
+			return p
+		}
+	}
+	return chosen.Price
+}
+
+// FormatOrderItemDisplayName returns "Dish (Half)" when variant is non-default.
 func FormatOrderItemDisplayName(menuName, variantLabel string) string {
 	name := strings.TrimSpace(menuName)
 	if name == "" {
 		name = "Item"
 	}
 	label := strings.TrimSpace(variantLabel)
-	if label == "" || strings.EqualFold(label, "Regular") {
+	if label == "" || strings.EqualFold(label, "Regular") || strings.EqualFold(label, "Full") {
 		return name
 	}
 	return name + " (" + label + ")"
