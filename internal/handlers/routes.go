@@ -317,11 +317,11 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 		restock.Use(middleware.RoleMiddleware("admin", "manager", "chef", "staff"))
 		restock.POST("/restock", ingredientHandler.RestockIngredients)
 		restock.POST("/:ingredient_id/restock", ingredientHandler.RestockIngredient)
+		restock.POST("/deduct", ingredientHandler.DeductIngredient)
 
 		manage := protected.Group("")
 		manage.Use(middleware.RoleMiddleware("admin", "manager"))
 		manage.GET("/expenditure", ingredientHandler.GetMonthlyExpenditure)
-		manage.POST("/deduct", ingredientHandler.DeductIngredient)
 
 		write := protected.Group("")
 		write.Use(middleware.RoleMiddleware("admin"))
@@ -332,7 +332,7 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 		write.DELETE("/:ingredient_id", ingredientHandler.DeleteIngredient)
 	}
 
-	log.Println("✅ Ingredient routes registered (read: admin/manager/chef/staff, restock: same, deduct/expenditure: admin/manager, write: admin)")
+	log.Println("✅ Ingredient routes registered (read: admin/manager/chef/staff, restock/deduct: same + permission flags, expenditure: admin/manager, write: admin)")
 }
 
 // SetupPublicRoutes registers public endpoints (no authentication required)
