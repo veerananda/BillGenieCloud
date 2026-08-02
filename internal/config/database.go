@@ -213,6 +213,12 @@ func MigrateDatabase(db *gorm.DB) {
 		log.Println("✅ AddCanRestockInventory migration completed")
 	}
 
+	if err := migrations.AddCanDeductInventory(db); err != nil {
+		log.Printf("⚠️  Migration AddCanDeductInventory skipped or failed (may already be applied): %v", err)
+	} else {
+		log.Println("✅ AddCanDeductInventory migration completed")
+	}
+
 	if err := migrations.AddMenuManagementAccess(db); err != nil {
 		log.Printf("⚠️  Migration AddMenuManagementAccess skipped or failed (may already be applied): %v", err)
 	} else {

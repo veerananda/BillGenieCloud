@@ -181,6 +181,7 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 		"name":              user.Name,
 		"can_cancel_orders":       user.CanCancelOrders,
 		"can_restock_inventory":  user.CanRestockInventory,
+		"can_deduct_inventory":   user.CanDeductInventory,
 		"menu_management_access": user.MenuManagementAccess,
 		"message":                "Profile retrieved successfully",
 	})

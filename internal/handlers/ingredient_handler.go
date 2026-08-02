@@ -569,6 +569,18 @@ func userCanRestockFromContext(c *gin.Context, db *gorm.DB) bool {
 	return services.UserCanRestockInventory(&user)
 }
 
+func userCanDeductFromContext(c *gin.Context, db *gorm.DB) bool {
+	userID, ok := c.Get("user_id")
+	if !ok {
+		return false
+	}
+	var user models.User
+	if err := db.Where("id = ?", userID.(string)).First(&user).Error; err != nil {
+		return false
+	}
+	return services.UserCanDeductInventory(&user)
+}
+
 var (
 	errNoValidRestockQuantities = errors.New("no valid restock quantities")
 	errIngredientNotFound       = errors.New("ingredient not found")
@@ -790,11 +802,16 @@ func (h *IngredientHandler) RestockIngredients(c *gin.Context) {
 }
 
 // DeductIngredient removes quantity from current_stock (e.g. expired waste).
-// Admin and manager only.
+// Admin/manager always; staff/chef when can_deduct_inventory is enabled.
 func (h *IngredientHandler) DeductIngredient(c *gin.Context) {
 	restaurantID, exists := c.Get("restaurant_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "restaurant info not found"})
+		return
+	}
+
+	if !userCanDeductFromContext(c, h.db) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not allowed to deduct stock"})
 		return
 	}
 

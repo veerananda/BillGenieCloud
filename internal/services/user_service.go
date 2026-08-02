@@ -35,6 +35,7 @@ type CreateUserRequest struct {
 	StaffKey        string `json:"staff_key"`
 	CanCancelOrders      bool   `json:"can_cancel_orders"`
 	CanRestockInventory  bool   `json:"can_restock_inventory"`
+	CanDeductInventory   bool   `json:"can_deduct_inventory"`
 	MenuManagementAccess bool   `json:"menu_management_access"`
 }
 
@@ -47,6 +48,7 @@ type UpdateUserRequest struct {
 	IsActive        *bool  `json:"is_active"`
 	CanCancelOrders      *bool  `json:"can_cancel_orders"`
 	CanRestockInventory  *bool  `json:"can_restock_inventory"`
+	CanDeductInventory   *bool  `json:"can_deduct_inventory"`
 	MenuManagementAccess *bool  `json:"menu_management_access"`
 }
 
@@ -157,6 +159,11 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		canRestockInventory = true
 	}
 
+	canDeductInventory := false
+	if (req.Role == "staff" || req.Role == "chef") && req.CanDeductInventory {
+		canDeductInventory = true
+	}
+
 	menuManagementAccess := false
 	if req.Role == "manager" && req.MenuManagementAccess {
 		menuManagementAccess = true
@@ -174,6 +181,7 @@ func (s *UserService) CreateUser(restaurantID string, req CreateUserRequest) (*m
 		IsActive:            true,
 		CanCancelOrders:      canCancelOrders,
 		CanRestockInventory:  canRestockInventory,
+		CanDeductInventory:   canDeductInventory,
 		MenuManagementAccess: menuManagementAccess,
 	}
 
@@ -318,6 +326,7 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 			}
 			if req.Role == "manager" {
 				updates["can_restock_inventory"] = false
+				updates["can_deduct_inventory"] = false
 			}
 			if req.Role != "manager" {
 				updates["menu_management_access"] = false
@@ -342,6 +351,16 @@ func (s *UserService) UpdateUser(userID string, restaurantID string, req UpdateU
 		}
 		if effectiveRole == "staff" || effectiveRole == "chef" {
 			updates["can_restock_inventory"] = *req.CanRestockInventory
+		}
+	}
+
+	if req.CanDeductInventory != nil {
+		effectiveRole := user.Role
+		if !isAdmin && req.Role != "" {
+			effectiveRole = req.Role
+		}
+		if effectiveRole == "staff" || effectiveRole == "chef" {
+			updates["can_deduct_inventory"] = *req.CanDeductInventory
 		}
 	}
 
@@ -441,6 +460,21 @@ func UserCanRestockInventory(user *models.User) bool {
 		return true
 	case "staff", "chef":
 		return user.CanRestockInventory
+	default:
+		return false
+	}
+}
+
+// UserCanDeductInventory reports whether a user may deduct expired/wasted stock.
+func UserCanDeductInventory(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	switch user.Role {
+	case "admin", "manager":
+		return true
+	case "staff", "chef":
+		return user.CanDeductInventory
 	default:
 		return false
 	}
