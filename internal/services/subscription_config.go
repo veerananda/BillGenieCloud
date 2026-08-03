@@ -17,7 +17,7 @@ const (
 // Fixed trial bundle — keep in sync with BillGenieApp-new/src/config/subscriptionPricing.ts
 func FixedTrialSelection() SubscriptionSelection {
 	return SubscriptionSelection{
-		BillingCycle:    "monthly",
+		BillingCycle:    BillingCycleQuarterly,
 		OperationMode:   "both",
 		MaxTables:       PlanStarterTables,
 		ExtraStaff:      0,

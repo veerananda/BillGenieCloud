@@ -15,14 +15,18 @@ func TestRemainingSubscriptionDays(t *testing.T) {
 	}
 }
 
-func TestPeriodAmountUsesAnnual(t *testing.T) {
+func TestPeriodAmountUsesCycles(t *testing.T) {
 	sel := DefaultSubscriptionSelection()
-	sel.BillingCycle = "annual"
+	sel.BillingCycle = BillingCycleAnnual
 	sel.Inventory = true
 	q := CalculateSubscriptionQuote(sel)
-	_, _, monthlyTotal := periodAmountINR(q, "monthly")
-	_, _, annualTotal := periodAmountINR(q, "annual")
-	if annualTotal <= monthlyTotal {
-		t.Fatalf("annual period amount should exceed monthly, monthly=%d annual=%d", monthlyTotal, annualTotal)
+	_, _, quarterlyTotal := periodAmountINR(q, BillingCycleQuarterly)
+	_, _, halfYearlyTotal := periodAmountINR(q, BillingCycleHalfYearly)
+	_, _, annualTotal := periodAmountINR(q, BillingCycleAnnual)
+	if halfYearlyTotal <= quarterlyTotal {
+		t.Fatalf("half-yearly should exceed quarterly, q=%d h=%d", quarterlyTotal, halfYearlyTotal)
+	}
+	if annualTotal <= halfYearlyTotal {
+		t.Fatalf("annual should exceed half-yearly, h=%d a=%d", halfYearlyTotal, annualTotal)
 	}
 }

@@ -63,19 +63,31 @@ func HasPendingCustomDealRequest(cfg StoredSubscriptionConfig) bool {
 		strings.EqualFold(strings.TrimSpace(cfg.CustomDealRequest.Status), CustomDealRequestPending)
 }
 
+// MarkCustomDealRequestCancelled updates an in-memory pending request to cancelled.
+func MarkCustomDealRequestCancelled(cfg *StoredSubscriptionConfig) bool {
+	if cfg == nil || !HasPendingCustomDealRequest(*cfg) {
+		return false
+	}
+	cfg.CustomDealRequest.Status = CustomDealRequestCancelled
+	return true
+}
+
+// ValidateCustomDealRequest accepts an optional notes/phone payload.
+// Capacity fields are not collected from the customer — platform ops reviews the existing restaurant.
 func ValidateCustomDealRequest(req CustomDealRequest) (CustomDealRequest, error) {
-	switch req.BillingCycle {
-	case "", "monthly":
-		req.BillingCycle = "monthly"
-	case "annual":
-	default:
-		return req, errors.New("billing_cycle must be monthly or annual")
+	normalized := NormalizeBillingCycle(req.BillingCycle)
+	if normalized == "" && strings.TrimSpace(req.BillingCycle) != "" {
+		return req, errors.New("billing_cycle must be quarterly, half_yearly, or annual")
 	}
-	if req.MaxTables < PlanScaleTables+1 {
-		req.MaxTables = PlanScaleTables + 1 // custom starts above catalog Scale (25)
+	if normalized == "" {
+		normalized = BillingCycleQuarterly
 	}
-	if req.MaxTables > MaxTablesCustomDeal {
-		req.MaxTables = MaxTablesCustomDeal
+	req.BillingCycle = normalized
+	// Optional capacity hints (legacy clients / platform prefill) — clamp only if provided.
+	if req.MaxTables > 0 {
+		if req.MaxTables > MaxTablesCustomDeal {
+			req.MaxTables = MaxTablesCustomDeal
+		}
 	}
 	req.ExtraStaff = clampCount(req.ExtraStaff, 100)
 	req.ExtraChefs = clampCount(req.ExtraChefs, 50)
@@ -126,13 +138,14 @@ func (cfg StoredSubscriptionConfig) EffectiveSelection() SubscriptionSelection {
 
 // ValidateCustomDealSelection allows higher table/seat caps than catalog Basic.
 func ValidateCustomDealSelection(sel SubscriptionSelection) (SubscriptionSelection, error) {
-	switch sel.BillingCycle {
-	case "", "monthly":
-		sel.BillingCycle = "monthly"
-	case "annual":
-	default:
-		return sel, errors.New("billing_cycle must be monthly or annual")
+	normalized := NormalizeBillingCycle(sel.BillingCycle)
+	if normalized == "" && strings.TrimSpace(sel.BillingCycle) != "" {
+		return sel, errors.New("billing_cycle must be quarterly, half_yearly, or annual")
 	}
+	if normalized == "" {
+		normalized = BillingCycleQuarterly
+	}
+	sel.BillingCycle = normalized
 	sel.OperationMode = "both"
 	sel.KitchenDineIn = true
 	sel.KitchenCounter = true

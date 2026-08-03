@@ -96,6 +96,9 @@ func TestValidateSubscriptionSelectionNormalizesBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if sel.BillingCycle != BillingCycleQuarterly {
+		t.Fatalf("legacy monthly should normalize to quarterly, got %s", sel.BillingCycle)
+	}
 	if sel.OperationMode != "both" || sel.MaxTables != PlanStarterTables {
 		t.Fatalf("expected both + %d tables, got %s / %d", PlanStarterTables, sel.OperationMode, sel.MaxTables)
 	}

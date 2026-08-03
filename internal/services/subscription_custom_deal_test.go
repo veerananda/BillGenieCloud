@@ -3,15 +3,15 @@ package services
 import "testing"
 
 func TestValidateCustomDealRequestDefaults(t *testing.T) {
-	req, err := ValidateCustomDealRequest(CustomDealRequest{MaxTables: 10, Notes: " need 40 tables "})
+	req, err := ValidateCustomDealRequest(CustomDealRequest{Notes: " need 40 tables "})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.MaxTables != PlanScaleTables+1 {
-		t.Fatalf("expected min tables %d, got %d", PlanScaleTables+1, req.MaxTables)
+	if req.MaxTables != 0 {
+		t.Fatalf("expected no forced table capacity on empty request, got %d", req.MaxTables)
 	}
-	if req.BillingCycle != "monthly" {
-		t.Fatalf("expected monthly cycle")
+	if req.BillingCycle != BillingCycleQuarterly {
+		t.Fatalf("expected quarterly cycle, got %s", req.BillingCycle)
 	}
 	if req.Notes != "need 40 tables" {
 		t.Fatalf("notes not trimmed: %q", req.Notes)
@@ -38,7 +38,7 @@ func TestQuoteFromCustomDeal(t *testing.T) {
 	deal := CustomDeal{
 		MonthlyPrice: 4999,
 		Selection: SubscriptionSelection{
-			BillingCycle:  "monthly",
+			BillingCycle:  BillingCycleQuarterly,
 			OperationMode: "both",
 			MaxTables:     40,
 			ExtraStaff:    10,
@@ -65,7 +65,7 @@ func TestLimitsFromConfigCustomDeal(t *testing.T) {
 	deal := CustomDeal{
 		MonthlyPrice: 7999,
 		Selection: SubscriptionSelection{
-			BillingCycle:    "monthly",
+			BillingCycle:    BillingCycleQuarterly,
 			MaxTables:       40,
 			ExtraStaff:      5,
 			ExtraChefs:      3,

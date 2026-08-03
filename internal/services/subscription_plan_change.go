@@ -59,10 +59,7 @@ func periodAmountINR(quote SubscriptionQuote, billingCycle string) (subtotal, gs
 
 func subscriptionPeriodDays(cfg StoredSubscriptionConfig, subscriptionEnd time.Time, billingCycle string) int {
 	now := time.Now()
-	fallback := 30
-	if strings.EqualFold(billingCycle, "annual") {
-		fallback = 365
-	}
+	fallback := BillingCycleMonths(billingCycle) * 30
 	if cfg.PeriodStartedAt != nil && !cfg.PeriodStartedAt.IsZero() && subscriptionEnd.After(*cfg.PeriodStartedAt) {
 		days := int(math.Ceil(subscriptionEnd.Sub(*cfg.PeriodStartedAt).Hours() / 24))
 		if days < 1 {
@@ -104,15 +101,19 @@ func (s *SubscriptionRenewalService) QuotePlanChange(restaurantID string, newSel
 		return nil, err
 	}
 	if validated.BillingCycle == "" {
-		validated.BillingCycle = currentSel.BillingCycle
-	}
-	if validated.BillingCycle != currentSel.BillingCycle {
-		return nil, errors.New("billing cycle cannot be changed mid-cycle; change cycle at renewal")
+		validated.BillingCycle = NormalizeBillingCycle(currentSel.BillingCycle)
+		if validated.BillingCycle == "" {
+			validated.BillingCycle = BillingCycleQuarterly
+		}
 	}
 
 	oldQuote := CalculateSubscriptionQuote(currentSel)
 	newQuote := CalculateSubscriptionQuote(validated)
-	_, _, oldPeriod := periodAmountINR(oldQuote, currentSel.BillingCycle)
+	currentCycle := NormalizeBillingCycle(currentSel.BillingCycle)
+	if currentCycle == "" {
+		currentCycle = BillingCycleQuarterly
+	}
+	_, _, oldPeriod := periodAmountINR(oldQuote, currentCycle)
 	_, _, newPeriod := periodAmountINR(newQuote, validated.BillingCycle)
 
 	remaining := remainingSubscriptionDays(restaurant.SubscriptionEnd)
@@ -210,9 +211,12 @@ func (s *SubscriptionRenewalService) CreatePlanChangeOrder(restaurantID string, 
 		return nil, errors.New("nothing to charge for this upgrade")
 	}
 
-	restaurant, _, _, _, err := s.loadRestaurant(restaurantID)
+	restaurant, cfg, _, _, err := s.loadRestaurant(restaurantID)
 	if err != nil {
 		return nil, err
+	}
+	if MarkCustomDealRequestCancelled(&cfg) {
+		_ = s.persistSubscriptionConfig(restaurantID, restaurant, cfg)
 	}
 
 	var orderID string
@@ -299,6 +303,7 @@ func (s *SubscriptionRenewalService) SchedulePlanChange(restaurantID string, new
 	changeAt := restaurant.SubscriptionEnd
 	cfg.PendingSelection = &quote.NewSelection
 	cfg.PendingChangeAt = &changeAt
+	MarkCustomDealRequestCancelled(&cfg)
 	configJSON, err := MarshalSubscriptionConfig(cfg)
 	if err != nil {
 		return nil, err
