@@ -38,6 +38,7 @@ type RenewalQuote struct {
 	RequiresPlanSelection bool                   `json:"requires_plan_selection"`
 	RequiresPayment       bool                   `json:"requires_payment"`
 	AwaitingCustomDeal    bool                   `json:"awaiting_custom_deal"`
+	IsCustomDeal          bool                   `json:"is_custom_deal"`
 	CustomDealRequest     *CustomDealRequest     `json:"custom_deal_request,omitempty"`
 	CurrentSelection      *SubscriptionSelection `json:"current_selection,omitempty"`
 }
@@ -92,10 +93,7 @@ func (s *SubscriptionRenewalService) loadRestaurant(restaurantID string) (*model
 }
 
 func quoteAmounts(quote SubscriptionQuote, billingCycle string) (subtotal, gst, total, amountPaise int) {
-	subtotal = quote.MonthlySubtotal
-	if billingCycle == "annual" {
-		subtotal = quote.AnnualTotal
-	}
+	subtotal = PeriodSubtotalINR(quote, billingCycle)
 	gst = int(math.Round(float64(subtotal) * subscriptionGSTPercent / 100))
 	total = subtotal + gst
 	amountPaise = total * 100
@@ -129,11 +127,6 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 	requiresPlan := AllowsPlanReview(restaurant)
 	requiresPayment := cfg.Phase == SubscriptionPhasePendingPayment || IsSubscriptionAccessBlocked(restaurant)
 	awaitingCustom := HasPendingCustomDealRequest(cfg) && !cfg.IsCustomDeal()
-	if awaitingCustom {
-		// Payment opens only after platform applies negotiated pricing.
-		requiresPayment = false
-		requiresPlan = false
-	}
 
 	// Scheduled downgrade drives the next renewal amount unless caller overrides.
 	if selectionOverride == nil && cfg.PendingSelection != nil && !cfg.IsCustomDeal() {
@@ -145,15 +138,14 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 		if SelfServePlanChangesLocked(cfg) {
 			return nil, errors.New("this restaurant has a custom commercial deal — plan changes are managed by BillGenie")
 		}
-		if awaitingCustom {
-			return nil, errors.New("your custom plan request is being reviewed — wait for BillGenie to confirm pricing")
-		}
 		validated, err := ValidateSubscriptionSelection(*selectionOverride)
 		if err != nil {
 			return nil, err
 		}
 		selection = validated
 		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
+		// Catalog quote while a custom review is open — amounts are for the catalog plan.
+		// Review stays pending until they pay/schedule that plan or explicitly cancel.
 	} else if cfg.IsCustomDeal() {
 		quote = QuoteFromConfig(cfg, restaurant.CityTier)
 		selection = cfg.EffectiveSelection()
@@ -161,10 +153,11 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 
 	billingCycle := selection.BillingCycle
 	if billingCycle == "" {
-		billingCycle = "monthly"
+		billingCycle = BillingCycleQuarterly
 	}
 	subtotal, gst, total, amountPaise := quoteAmounts(quote, billingCycle)
-	if awaitingCustom {
+	if awaitingCustom && selectionOverride == nil {
+		// Review in progress with no catalog selection — no charge yet.
 		subtotal, gst, total, amountPaise = 0, 0, 0, 0
 	}
 	daysRemaining := int(time.Until(restaurant.SubscriptionEnd).Hours() / 24)
@@ -184,6 +177,7 @@ func (s *SubscriptionRenewalService) GetRenewalQuote(restaurantID string, select
 		RequiresPlanSelection: requiresPlan,
 		RequiresPayment:       requiresPayment,
 		AwaitingCustomDeal:    awaitingCustom,
+		IsCustomDeal:          cfg.IsCustomDeal(),
 		CustomDealRequest:     cfg.CustomDealRequest,
 		CurrentSelection:      &currentSelection,
 	}, nil
@@ -195,12 +189,10 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 		return nil, err
 	}
 
-	if HasPendingCustomDealRequest(cfg) && !cfg.IsCustomDeal() {
-		return nil, errors.New("your custom plan request is being reviewed — payment opens after BillGenie confirms pricing")
-	}
+	awaitingCustom := HasPendingCustomDealRequest(cfg) && !cfg.IsCustomDeal()
 
 	requiresPlan := AllowsPlanReview(restaurant)
-	if requiresPlan && selectionOverride == nil && cfg.Phase != SubscriptionPhasePendingPayment && !cfg.IsCustomDeal() {
+	if requiresPlan && selectionOverride == nil && cfg.Phase != SubscriptionPhasePendingPayment && !cfg.IsCustomDeal() && !awaitingCustom {
 		return nil, errors.New("choose a subscription plan before payment")
 	}
 
@@ -222,18 +214,24 @@ func (s *SubscriptionRenewalService) CreateRenewalOrder(restaurantID string, sel
 		}
 		selection = validated
 		quote = CalculateSubscriptionQuoteForTier(selection, restaurant.CityTier)
+	} else if awaitingCustom {
+		return nil, errors.New("your custom plan request is being reviewed — pick a catalog plan to pay now, or wait for BillGenie pricing")
+	}
+
+	// Catalog payment / plan choice withdraws an open custom-plan review.
+	if awaitingCustom && !cfg.IsCustomDeal() {
+		if MarkCustomDealRequestCancelled(&cfg) {
+			_ = s.persistSubscriptionConfig(restaurantID, restaurant, cfg)
+		}
 	}
 
 	billingCycle := selection.BillingCycle
 	if billingCycle == "" {
-		billingCycle = "monthly"
+		billingCycle = BillingCycleQuarterly
 	}
 	subtotal, gst, total, amountPaise := quoteAmounts(quote, billingCycle)
 
-	periodLabel := "month"
-	if billingCycle == "annual" {
-		periodLabel = "year"
-	}
+	periodLabel := BillingCycleLabel(billingCycle)
 	description := fmt.Sprintf("BillGenie subscription (%s)", periodLabel)
 	if cfg.Phase == SubscriptionPhasePendingPayment {
 		description = "BillGenie subscription activation"
@@ -346,6 +344,9 @@ func (s *SubscriptionRenewalService) applyPaidSelection(restaurant *models.Resta
 	cfg.PendingSelection = nil
 	cfg.PendingChangeAt = nil
 	cfg.PeriodStartedAt = &now
+	if !cfg.IsCustomDeal() {
+		MarkCustomDealRequestCancelled(&cfg)
+	}
 
 	configJSON, err := MarshalSubscriptionConfig(cfg)
 	if err != nil {
@@ -366,10 +367,14 @@ func NextSubscriptionEnd(currentEnd time.Time, billingCycle string) time.Time {
 	if !currentEnd.IsZero() && currentEnd.After(base) {
 		base = currentEnd
 	}
-	if strings.EqualFold(strings.TrimSpace(billingCycle), "annual") {
+	switch NormalizeBillingCycle(billingCycle) {
+	case BillingCycleAnnual:
 		return base.AddDate(1, 0, 0)
+	case BillingCycleHalfYearly:
+		return base.AddDate(0, 6, 0)
+	default:
+		return base.AddDate(0, 3, 0)
 	}
-	return base.AddDate(0, 1, 0)
 }
 
 func (s *SubscriptionRenewalService) VerifyRenewalPayment(restaurantID string, req VerifyRenewalPaymentRequest) (*VerifyRenewalPaymentResult, error) {
@@ -547,7 +552,8 @@ func (s *SubscriptionRenewalService) completeRenewalPayment(
 	return &result, nil
 }
 
-// RequestCustomDeal stores or updates a pending commercial-plan request for a restaurant.
+// RequestCustomDeal records a lightweight commercial-plan review request.
+// Capacity is not collected — BillGenie already has the restaurant account details.
 func (s *SubscriptionRenewalService) RequestCustomDeal(restaurantID string, req CustomDealRequest) (*CustomDealRequest, error) {
 	validated, err := ValidateCustomDealRequest(req)
 	if err != nil {
@@ -562,6 +568,9 @@ func (s *SubscriptionRenewalService) RequestCustomDeal(restaurantID string, req 
 	if cfg.IsCustomDeal() {
 		return nil, errors.New("this restaurant already has a custom commercial deal — contact BillGenie to change it")
 	}
+	if HasPendingCustomDealRequest(cfg) {
+		return cfg.CustomDealRequest, nil
+	}
 
 	now := time.Now()
 	validated.Status = CustomDealRequestPending
@@ -569,27 +578,24 @@ func (s *SubscriptionRenewalService) RequestCustomDeal(restaurantID string, req 
 	if validated.ContactPhone == "" {
 		validated.ContactPhone = strings.TrimSpace(restaurant.Phone)
 	}
+	current := cfg.EffectiveSelection()
+	if validated.BillingCycle == "" {
+		validated.BillingCycle = NormalizeBillingCycle(current.BillingCycle)
+	}
+	if validated.BillingCycle == "" {
+		validated.BillingCycle = BillingCycleQuarterly
+	}
+	// Ops hint only — not a customer-chosen capacity form.
+	if validated.MaxTables <= 0 {
+		if current.MaxTables > PlanScaleTables {
+			validated.MaxTables = current.MaxTables
+		} else {
+			validated.MaxTables = PlanScaleTables + 1
+		}
+	}
 
 	cfg.CustomDealRequest = &validated
-	sel := SelectionFromCustomDealRequest(validated)
-	cfg.Selection = sel
-	cfg.Quote = SubscriptionQuote{
-		Selection: sel,
-		LineItems: []SubscriptionLineItem{{
-			ID:     "custom_deal_request",
-			Label:  "Custom plan request (awaiting quote)",
-			Amount: 0,
-		}},
-		BundledStaff:    IncludedStaffINR + sel.ExtraStaff,
-		BundledChefs:    IncludedChefsINR + sel.ExtraChefs,
-		BundledManagers: IncludedManagersINR + sel.ExtraManagers,
-	}
-	if restaurant.SubscriptionPlan == "" || restaurant.SubscriptionPlan == "trial" {
-		// keep trial plan label
-	} else if !cfg.HasEverPaid {
-		restaurant.SubscriptionPlan = "custom_pending"
-	}
-	restaurant.SubscriptionMonthlyPrice = 0
+	// Keep existing catalog selection/quote intact so they can still pick a self-serve plan.
 
 	configJSON, err := MarshalSubscriptionConfig(cfg)
 	if err != nil {
@@ -599,5 +605,83 @@ func (s *SubscriptionRenewalService) RequestCustomDeal(restaurantID string, req 
 	if err := s.db.Save(&restaurant).Error; err != nil {
 		return nil, err
 	}
+
+	s.notifyCustomDealRequestSubmitted(&restaurant, &validated)
 	return &validated, nil
+}
+
+// CancelCustomDealRequest withdraws a pending commercial-plan review.
+func (s *SubscriptionRenewalService) CancelCustomDealRequest(restaurantID string) error {
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		return err
+	}
+	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	if !MarkCustomDealRequestCancelled(&cfg) {
+		return nil
+	}
+	return s.persistSubscriptionConfig(restaurantID, &restaurant, cfg)
+}
+
+func (s *SubscriptionRenewalService) persistSubscriptionConfig(
+	_ string,
+	restaurant *models.Restaurant,
+	cfg StoredSubscriptionConfig,
+) error {
+	configJSON, err := MarshalSubscriptionConfig(cfg)
+	if err != nil {
+		return err
+	}
+	restaurant.SubscriptionConfig = configJSON
+	return s.db.Save(restaurant).Error
+}
+
+func platformOpsNotifyEmail() string {
+	if v := strings.TrimSpace(os.Getenv("PLATFORM_OPS_NOTIFY_EMAIL")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("PLATFORM_OPS_EMAIL")); v != "" {
+		return v
+	}
+	return "hello@thebillgenie.com"
+}
+
+func (s *SubscriptionRenewalService) notifyCustomDealRequestSubmitted(
+	restaurant *models.Restaurant,
+	req *CustomDealRequest,
+) {
+	if restaurant == nil || req == nil {
+		return
+	}
+	to := platformOpsNotifyEmail()
+	subject := fmt.Sprintf("Custom plan review requested — %s", restaurant.Name)
+	body := fmt.Sprintf(
+		"A restaurant requested a custom commercial plan review.\n\n"+
+			"Restaurant: %s\n"+
+			"Restaurant ID: %s\n"+
+			"Owner: %s\n"+
+			"Email: %s\n"+
+			"Phone: %s\n"+
+			"City / State: %s / %s\n"+
+			"Address: %s\n"+
+			"Preferred billing cycle: %s\n"+
+			"Contact phone on request: %s\n"+
+			"Notes: %s\n\n"+
+			"Open platform ops to review and set negotiated pricing.\n",
+		restaurant.Name,
+		restaurant.ID,
+		restaurant.OwnerName,
+		restaurant.Email,
+		restaurant.Phone,
+		restaurant.City,
+		restaurant.State,
+		restaurant.Address,
+		BillingCycleLabel(req.BillingCycle),
+		req.ContactPhone,
+		req.Notes,
+	)
+	if err := sendEmailSMTP(to, subject, body); err != nil {
+		// Non-fatal — request is already stored for platform list.
+		fmt.Printf("custom deal request notify email failed: %v\n", err)
+	}
 }

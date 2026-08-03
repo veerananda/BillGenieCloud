@@ -70,7 +70,13 @@ const (
 	IncludedChefsINR       = StarterChefsINR
 	IncludedHistoryDaysINR = 90
 	ExtendedHistoryDays    = 730
-	AnnualMultiplier       = 11
+	AnnualMultiplier       = 11 // pay 11 months, get 12
+	// Catalog billing cycles (monthly removed).
+	BillingCycleQuarterly  = "quarterly"
+	BillingCycleHalfYearly = "half_yearly"
+	BillingCycleAnnual     = "annual"
+	QuarterlyMultiplier    = 3
+	HalfYearlyMultiplier   = 6
 
 	PlanBandStarter = "starter"
 	PlanBandGrowth  = "growth"
@@ -81,7 +87,7 @@ const (
 )
 
 type SubscriptionSelection struct {
-	BillingCycle    string `json:"billing_cycle"`  // monthly | annual
+	BillingCycle    string `json:"billing_cycle"`  // quarterly | half_yearly | annual
 	OperationMode   string `json:"operation_mode"` // always normalized to both for new plans
 	MaxTables       int    `json:"max_tables"`     // snapped to 10 | 18 | 25 on catalog validate
 	ExtraStaff      int    `json:"extra_staff"`
@@ -131,7 +137,7 @@ type TieredPricing struct {
 
 func DefaultSubscriptionSelection() SubscriptionSelection {
 	return SubscriptionSelection{
-		BillingCycle:   "monthly",
+		BillingCycle:   BillingCycleQuarterly,
 		OperationMode:  "both",
 		MaxTables:      PlanStarterTables,
 		KitchenDineIn:  true,
@@ -198,14 +204,69 @@ func BandSeatBundle(maxTables int) (staff, chefs, managers int) {
 	}
 }
 
-func ValidateSubscriptionSelection(sel SubscriptionSelection) (SubscriptionSelection, error) {
-	switch sel.BillingCycle {
-	case "", "monthly":
-		sel.BillingCycle = "monthly"
-	case "annual":
+func NormalizeBillingCycle(cycle string) string {
+	switch strings.ToLower(strings.TrimSpace(cycle)) {
+	case BillingCycleAnnual, "yearly", "year":
+		return BillingCycleAnnual
+	case BillingCycleHalfYearly, "half-yearly", "halfyearly", "semiannual", "semi_annual":
+		return BillingCycleHalfYearly
+	case BillingCycleQuarterly, "quarter", "":
+		return BillingCycleQuarterly
+	case "monthly", "month":
+		// Legacy: monthly catalog billing removed — map to quarterly.
+		return BillingCycleQuarterly
 	default:
-		return sel, errors.New("billing_cycle must be monthly or annual")
+		return ""
 	}
+}
+
+func BillingCycleMonths(cycle string) int {
+	switch NormalizeBillingCycle(cycle) {
+	case BillingCycleAnnual:
+		return 12
+	case BillingCycleHalfYearly:
+		return 6
+	default:
+		return 3
+	}
+}
+
+// PeriodSubtotalINR returns pre-GST amount for the billing period from a monthly quote base.
+func PeriodSubtotalINR(quote SubscriptionQuote, billingCycle string) int {
+	monthly := quote.MonthlySubtotal
+	switch NormalizeBillingCycle(billingCycle) {
+	case BillingCycleAnnual:
+		if quote.AnnualTotal > 0 {
+			return quote.AnnualTotal
+		}
+		return monthly * AnnualMultiplier
+	case BillingCycleHalfYearly:
+		return monthly * HalfYearlyMultiplier
+	default:
+		return monthly * QuarterlyMultiplier
+	}
+}
+
+func BillingCycleLabel(cycle string) string {
+	switch NormalizeBillingCycle(cycle) {
+	case BillingCycleAnnual:
+		return "year"
+	case BillingCycleHalfYearly:
+		return "6 months"
+	default:
+		return "quarter"
+	}
+}
+
+func ValidateSubscriptionSelection(sel SubscriptionSelection) (SubscriptionSelection, error) {
+	normalized := NormalizeBillingCycle(sel.BillingCycle)
+	if normalized == "" && strings.TrimSpace(sel.BillingCycle) != "" {
+		return sel, errors.New("billing_cycle must be quarterly, half_yearly, or annual")
+	}
+	if normalized == "" {
+		normalized = BillingCycleQuarterly
+	}
+	sel.BillingCycle = normalized
 
 	sel.OperationMode = "both"
 	sel.MaxTables = NormalizeMaxTables(sel.MaxTables)

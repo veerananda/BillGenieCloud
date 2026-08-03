@@ -76,7 +76,7 @@ type ClearCustomDealRequest struct {
 
 type GrantSubscriptionRequest struct {
 	Selection    *SubscriptionSelection `json:"selection"`
-	BillingCycle string                 `json:"billing_cycle"` // monthly | annual
+	BillingCycle string                 `json:"billing_cycle"` // quarterly | half_yearly | annual
 	DurationDays int                    `json:"duration_days"` // 0 = default (30d / 365d)
 	Reason       string                 `json:"reason" validate:"required"`
 }
@@ -228,12 +228,12 @@ func (s *PlatformOpsService) GrantSubscription(restaurantID string, req GrantSub
 		selection = validated
 	}
 
-	billingCycle := strings.TrimSpace(req.BillingCycle)
-	if billingCycle == "" {
-		billingCycle = "monthly"
+	billingCycle := NormalizeBillingCycle(req.BillingCycle)
+	if billingCycle == "" && strings.TrimSpace(req.BillingCycle) != "" {
+		return nil, errors.New("billing_cycle must be quarterly, half_yearly, or annual")
 	}
-	if billingCycle != "monthly" && billingCycle != "annual" {
-		return nil, errors.New("billing_cycle must be monthly or annual")
+	if billingCycle == "" {
+		billingCycle = BillingCycleQuarterly
 	}
 
 	oldSnapshot, _ := json.Marshal(restaurant)
@@ -388,8 +388,9 @@ func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDea
 
 	oldSnapshot, _ := json.Marshal(restaurant)
 	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	hadPendingRequest := HasPendingCustomDealRequest(cfg)
 	// Prefill empty capacity from the restaurant's pending request when ops omits it.
-	if HasPendingCustomDealRequest(cfg) && deal.Selection.MaxTables <= 0 {
+	if hadPendingRequest && deal.Selection.MaxTables <= 0 {
 		deal.Selection = SelectionFromCustomDealRequest(*cfg.CustomDealRequest)
 		deal, err = ValidateCustomDeal(deal)
 		if err != nil {
@@ -419,8 +420,8 @@ func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDea
 		if cfg.PeriodStartedAt == nil {
 			cfg.PeriodStartedAt = &now
 		}
-	} else if !cfg.HasEverPaid && cfg.Phase != SubscriptionPhaseTrial {
-		// Deal quoted — restaurant pays from app before going active.
+	} else if hadPendingRequest || (!cfg.HasEverPaid && cfg.Phase != SubscriptionPhaseTrial) || IsSubscriptionAccessBlocked(&restaurant) {
+		// Deal quoted — restaurant pays from app (email notifies them).
 		cfg.Phase = SubscriptionPhasePendingPayment
 	}
 
@@ -435,9 +436,9 @@ func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDea
 	if req.DurationDays > 0 {
 		restaurant.SubscriptionEnd = time.Now().AddDate(0, 0, req.DurationDays)
 	} else if req.Activate && (restaurant.SubscriptionEnd.IsZero() || restaurant.SubscriptionEnd.Before(time.Now())) {
-		cycle := deal.Selection.BillingCycle
+		cycle := NormalizeBillingCycle(deal.Selection.BillingCycle)
 		if cycle == "" {
-			cycle = "monthly"
+			cycle = BillingCycleQuarterly
 		}
 		restaurant.SubscriptionEnd = NextSubscriptionEnd(time.Time{}, cycle)
 	}
@@ -453,6 +454,9 @@ func (s *PlatformOpsService) SetCustomDeal(restaurantID string, req SetCustomDea
 	}
 
 	s.writePlatformAudit(restaurantID, actor, "platform_set_custom_deal", reason, oldSnapshot, restaurant)
+	if !req.Activate {
+		s.sendCustomDealReadyEmail(&restaurant, deal, quote)
+	}
 	return &restaurant, nil
 }
 
@@ -590,6 +594,52 @@ func (s *PlatformOpsService) sendApprovalEmail(restaurant *models.Restaurant) {
 	if err := sendEmailSMTP(restaurant.Email, subject, body); err != nil {
 		log.Printf("⚠️  Failed to send approval email to %s: %v", restaurant.Email, err)
 	}
+}
+
+func (s *PlatformOpsService) sendCustomDealReadyEmail(
+	restaurant *models.Restaurant,
+	deal CustomDeal,
+	quote SubscriptionQuote,
+) {
+	if restaurant == nil || restaurant.Email == "" {
+		return
+	}
+
+	cycle := NormalizeBillingCycle(deal.Selection.BillingCycle)
+	if cycle == "" {
+		cycle = BillingCycleQuarterly
+	}
+	periodLabel := BillingCycleLabel(cycle)
+	subtotal := PeriodSubtotalINR(quote, cycle)
+	gst := int(math.Round(float64(subtotal) * 0.18))
+	total := subtotal + gst
+	tables := deal.Selection.MaxTables
+
+	subject := "Your BillGenie custom plan is ready — open the app to pay"
+	body := fmt.Sprintf(
+		"Hi %s,\n\n"+
+			"Good news — the BillGenie team has prepared a custom plan for %s.\n\n"+
+			"Plan summary:\n"+
+			"• Up to %d tables\n"+
+			"• ₹%s per %s (₹%s + 18%% GST)\n\n"+
+			"Open the BillGenie app (or web), go to More / Subscription, and complete payment with Razorpay to activate this plan.\n\n"+
+			"If you have questions, reply to this email or contact hello@thebillgenie.com.\n\n"+
+			"- BillGenie",
+		restaurant.OwnerName,
+		restaurant.Name,
+		tables,
+		formatINR(total),
+		periodLabel,
+		formatINR(subtotal),
+	)
+
+	if err := sendEmailSMTP(restaurant.Email, subject, body); err != nil {
+		log.Printf("⚠️  Failed to send custom deal ready email to %s: %v", restaurant.Email, err)
+	}
+}
+
+func formatINR(amount int) string {
+	return fmt.Sprintf("%d", amount)
 }
 
 // DeleteRestaurant permanently removes a tenant and all related rows.

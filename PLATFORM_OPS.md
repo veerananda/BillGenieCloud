@@ -41,7 +41,7 @@ Full tenant detail, limits, usage, recent renewals.
 ```json
 {
   "reason": "Rajahmundry pilot partner",
-  "billing_cycle": "monthly",
+  "billing_cycle": "quarterly",
   "duration_days": 30,
   "selection": { "operation_mode": "both", "max_tables": 10, "kitchen_dine_in": true }
 }
