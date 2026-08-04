@@ -158,14 +158,13 @@ func AllowsPlanReview(restaurant *models.Restaurant) bool {
 }
 
 // CanChangePlanMidCycle is true for paid active subscriptions that are not expired.
+// A custom-deal "lock" does not fully block this — upgrades may still be refused in
+// QuotePlanChange, but next-cycle downgrades stay available.
 func CanChangePlanMidCycle(restaurant *models.Restaurant) bool {
 	if restaurant == nil {
 		return false
 	}
 	cfg := ParseStoredSubscriptionConfig(restaurant)
-	if SelfServePlanChangesLocked(cfg) {
-		return false
-	}
 	if cfg.Phase != SubscriptionPhaseActive || !cfg.HasEverPaid {
 		return false
 	}

@@ -152,6 +152,24 @@ func (h *PlatformHandler) ClearCustomDeal(c *gin.Context) {
 	})
 }
 
+// CancelCustomDealRequest dismisses a pending custom plan review (no deal applied).
+func (h *PlatformHandler) CancelCustomDealRequest(c *gin.Context) {
+	var req services.CancelCustomDealRequestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	restaurant, err := h.ops.CancelCustomDealRequest(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Custom plan request dismissed; restaurant can continue with catalog plans",
+		"restaurant": h.ops.BuildSummaryPublic(restaurant),
+	})
+}
+
 // SetActive suspends or reactivates a restaurant tenant.
 func (h *PlatformHandler) SetActive(c *gin.Context) {
 	var req services.SetActiveRequest

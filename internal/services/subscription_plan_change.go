@@ -90,9 +90,6 @@ func (s *SubscriptionRenewalService) QuotePlanChange(restaurantID string, newSel
 		return nil, err
 	}
 	if !CanChangePlanMidCycle(restaurant) {
-		if SelfServePlanChangesLocked(cfg) {
-			return nil, errors.New("this restaurant has a custom commercial deal — contact BillGenie to change the plan")
-		}
 		return nil, errors.New("plan changes are only available for an active paid subscription; renew instead")
 	}
 
@@ -138,6 +135,10 @@ func (s *SubscriptionRenewalService) QuotePlanChange(restaurantID string, newSel
 	} else {
 		changeType = PlanChangeDowngrade
 		prorationDelta = 0
+	}
+
+	if changeType == PlanChangeUpgrade && SelfServePlanChangesLocked(cfg) {
+		return nil, errors.New("this restaurant has a locked custom deal — contact BillGenie to upgrade, or schedule a catalog downgrade for the next cycle")
 	}
 
 	amountDue := 0
@@ -187,7 +188,12 @@ func (s *SubscriptionRenewalService) QuotePlanChange(restaurantID string, newSel
 
 func selectionEqual(a, b SubscriptionSelection) bool {
 	return a.BillingCycle == b.BillingCycle &&
-		a.OperationMode == b.OperationMode &&
+		samePlanPackage(a, b)
+}
+
+// samePlanPackage compares capacity/add-ons, ignoring billing cycle.
+func samePlanPackage(a, b SubscriptionSelection) bool {
+	return a.OperationMode == b.OperationMode &&
 		a.MaxTables == b.MaxTables &&
 		a.ExtraStaff == b.ExtraStaff &&
 		a.ExtraChefs == b.ExtraChefs &&
@@ -211,12 +217,9 @@ func (s *SubscriptionRenewalService) CreatePlanChangeOrder(restaurantID string, 
 		return nil, errors.New("nothing to charge for this upgrade")
 	}
 
-	restaurant, cfg, _, _, err := s.loadRestaurant(restaurantID)
+	restaurant, _, _, _, err := s.loadRestaurant(restaurantID)
 	if err != nil {
 		return nil, err
-	}
-	if MarkCustomDealRequestCancelled(&cfg) {
-		_ = s.persistSubscriptionConfig(restaurantID, restaurant, cfg)
 	}
 
 	var orderID string

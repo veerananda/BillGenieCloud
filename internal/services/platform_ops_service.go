@@ -74,6 +74,10 @@ type ClearCustomDealRequest struct {
 	Reason string `json:"reason" validate:"required"`
 }
 
+type CancelCustomDealRequestRequest struct {
+	Reason string `json:"reason" validate:"required"`
+}
+
 type GrantSubscriptionRequest struct {
 	Selection    *SubscriptionSelection `json:"selection"`
 	BillingCycle string                 `json:"billing_cycle"` // quarterly | half_yearly | annual
@@ -505,6 +509,46 @@ func (s *PlatformOpsService) ClearCustomDeal(restaurantID string, req ClearCusto
 	}
 
 	s.writePlatformAudit(restaurantID, actor, "platform_clear_custom_deal", reason, oldSnapshot, restaurant)
+	return &restaurant, nil
+}
+
+// CancelCustomDealRequest dismisses a pending in-app custom plan review so the
+// restaurant can continue with catalog / self-serve pricing. Does not clear an
+// active custom deal — use ClearCustomDeal for that.
+func (s *PlatformOpsService) CancelCustomDealRequest(restaurantID string, req CancelCustomDealRequestRequest, actor string) (*models.Restaurant, error) {
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		return nil, errors.New("reason is required")
+	}
+
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("restaurant not found")
+		}
+		return nil, err
+	}
+
+	oldSnapshot, _ := json.Marshal(restaurant)
+	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	if !HasPendingCustomDealRequest(cfg) {
+		return nil, errors.New("no pending custom plan request to dismiss")
+	}
+	if !MarkCustomDealRequestCancelled(&cfg) {
+		return nil, errors.New("no pending custom plan request to dismiss")
+	}
+
+	configJSON, err := MarshalSubscriptionConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	restaurant.SubscriptionConfig = configJSON
+
+	if err := s.db.Save(&restaurant).Error; err != nil {
+		return nil, err
+	}
+
+	s.writePlatformAudit(restaurantID, actor, "platform_cancel_custom_deal_request", reason, oldSnapshot, restaurant)
 	return &restaurant, nil
 }
 
