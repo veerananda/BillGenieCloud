@@ -931,10 +931,11 @@ type AccountInvite struct {
 	HistoryExtended       bool       `json:"history_extended" gorm:"default:false"`
 	LockSelfServeChanges  bool       `json:"lock_self_serve_changes" gorm:"default:false"`
 	DealNotes             string     `json:"deal_notes,omitempty" gorm:"type:text"`
-	RegisterTokenHash     string     `json:"-" gorm:"type:varchar(128)"`
+	RegisterTokenHash      string     `json:"-" gorm:"type:varchar(128)"`
 	RegisterTokenExpiresAt *time.Time `json:"register_token_expires_at,omitempty"`
-	RestaurantID          string     `json:"restaurant_id,omitempty" gorm:"type:uuid;index"`
-	UpdatedBy             string     `json:"updated_by,omitempty" gorm:"type:varchar(120)"`
+	// Pointer so unset pre-register invites insert NULL (empty string is invalid for uuid).
+	RestaurantID           *string    `json:"restaurant_id,omitempty" gorm:"type:uuid;index"`
+	UpdatedBy              string     `json:"updated_by,omitempty" gorm:"type:varchar(120)"`
 	CreatedAt             time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
 	UpdatedAt             time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 }
