@@ -905,3 +905,51 @@ func (l *CustomPlanLead) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// AccountInvite is a pre-register slot: login ID reserved at request time,
+// deal + register token set by ops, restaurant created only on register.
+type AccountInvite struct {
+	ID                    string     `gorm:"primaryKey" json:"id"`
+	LoginID               string     `json:"login_id" gorm:"type:varchar(16);uniqueIndex;not null"`
+	Name                  string     `json:"name" gorm:"type:varchar(160);not null"`
+	Phone                 string     `json:"phone" gorm:"type:varchar(32);not null;index"`
+	RestaurantName        string     `json:"restaurant_name" gorm:"type:varchar(200);not null"`
+	Address               string     `json:"address" gorm:"type:text"`
+	City                  string     `json:"city" gorm:"type:varchar(120)"`
+	State                 string     `json:"state" gorm:"type:varchar(120)"`
+	Notes                 string     `json:"notes,omitempty" gorm:"type:text"`
+	Source                string     `json:"source,omitempty" gorm:"type:varchar(32);index"`
+	Status                string     `json:"status" gorm:"type:varchar(32);default:requested;index"`
+	InternalNote          string     `json:"internal_note,omitempty" gorm:"type:text"`
+	MonthlyPrice          int        `json:"monthly_price" gorm:"default:0"`
+	AnnualPrice           int        `json:"annual_price" gorm:"default:0"`
+	MaxTables             int        `json:"max_tables" gorm:"default:0"`
+	ExtraStaff            int        `json:"extra_staff" gorm:"default:0"`
+	ExtraChefs            int        `json:"extra_chefs" gorm:"default:0"`
+	ExtraManagers         int        `json:"extra_managers" gorm:"default:0"`
+	Inventory             bool       `json:"inventory" gorm:"default:false"`
+	Expenses              bool       `json:"expenses" gorm:"default:false"`
+	HistoryExtended       bool       `json:"history_extended" gorm:"default:false"`
+	LockSelfServeChanges  bool       `json:"lock_self_serve_changes" gorm:"default:false"`
+	DealNotes             string     `json:"deal_notes,omitempty" gorm:"type:text"`
+	RegisterTokenHash     string     `json:"-" gorm:"type:varchar(128)"`
+	RegisterTokenExpiresAt *time.Time `json:"register_token_expires_at,omitempty"`
+	RestaurantID          string     `json:"restaurant_id,omitempty" gorm:"type:uuid;index"`
+	UpdatedBy             string     `json:"updated_by,omitempty" gorm:"type:varchar(120)"`
+	CreatedAt             time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt             time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+func (AccountInvite) TableName() string {
+	return "account_invites"
+}
+
+func (a *AccountInvite) BeforeCreate(tx *gorm.DB) error {
+	if a.ID == "" {
+		a.ID = uuid.New().String()
+	}
+	if a.Status == "" {
+		a.Status = "requested"
+	}
+	return nil
+}
+

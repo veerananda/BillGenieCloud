@@ -339,6 +339,7 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 func SetupPublicRoutes(router *gin.Engine, db *gorm.DB) {
 	publicHandler := NewPublicHandler(db)
 	leadHandler := NewCustomPlanLeadHandler(services.NewCustomPlanLeadService(db))
+	inviteHandler := NewAccountInviteHandler(services.NewAccountInviteService(db))
 	leadLimit := middleware.RateLimit(10, 15*time.Minute)
 
 	public := router.Group("/public")
@@ -350,8 +351,12 @@ func SetupPublicRoutes(router *gin.Engine, db *gorm.DB) {
 		// Restaurant info endpoint
 		public.GET("/restaurant", publicHandler.GetPublicRestaurant)
 
-		// Signup custom-plan sales lead (no account created)
+		// Signup custom-plan sales lead (legacy; prefer account-requests)
 		public.POST("/custom-plan-leads", leadLimit, leadHandler.CreateLead)
+
+		// Deal-first account request — reserves login ID, no restaurant yet
+		public.POST("/account-requests", leadLimit, inviteHandler.CreateRequest)
+		public.POST("/account-requests/preview", leadLimit, inviteHandler.PreviewRegister)
 	}
 
 	log.Println("✅ Public routes registered")
@@ -381,6 +386,7 @@ func SetupSubscriptionRoutes(router *gin.Engine, db *gorm.DB) {
 		protected.POST("/cancel-scheduled-change", middleware.RoleMiddleware("admin", "manager"), subscriptionHandler.CancelScheduledPlanChange)
 		protected.POST("/request-custom-deal", middleware.RoleMiddleware("admin"), subscriptionHandler.RequestCustomDeal)
 		protected.POST("/cancel-custom-deal-request", middleware.RoleMiddleware("admin"), subscriptionHandler.CancelCustomDealRequest)
+		protected.POST("/notify-plan-change", middleware.RoleMiddleware("admin"), subscriptionHandler.NotifyPlanChange)
 	}
 
 	log.Println("✅ Subscription routes registered")
@@ -401,6 +407,7 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 	platformHandler := NewPlatformHandler(ops)
 	supportHandler := NewSupportIssueHandler(services.NewSupportIssueService(db))
 	leadHandler := NewCustomPlanLeadHandler(services.NewCustomPlanLeadService(db))
+	inviteHandler := NewAccountInviteHandler(services.NewAccountInviteService(db))
 
 	platform := router.Group("/platform")
 	platform.Use(middleware.PlatformAuthMiddleware())
@@ -410,6 +417,9 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 		platform.GET("/support-issues/:issue_id/screenshots", supportHandler.GetPlatformIssueScreenshots)
 		platform.GET("/custom-plan-leads", leadHandler.ListPlatformLeads)
 		platform.PUT("/custom-plan-leads/:lead_id", leadHandler.UpdatePlatformLead)
+		platform.GET("/account-invites", inviteHandler.ListPlatformInvites)
+		platform.GET("/account-invites/:invite_id", inviteHandler.GetPlatformInvite)
+		platform.POST("/account-invites/:invite_id/set-deal", inviteHandler.SetDealAndIssueToken)
 		platform.GET("/restaurants", platformHandler.ListRestaurants)
 		platform.GET("/restaurants/:restaurant_id", platformHandler.GetRestaurant)
 		platform.GET("/audit-logs", platformHandler.ListAuditLogs)
