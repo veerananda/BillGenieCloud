@@ -318,14 +318,18 @@ func (s *AccountInviteService) loadPricedInvite(loginID, rawToken string) (*mode
 }
 
 func (s *AccountInviteService) MarkRegistered(inviteID, restaurantID string) error {
+	restaurantID = strings.TrimSpace(restaurantID)
+	updates := map[string]interface{}{
+		"status":                    AccountInviteRegistered,
+		"register_token_hash":       "",
+		"register_token_expires_at": gorm.Expr("NULL"),
+	}
+	if restaurantID != "" {
+		updates["restaurant_id"] = restaurantID
+	}
 	return s.db.Model(&models.AccountInvite{}).
 		Where("id = ?", inviteID).
-		Updates(map[string]interface{}{
-			"status":                    AccountInviteRegistered,
-			"restaurant_id":             restaurantID,
-			"register_token_hash":       "",
-			"register_token_expires_at": gorm.Expr("NULL"),
-		}).Error
+		Updates(updates).Error
 }
 
 func (s *AccountInviteService) allocateLoginID() (string, error) {
@@ -393,10 +397,12 @@ func buildAccountInviteSummary(invite models.AccountInvite) AccountInviteSummary
 		LockSelfServeChanges: invite.LockSelfServeChanges,
 		DealNotes:            invite.DealNotes,
 		HasRegisterToken:     invite.RegisterTokenHash != "",
-		RestaurantID:         invite.RestaurantID,
 		UpdatedBy:            invite.UpdatedBy,
 		CreatedAt:            invite.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:            invite.UpdatedAt.Format(time.RFC3339),
+	}
+	if invite.RestaurantID != nil {
+		out.RestaurantID = *invite.RestaurantID
 	}
 	if invite.RegisterTokenExpiresAt != nil {
 		s := invite.RegisterTokenExpiresAt.Format(time.RFC3339)
