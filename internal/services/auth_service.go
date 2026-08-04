@@ -50,21 +50,20 @@ type AuthResponse struct {
 	MenuManagementAccess bool  `json:"menu_management_access"`
 }
 
+// RegisterRequest completes an ops-priced account invite (login ID + one-time token).
 type RegisterRequest struct {
-	StartMode         string              `json:"start_mode" validate:"required,oneof=trial paid custom_request"`
-	RestaurantName    string              `json:"restaurant_name" validate:"required"`
-	OwnerName         string              `json:"owner_name" validate:"required"`
-	Email             string              `json:"email" validate:"required,email"`
-	Phone             string              `json:"phone" validate:"required"`
-	Password          string              `json:"password" validate:"required,min=8"`
-	LoginID           string              `json:"login_id" validate:"required"`
-	Address           string              `json:"address"`
-	City              string              `json:"city"`
-	State             string              `json:"state"`
-	District          string              `json:"district"` // deprecated; city dropdown is the source of truth
-	Cuisine           string              `json:"cuisine"`
-	Subscription      *SubscriptionSelection `json:"subscription"`
-	CustomDealRequest *CustomDealRequest  `json:"custom_deal_request"`
+	LoginID        string `json:"login_id" validate:"required"`
+	RegisterToken  string `json:"register_token" validate:"required"`
+	BillingCycle   string `json:"billing_cycle" validate:"required,oneof=quarterly half_yearly annual"`
+	RestaurantName string `json:"restaurant_name" validate:"required"`
+	OwnerName      string `json:"owner_name" validate:"required"`
+	Email          string `json:"email" validate:"required,email"`
+	Phone          string `json:"phone" validate:"required"`
+	Password       string `json:"password" validate:"required,min=8"`
+	Address        string `json:"address"`
+	City           string `json:"city"`
+	State          string `json:"state"`
+	Cuisine        string `json:"cuisine"`
 }
 
 type LoginRequest struct {
@@ -85,9 +84,14 @@ func NewAuthService(db *gorm.DB, jwtSecret, refreshJWTSecret string) *AuthServic
 	}
 }
 
-// Register creates a new restaurant and admin user
+// Register creates a restaurant + admin from a priced account invite (login ID + token).
 func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models.User, error) {
-	// Check if email already exists
+	inviteSvc := NewAccountInviteService(s.db)
+	invite, err := inviteSvc.loadPricedInvite(req.LoginID, req.RegisterToken)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var existingUser models.User
 	if err := s.db.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
 		return nil, nil, errors.New("email already registered")
@@ -95,81 +99,46 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		return nil, nil, err
 	}
 
-	if err := ValidateAccountPassword(req.Password, ""); err != nil {
+	loginID := strings.TrimSpace(invite.LoginID)
+	if !loginAdminKeyPattern.MatchString(loginID) {
+		return nil, nil, errors.New("invite login id is invalid")
+	}
+	var existingLogin models.User
+	if err := s.db.Where("staff_key = ?", loginID).First(&existingLogin).Error; err == nil {
+		return nil, nil, errors.New("login number already in use")
+	} else if err != gorm.ErrRecordNotFound {
 		return nil, nil, err
 	}
 
-	// Hash password
+	if err := ValidateAccountPassword(req.Password, ""); err != nil {
+		return nil, nil, err
+	}
 	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Generate unique restaurant code (6 characters: uppercase letters and numbers)
-	restaurantCode := generateRestaurantCode(req.RestaurantName)
-
-	// Ensure code is unique
+	restaurantName := strings.TrimSpace(req.RestaurantName)
+	if restaurantName == "" {
+		restaurantName = invite.RestaurantName
+	}
+	restaurantCode := generateRestaurantCode(restaurantName)
 	for {
 		var existing models.Restaurant
 		if err := s.db.Where("restaurant_code = ?", restaurantCode).First(&existing).Error; err == gorm.ErrRecordNotFound {
-			break // Code is unique
+			break
 		}
-		// If code exists, add random suffix
-		restaurantCode = generateRestaurantCode(req.RestaurantName)
+		restaurantCode = generateRestaurantCode(restaurantName)
 	}
-
-	startMode := strings.ToLower(strings.TrimSpace(req.StartMode))
-	if startMode != "trial" && startMode != "paid" && startMode != "custom_request" {
-		return nil, nil, errors.New("start_mode must be trial, paid, or custom_request")
-	}
-
-	var pendingCustomRequest *CustomDealRequest
-	if req.CustomDealRequest != nil || startMode == "custom_request" {
-		raw := CustomDealRequest{}
-		if req.CustomDealRequest != nil {
-			raw = *req.CustomDealRequest
-		}
-		validatedReq, err := ValidateCustomDealRequest(raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		now := time.Now()
-		validatedReq.Status = CustomDealRequestPending
-		validatedReq.RequestedAt = &now
-		if validatedReq.ContactPhone == "" {
-			validatedReq.ContactPhone = strings.TrimSpace(req.Phone)
-		}
-		pendingCustomRequest = &validatedReq
-	}
-
-	trialService := NewTrialEligibilityService(s.db)
-	if startMode == "custom_request" {
-		// Prefer trial while commercial pricing is negotiated; otherwise hold for payment after deal.
-		if err := trialService.EnsureTrialAvailable(req.Email, req.Phone); err == nil {
-			startMode = "trial"
-		} else {
-			startMode = "paid"
-		}
-	}
-
-	if startMode == "trial" {
-		if err := trialService.EnsureTrialAvailable(req.Email, req.Phone); err != nil {
-			return nil, nil, err
-		}
-	} else if pendingCustomRequest == nil && req.Subscription == nil {
-		return nil, nil, errors.New("subscription plan is required for paid registration")
-	}
-
-	// Create restaurant with trial or pending paid subscription
-	var (
-		subSelection SubscriptionSelection
-		phase        string
-		subscriptionEnd time.Time
-		hasEverPaid  bool
-	)
 
 	state := strings.TrimSpace(req.State)
 	city := strings.TrimSpace(req.City)
+	if state == "" {
+		state = strings.TrimSpace(invite.State)
+	}
+	if city == "" {
+		city = strings.TrimSpace(invite.City)
+	}
 	if state == "" {
 		return nil, nil, errors.New("state is required")
 	}
@@ -181,79 +150,54 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		return nil, nil, errors.New("selected city is not valid for the selected state")
 	}
 
-	if startMode == "trial" {
-		subSelection = FixedTrialSelection()
-		phase = SubscriptionPhaseTrial
-		subscriptionEnd = time.Now().AddDate(0, 0, TrialDurationDays)
-		hasEverPaid = false
-	} else if pendingCustomRequest != nil {
-		subSelection = SelectionFromCustomDealRequest(*pendingCustomRequest)
-		phase = SubscriptionPhasePendingPayment
-		subscriptionEnd = time.Now()
-		hasEverPaid = false
-	} else {
-		validated, err := ValidateSubscriptionSelection(*req.Subscription)
-		if err != nil {
-			return nil, nil, err
-		}
-		subSelection = validated
-		phase = SubscriptionPhasePendingPayment
-		subscriptionEnd = time.Now()
-		hasEverPaid = false
+	address := strings.TrimSpace(req.Address)
+	if address == "" {
+		address = invite.Address
+	}
+	phone := strings.TrimSpace(req.Phone)
+	if phone == "" {
+		phone = invite.Phone
 	}
 
-	quote := CalculateSubscriptionQuoteForTier(subSelection, cityTier)
-	if pendingCustomRequest != nil {
-		// No catalog price until platform applies a deal.
-		quote = SubscriptionQuote{
-			Selection: subSelection,
-			LineItems: []SubscriptionLineItem{{
-				ID:     "custom_deal_request",
-				Label:  "Custom plan request (awaiting quote)",
-				Amount: 0,
-			}},
-			BundledStaff:    IncludedStaffINR + subSelection.ExtraStaff,
-			BundledChefs:    IncludedChefsINR + subSelection.ExtraChefs,
-			BundledManagers: IncludedManagersINR + subSelection.ExtraManagers,
-		}
-	}
-	subConfig, err := BuildSubscriptionConfigJSON(phase, startMode, subSelection, quote, hasEverPaid)
+	deal, err := inviteDealFromModel(*invite, req.BillingCycle)
 	if err != nil {
 		return nil, nil, err
 	}
-	if pendingCustomRequest != nil {
-		cfg := ParseStoredSubscriptionConfig(&models.Restaurant{SubscriptionConfig: subConfig})
-		cfg.CustomDealRequest = pendingCustomRequest
-		cfg.PricingMode = PricingModeCatalog
-		subConfig, err = MarshalSubscriptionConfig(cfg)
-		if err != nil {
-			return nil, nil, err
-		}
+	now := time.Now()
+	deal.SetBy = "register"
+	deal.SetAt = &now
+
+	quote := QuoteFromCustomDeal(deal)
+	subSelection := deal.Selection
+	phase := SubscriptionPhasePendingPayment
+	subscriptionEnd := time.Now()
+
+	subConfig, err := BuildSubscriptionConfigJSON(phase, "paid", subSelection, quote, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg := ParseStoredSubscriptionConfig(&models.Restaurant{SubscriptionConfig: subConfig})
+	cfg.PricingMode = PricingModeCustom
+	cfg.CustomDeal = &deal
+	cfg.Selection = subSelection
+	cfg.Quote = quote
+	subConfig, err = MarshalSubscriptionConfig(cfg)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	counterModes := "both"
 	isSelfService := false
 	ApplyOperationModeToRestaurant(&isSelfService, &counterModes, subSelection.OperationMode)
 
-	subscriptionPlan := "trial"
-	if startMode == "paid" {
-		if pendingCustomRequest != nil {
-			subscriptionPlan = "custom_pending"
-		} else {
-			subscriptionPlan = SubscriptionPlanFromSelection(subSelection)
-		}
-	} else if pendingCustomRequest != nil {
-		subscriptionPlan = "trial"
-	}
-
 	restaurant := &models.Restaurant{
 		ID:                       uuid.New().String(),
 		RestaurantCode:           restaurantCode,
-		Name:                     req.RestaurantName,
+		Name:                     restaurantName,
 		OwnerName:                req.OwnerName,
 		Email:                    req.Email,
-		Phone:                    req.Phone,
-		Address:                  req.Address,
+		Phone:                    phone,
+		Address:                  address,
 		City:                     city,
 		State:                    state,
 		District:                 "",
@@ -263,8 +207,8 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		IsSelfService:            isSelfService,
 		CounterServiceModes:      counterModes,
 		SubscriptionEnd:          subscriptionEnd,
-		SubscriptionPlan:         subscriptionPlan,
-		SubscriptionMonthlyPrice: quote.MonthlySubtotal,
+		SubscriptionPlan:         "custom",
+		SubscriptionMonthlyPrice: deal.MonthlyPrice,
 		SubscriptionConfig:       subConfig,
 	}
 
@@ -272,32 +216,12 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 		return nil, nil, err
 	}
 
-	if startMode == "trial" {
-		if err := trialService.RecordTrialGrant(restaurant.ID, req.Email, req.Phone, subscriptionEnd); err != nil {
-			s.db.Delete(restaurant)
-			return nil, nil, fmt.Errorf("failed to record trial eligibility: %w", err)
-		}
-	}
-
-	// Validate and reserve admin login number (stored as staff_key)
-	loginID := strings.TrimSpace(req.LoginID)
-	if !loginAdminKeyPattern.MatchString(loginID) {
-		return nil, nil, errors.New("login number must be an 8-digit number starting with 100")
-	}
-	var existingLogin models.User
-	if err := s.db.Where("staff_key = ?", loginID).First(&existingLogin).Error; err == nil {
-		return nil, nil, errors.New("login number already in use — please regenerate and try again")
-	} else if err != gorm.ErrRecordNotFound {
-		return nil, nil, err
-	}
-
-	// Create admin user with client-chosen login number
 	user := &models.User{
 		ID:           uuid.New().String(),
 		RestaurantID: restaurant.ID,
 		Name:         req.OwnerName,
 		Email:        req.Email,
-		Phone:        req.Phone,
+		Phone:        phone,
 		PasswordHash: hashedPassword,
 		Role:         "admin",
 		IsActive:     true,
@@ -305,9 +229,14 @@ func (s *AuthService) Register(req RegisterRequest) (*models.Restaurant, *models
 	}
 
 	if err := s.db.Create(user).Error; err != nil {
-		// Rollback restaurant creation if user creation fails
 		s.db.Delete(restaurant)
 		return nil, nil, err
+	}
+
+	if err := inviteSvc.MarkRegistered(invite.ID, restaurant.ID); err != nil {
+		s.db.Delete(user)
+		s.db.Delete(restaurant)
+		return nil, nil, fmt.Errorf("failed to finalize invite: %w", err)
 	}
 
 	return restaurant, user, nil

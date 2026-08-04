@@ -680,3 +680,49 @@ func (s *SubscriptionRenewalService) notifyCustomDealRequestSubmitted(
 		fmt.Printf("custom deal request notify email failed: %v\n", err)
 	}
 }
+
+// NotifyPlanChangeRequest emails BillGenie ops only — no in-platform change queue.
+func (s *SubscriptionRenewalService) NotifyPlanChangeRequest(restaurantID, notes string) error {
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		return err
+	}
+	cfg := ParseStoredSubscriptionConfig(&restaurant)
+	dealSummary := "catalog / none"
+	if cfg.IsCustomDeal() {
+		dealSummary = FormatCustomDealSummary(*cfg.CustomDeal)
+	}
+	to := platformOpsNotifyEmail()
+	subject := fmt.Sprintf("Plan change request — %s", restaurant.Name)
+	body := fmt.Sprintf(
+		"A restaurant requested a plan change (notify only).\n\n"+
+			"Restaurant: %s\n"+
+			"Restaurant ID: %s\n"+
+			"Login / owner: %s\n"+
+			"Email: %s\n"+
+			"Phone: %s\n"+
+			"City / State: %s / %s\n"+
+			"Address: %s\n"+
+			"Subscription plan: %s\n"+
+			"Phase: %s\n"+
+			"Current deal: %s\n"+
+			"Customer notes: %s\n\n"+
+			"Contact them offline to negotiate — there is no self-serve plan change queue.\n",
+		restaurant.Name,
+		restaurant.ID,
+		restaurant.OwnerName,
+		restaurant.Email,
+		restaurant.Phone,
+		restaurant.City,
+		restaurant.State,
+		restaurant.Address,
+		restaurant.SubscriptionPlan,
+		cfg.Phase,
+		dealSummary,
+		strings.TrimSpace(notes),
+	)
+	if err := sendEmailSMTP(to, subject, body); err != nil {
+		return fmt.Errorf("failed to notify BillGenie: %w", err)
+	}
+	return nil
+}

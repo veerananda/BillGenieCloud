@@ -196,3 +196,19 @@ func (h *SubscriptionHandler) CancelCustomDealRequest(c *gin.Context) {
 		"awaiting_custom_deal": false,
 	})
 }
+
+// NotifyPlanChange emails BillGenie only — no tracked plan-change queue.
+func (h *SubscriptionHandler) NotifyPlanChange(c *gin.Context) {
+	restaurantID, _ := c.Get("restaurant_id")
+	var req struct {
+		Notes string `json:"notes"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if err := h.renewalService.NotifyPlanChangeRequest(restaurantID.(string), req.Notes); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "BillGenie has been notified — we will contact you shortly.",
+	})
+}
