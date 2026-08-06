@@ -1,7 +1,6 @@
 package services
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -249,7 +248,7 @@ func (s *AccountInviteService) SetDealAndIssueToken(id string, req SetAccountInv
 		return nil, "", errors.New("invite is closed")
 	}
 
-	token, err := generateRegisterToken()
+	token, tokenHash, err := s.issueUniqueRegisterToken(invite.ID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -269,7 +268,7 @@ func (s *AccountInviteService) SetDealAndIssueToken(id string, req SetAccountInv
 	if note := strings.TrimSpace(req.InternalNote); note != "" {
 		invite.InternalNote = note
 	}
-	invite.RegisterTokenHash = hashRegisterToken(token)
+	invite.RegisterTokenHash = tokenHash
 	invite.RegisterTokenExpiresAt = &expires
 	invite.Status = AccountInvitePriced
 	invite.UpdatedBy = strings.TrimSpace(actor)
@@ -441,17 +440,42 @@ func buildRegisterInvitePreview(invite models.AccountInvite) *RegisterInvitePrev
 	}
 }
 
+// generateRegisterToken returns a 6-digit numeric code for account registration.
 func generateRegisterToken() (string, error) {
-	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
+	return generateNumericOTP(6)
 }
 
 func hashRegisterToken(raw string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(raw)))
 	return hex.EncodeToString(sum[:])
+}
+
+// issueUniqueRegisterToken generates a 6-digit token whose hash is not already
+// used by another active (priced, unexpired) invite.
+func (s *AccountInviteService) issueUniqueRegisterToken(excludeInviteID string) (string, string, error) {
+	const maxAttempts = 12
+	now := time.Now()
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		token, err := generateRegisterToken()
+		if err != nil {
+			return "", "", err
+		}
+		tokenHash := hashRegisterToken(token)
+		var count int64
+		err = s.db.Model(&models.AccountInvite{}).
+			Where("register_token_hash = ?", tokenHash).
+			Where("id <> ?", excludeInviteID).
+			Where("status = ?", AccountInvitePriced).
+			Where("register_token_expires_at IS NOT NULL AND register_token_expires_at > ?", now).
+			Count(&count).Error
+		if err != nil {
+			return "", "", err
+		}
+		if count == 0 {
+			return token, tokenHash, nil
+		}
+	}
+	return "", "", errors.New("could not allocate a unique register token")
 }
 
 func inviteDealFromModel(invite models.AccountInvite, billingCycle string) (CustomDeal, error) {
