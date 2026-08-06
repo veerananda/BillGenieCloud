@@ -1,0 +1,70 @@
+name: Deploy Droplet
+
+# Deploy only when you publish a GitHub Release (or run this workflow manually).
+# Creating a release tag does not deploy until the release is published.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (tag, branch, or SHA). Leave empty for default branch tip."
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-droplet-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy-to-droplet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve deploy ref
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            REF="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ inputs.ref }}" ]; then
+            REF="${{ inputs.ref }}"
+          else
+            REF="main"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Deploying ref: $REF"
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          port: 22
+          script_stop: true
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            APP_DIR=/opt/billgenie/app
+            REF='${{ steps.ref.outputs.ref }}'
+            test -d "$APP_DIR" || { echo "missing $APP_DIR"; exit 1; }
+            cd "$APP_DIR"
+
+            echo "==> fetching refs (including tags)"
+            git fetch origin --tags --force --prune
+            git fetch origin "+refs/heads/*:refs/remotes/origin/*" || true
+
+            echo "==> checking out $REF"
+            if git rev-parse "refs/tags/$REF" >/dev/null 2>&1; then
+              git checkout --force --detach "refs/tags/$REF"
+            elif git rev-parse "refs/remotes/origin/$REF" >/dev/null 2>&1; then
+              git checkout --force -B "$REF" "refs/remotes/origin/$REF"
+            else
+              git checkout --force --detach "$REF"
+            fi
+
+            SHA=$(git rev-parse --short HEAD)
+            echo "==> HEAD=$(git rev-parse HEAD) short=$SHA ref=$REF"
+            test -f scripts/deploy-droplet.sh || { echo "deploy script missing at this ref"; exit 1; }
+            chmod +x scripts/deploy-droplet.sh
+            ./scripts/deploy-droplet.sh "$SHA"
