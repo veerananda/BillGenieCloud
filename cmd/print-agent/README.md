@@ -1,6 +1,6 @@
 # BillGenie print agent
 
-On-site helper that polls the BillGenie API for queued **KOT** and **bill** jobs and prints them to:
+On-site helper that receives **SSE wake events** from BillGenieCloud, claims queued **KOT** and **bill** jobs, and prints them to:
 
 - **LAN/Wi‑Fi** ESC/POS printers (TCP port **9100**)
 - **Classic Bluetooth** printers paired to this PC and exposed as a **serial/COM** port
@@ -19,7 +19,7 @@ Browsers cannot talk to thermal printers reliably on their own for restaurant-wi
 2. On a PC that can reach the printers (or has the Bluetooth printer paired):
 
 ```bash
-set BILLGENIE_API_URL=https://billgenie-api.fly.dev
+set BILLGENIE_API_URL=https://api.thebillgenie.com
 set BILLGENIE_PRINT_AGENT_KEY=bgpa_...
 go run ./cmd/print-agent
 ```
@@ -49,4 +49,4 @@ macOS/Linux: use the device path, e.g. `/dev/cu.Bluetooth-Incoming-Port` or `/de
 | Counter create | KOT (if on) |
 | `POST /orders/:id/print-bill` | Bill (if bill printing on) |
 
-Agent claims jobs every ~2s, prints over TCP or serial, then marks done/failed.
+The agent keeps an open `GET /print-agent/events` SSE connection. When the API enqueues a job it pushes `event: jobs`; the agent then claims and prints. Heartbeats keep the stream alive; on disconnect it reconnects with backoff. There is **no** 2-second polling loop.

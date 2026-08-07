@@ -62,9 +62,15 @@ func (h *BillHandler) BillDownload(c *gin.Context) {
 		return
 	}
 
-	filename := fmt.Sprintf("bill-%d.html", summary.OrderNumber)
+	pdf, err := services.BuildBillPDF(*summary)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(billErrorHTML("Could not generate PDF.")))
+		return
+	}
+
+	filename := fmt.Sprintf("bill-%d.pdf", summary.OrderNumber)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(buildBillDownloadHTML(*summary)))
+	c.Data(http.StatusOK, "application/pdf", pdf)
 }
 
 func billErrorHTML(message string) string {

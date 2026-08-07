@@ -118,12 +118,18 @@ func (h *TrackHandler) TrackDownload(c *gin.Context) {
 		return
 	}
 
-	filename := fmt.Sprintf("bill-%d.html", ctx.summary.TicketNumber)
+	pdf, err := services.BuildBillPDF(ctx.summary)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(trackErrorHTML("Could not generate PDF.")))
+		return
+	}
+
+	filename := fmt.Sprintf("bill-%d.pdf", ctx.summary.TicketNumber)
 	if ctx.summary.TicketNumber <= 0 {
-		filename = fmt.Sprintf("bill-%d.html", ctx.summary.OrderNumber)
+		filename = fmt.Sprintf("bill-%d.pdf", ctx.summary.OrderNumber)
 	}
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(buildBillDownloadHTML(ctx.summary)))
+	c.Data(http.StatusOK, "application/pdf", pdf)
 }
 
 func (h *TrackHandler) TrackStatusJSON(c *gin.Context) {

@@ -26,11 +26,24 @@ const (
 )
 
 type PrintService struct {
-	db *gorm.DB
+	db     *gorm.DB
+	notify *PrintNotifyHub
 }
 
 func NewPrintService(db *gorm.DB) *PrintService {
-	return &PrintService{db: db}
+	return &PrintService{db: db, notify: SharedPrintNotifyHub()}
+}
+
+// NotifyHub returns the SSE wake hub used by print agents.
+func (s *PrintService) NotifyHub() *PrintNotifyHub {
+	return s.notify
+}
+
+func (s *PrintService) notifyJobsReady(restaurantID string) {
+	if s == nil || s.notify == nil {
+		return
+	}
+	s.notify.Notify(restaurantID)
 }
 
 func (s *PrintService) GetOrCreateSettings(restaurantID string) (*models.RestaurantPrintSettings, error) {
@@ -288,7 +301,11 @@ func (s *PrintService) enqueueKOT(order *models.Order, preferLatestBatch bool) e
 		PayloadText:  text,
 		Status:       PrintStatusPending,
 	}
-	return s.db.Create(&job).Error
+	if err := s.db.Create(&job).Error; err != nil {
+		return err
+	}
+	s.notifyJobsReady(order.RestaurantID)
+	return nil
 }
 
 // selectKOTSlipItems picks lines for the slip and whether to title it ADD-ON.
@@ -397,6 +414,7 @@ func (s *PrintService) enqueueBill(order *models.Order) (bool, error) {
 	if err := s.db.Create(&job).Error; err != nil {
 		return false, err
 	}
+	s.notifyJobsReady(order.RestaurantID)
 	return true, nil
 }
 
@@ -443,6 +461,7 @@ func (s *PrintService) EnqueueTestPrint(restaurantID, target string) (bool, erro
 	if err := s.db.Create(&job).Error; err != nil {
 		return false, err
 	}
+	s.notifyJobsReady(restaurantID)
 	return true, nil
 }
 
