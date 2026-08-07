@@ -142,6 +142,7 @@ func MigrateDatabase(db *gorm.DB) {
 		&models.AccountInvite{},
 		&models.RestaurantPrintSettings{},
 		&models.PrintJob{},
+		&models.UserPushToken{},
 	)
 
 	if err != nil {

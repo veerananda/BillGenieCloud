@@ -269,6 +269,15 @@ func (h *AssistanceHandler) CallWaiter(c *gin.Context) {
 		BroadcastTableUpdate(globalHub, table.RestaurantID, &table)
 	}
 
+	notifyStaffPush(h.db, table.RestaurantID, services.PushAlertAssistance,
+		"Customer needs assistance",
+		"Table "+table.Name+" requested a waiter",
+		map[string]string{
+			"table_id":   table.ID,
+			"table_name": table.Name,
+		},
+	)
+
 	status, _, _, _ := h.loadStatus(token)
 	if status != nil {
 		publishAssistanceStatus(token, *status)
