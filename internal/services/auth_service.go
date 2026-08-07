@@ -936,25 +936,10 @@ func (s *AuthService) ForgotPassword(identifier string) (string, error) {
 		return "", errors.New("your email is not verified yet. Check your inbox for the verification link sent during registration")
 	}
 
-	resetToken, err := generateRandomToken(32)
+	resetLink, _, err := s.IssueAdminPasswordResetLink(&user)
 	if err != nil {
 		return "", err
 	}
-
-	passwordReset := &models.PasswordReset{
-		UserID:    user.ID,
-		Email:     user.Email,
-		Token:     hashSecret(resetToken),
-		ExpiresAt: time.Now().Add(1 * time.Hour),
-		IsUsed:    false,
-	}
-
-	if err := s.db.Create(passwordReset).Error; err != nil {
-		return "", fmt.Errorf("failed to create password reset token: %w", err)
-	}
-
-	publicBase := publicAppBaseURL()
-	resetLink := fmt.Sprintf("%s/reset-password?token=%s", publicBase, resetToken)
 
 	subject := "Reset your BillGenie password"
 	body := fmt.Sprintf(
@@ -968,6 +953,41 @@ func (s *AuthService) ForgotPassword(identifier string) (string, error) {
 	}
 
 	return resetLink, nil
+}
+
+// IssueAdminPasswordResetLink creates a one-hour password reset token for an admin
+// and returns the public reset URL. Does not send email (for ops manual delivery).
+func (s *AuthService) IssueAdminPasswordResetLink(user *models.User) (resetLink string, expiresAt time.Time, err error) {
+	if user == nil || strings.TrimSpace(user.ID) == "" {
+		return "", time.Time{}, errors.New("user is required")
+	}
+	if user.Role != "admin" {
+		return "", time.Time{}, errors.New("password reset links can only be issued for admin accounts")
+	}
+
+	_ = s.db.Model(&models.PasswordReset{}).
+		Where("user_id = ? AND is_used = false", user.ID).
+		Update("is_used", true).Error
+
+	resetToken, err := generateRandomToken(32)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	expiresAt = time.Now().Add(1 * time.Hour)
+	passwordReset := &models.PasswordReset{
+		UserID:    user.ID,
+		Email:     user.Email,
+		Token:     hashSecret(resetToken),
+		ExpiresAt: expiresAt,
+		IsUsed:    false,
+	}
+	if err := s.db.Create(passwordReset).Error; err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to create password reset token: %w", err)
+	}
+
+	resetLink = fmt.Sprintf("%s/reset-password?token=%s", publicAppBaseURL(), resetToken)
+	return resetLink, expiresAt, nil
 }
 
 // ResetPassword validates token and updates user password
