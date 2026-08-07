@@ -21,199 +21,159 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <meta name="theme-color" content="#0f8a5c"/>
+  <meta name="theme-color" content="#1bae76"/>
   <title>%s · Table %s</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,500;9..40,600;9..40,700;9..40,800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"/>
   <style>
     :root{
-      --ink:#14352a;
-      --ink-soft:#3d5c50;
-      --muted:#6b857a;
-      --line:#d7ebe2;
+      --ink:#0f172a;
+      --ink-soft:#334155;
+      --muted:#64748b;
+      --line:#e2e8f0;
       --surface:#ffffff;
-      --surface-soft:#f3faf7;
+      --bg:#f8fafc;
       --brand:#1bae76;
       --brand-dark:#0f8a5c;
-      --brand-deep:#0a6b48;
-      --brand-wash:#dff7ec;
-      --brand-mist:#eefaf4;
-      --amber:#c47a1a;
-      --amber-soft:#fff6e8;
-      --danger:#c43c3c;
-      --shadow:0 18px 40px rgba(15,90,60,.10);
+      --brand-wash:#e8f8f1;
+      --call:#2563eb;
+      --call-disabled:#93c5fd;
+      --danger:#dc2626;
     }
     *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%%}
     body{
-      font-family:"DM Sans",system-ui,-apple-system,sans-serif;
-      margin:0;color:var(--ink);
-      background:
-        radial-gradient(1200px 500px at 10%% -10%%, rgba(27,174,118,.22), transparent 55%%),
-        radial-gradient(900px 420px at 100%% 0%%, rgba(196,122,26,.12), transparent 50%%),
-        linear-gradient(165deg, #eaf8f1 0%%, #f7fbf9 42%%, #fff8f0 100%%);
-      min-height:100vh;padding:20px 14px 48px;
+      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      color:var(--ink);background:var(--bg);
     }
-    .page{max-width:420px;margin:0 auto}
-    .card{
-      background:var(--surface);border:1px solid rgba(15,138,92,.12);
-      border-radius:24px;overflow:hidden;box-shadow:var(--shadow);
+    .page{
+      min-height:100vh;max-width:560px;margin:0 auto;
+      background:var(--surface);display:flex;flex-direction:column;
     }
-    .hero{
-      background:linear-gradient(145deg, var(--brand-deep) 0%%, var(--brand-dark) 52%%, #1bae76 100%%);
-      color:#fff;padding:22px 20px 20px;position:relative;
-    }
-    .hero::after{
-      content:"";position:absolute;inset:auto -20%% -40%% auto;width:180px;height:180px;
-      background:radial-gradient(circle, rgba(255,255,255,.18), transparent 70%%);pointer-events:none;
+    .header{
+      padding:20px 16px 16px;border-bottom:1px solid var(--line);
+      background:var(--surface);position:sticky;top:0;z-index:5;
     }
     .brand{
-      font-size:11px;letter-spacing:.16em;text-transform:uppercase;
-      color:rgba(255,255,255,.78);font-weight:700;
+      font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+      color:var(--brand-dark);font-weight:700;margin:0 0 6px;
     }
-    h1{
-      font-family:"Fraunces",Georgia,serif;margin:10px 0 6px;
-      font-size:1.7rem;font-weight:700;letter-spacing:-.02em;line-height:1.15;
-    }
-    .sub{color:rgba(255,255,255,.88);margin:0;font-size:.95rem}
-    .sub strong{color:#fff;font-weight:800}
-    .body{padding:18px 18px 22px}
+    h1{margin:0 0 4px;font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:var(--ink)}
+    .sub{margin:0;color:var(--muted);font-size:.95rem}
+    .sub strong{color:var(--ink-soft);font-weight:700}
     .meta{
       display:flex;justify-content:space-between;gap:12px;align-items:center;
-      padding:12px 14px;border-radius:14px;margin-bottom:14px;
-      background:linear-gradient(135deg, var(--brand-mist), var(--amber-soft));
-      border:1px solid rgba(27,174,118,.14);font-size:.9rem;color:var(--ink-soft);font-weight:600;
+      margin-top:14px;padding:10px 12px;border-radius:10px;
+      background:var(--brand-wash);color:var(--ink-soft);font-size:.9rem;font-weight:600;
     }
     #totalMeta{color:var(--brand-dark);font-weight:800}
+    .actions{padding:14px 16px 0}
     .btn{
       display:flex;width:100%%;align-items:center;justify-content:center;
-      padding:15px 16px;border-radius:14px;border:0;font-size:1rem;font-weight:800;cursor:pointer;
-      font-family:inherit;letter-spacing:.01em;
+      padding:14px 16px;border-radius:12px;border:0;font-size:1rem;font-weight:700;
+      cursor:pointer;font-family:inherit;
     }
-    .btn-call{
-      background:linear-gradient(135deg, #e8a23a 0%%, #c47a1a 100%%);color:#fff;
-      box-shadow:0 10px 22px rgba(196,122,26,.28);
-    }
-    .btn-call:disabled{
-      background:linear-gradient(135deg, #9ed9bf, #6fbf9a);color:#fff;
-      box-shadow:none;cursor:default;opacity:.9;
-    }
-    .note{margin-top:12px;text-align:center;color:var(--muted);font-size:.85rem;min-height:1.2em}
-    .items{margin-top:20px;display:none}
+    .btn-call{background:var(--call);color:#fff}
+    .btn-call:disabled{background:var(--call-disabled);cursor:default}
+    .note{margin:10px 16px 0;text-align:center;color:var(--muted);font-size:.85rem;min-height:1.2em}
+    .content{padding:8px 16px 32px;flex:1}
+    .items{margin-top:18px;display:none}
     .items.show{display:block}
     .items h2,.bill h2,.menu-head h2{
-      margin:0 0 10px;font-size:1.05rem;font-family:"Fraunces",Georgia,serif;color:var(--brand-deep);
+      margin:0 0 10px;font-size:1.05rem;font-weight:800;color:var(--ink);
     }
-    .line{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+    .line{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
     .line:last-child{border-bottom:0}
     .line-name{font-weight:700}
     .line-sub{margin-top:3px;color:var(--muted);font-size:.85rem}
-    .line-total{font-weight:800;white-space:nowrap;color:var(--brand-dark)}
+    .line-total{font-weight:800;white-space:nowrap;color:var(--ink)}
     .totals{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:none}
     .totals.show{display:block}
     .tot-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;color:var(--ink-soft);font-size:.95rem}
     .tot-row.discount{color:var(--brand-dark);font-weight:700}
     .tot-row.total{
       margin-top:8px;padding-top:10px;border-top:1px solid var(--line);
-      font-size:1.12rem;font-weight:800;color:var(--brand-deep);
+      font-size:1.1rem;font-weight:800;color:var(--ink);
     }
-    .bill{margin-top:20px;display:none}
+    .bill{margin-top:18px;display:none}
     .bill.show{display:block}
     .bill .hint{color:var(--muted);margin:0 0 4px;font-size:.9rem}
     .bill a{
       display:flex;width:100%%;align-items:center;justify-content:center;
-      padding:13px 14px;border-radius:14px;font-size:.95rem;font-weight:700;
+      padding:13px 14px;border-radius:12px;font-size:.95rem;font-weight:700;
       text-decoration:none;margin-top:10px;
     }
-    .bill .download{
-      background:linear-gradient(135deg, var(--brand-dark), var(--brand-deep));color:#fff;
-      box-shadow:0 10px 20px rgba(15,138,92,.25);
-    }
-    .menu{margin-top:22px;display:none}
+    .bill .download{background:var(--brand);color:#fff}
+    .menu{margin-top:20px;display:none}
     .menu.show{display:block}
-    .menu-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .menu-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
     .menu-head h2{margin:0}
-    .menu-count{
-      font-size:.78rem;color:var(--brand-dark);font-weight:700;
-      background:var(--brand-wash);border:1px solid rgba(27,174,118,.2);
-      border-radius:999px;padding:4px 10px;
-    }
+    .menu-count{font-size:.8rem;color:var(--muted);font-weight:600}
     .cat-scroll{
-      display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;
-      padding:2px 2px 14px;margin:0 -2px 2px;scrollbar-width:none;
+      display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;
+      -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+      touch-action:pan-x;padding:2px 0 12px;margin:0;scrollbar-width:none;
     }
     .cat-scroll::-webkit-scrollbar{display:none}
     .cat-chip{
-      flex:0 0 auto;border:1px solid rgba(15,138,92,.18);background:var(--brand-mist);color:var(--brand-deep);
-      border-radius:999px;padding:9px 15px;font-size:.86rem;font-weight:700;
+      flex:0 0 auto;border:1px solid var(--line);background:var(--bg);color:var(--ink-soft);
+      border-radius:999px;padding:8px 14px;font-size:.86rem;font-weight:700;
       cursor:pointer;white-space:nowrap;font-family:inherit;
-      transition:background .15s,color .15s,border-color .15s,box-shadow .15s,transform .15s;
     }
     .cat-chip.active{
-      background:linear-gradient(135deg, var(--brand), var(--brand-dark));
-      border-color:transparent;color:#fff;
-      box-shadow:0 8px 18px rgba(27,174,118,.28);
-      transform:translateY(-1px);
+      background:var(--brand);border-color:var(--brand);color:#fff;
     }
-    .menu-items{display:flex;flex-direction:column;gap:10px;min-height:80px}
-    .menu-card{
+    .menu-items{display:flex;flex-direction:column}
+    .menu-row{
       display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
-      padding:14px;border:1px solid rgba(15,138,92,.12);border-radius:16px;
-      background:linear-gradient(180deg, #ffffff 0%%, var(--brand-mist) 160%%);
+      padding:14px 0;border-bottom:1px solid var(--line);
     }
-    .menu-card-name{font-weight:700;font-size:.98rem;line-height:1.35;color:var(--ink)}
-    .menu-card-desc{margin-top:4px;color:var(--muted);font-size:.82rem;line-height:1.4}
-    .menu-card-variants{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
-    .variant-pill{
-      display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:999px;
-      background:var(--amber-soft);border:1px solid rgba(196,122,26,.22);
-      font-size:.74rem;font-weight:700;color:var(--amber);
-    }
-    .menu-card-price{font-weight:800;white-space:nowrap;font-size:1.02rem;color:var(--brand-dark);padding-top:1px}
+    .menu-row:last-child{border-bottom:0}
+    .menu-row-name{font-weight:700;font-size:.98rem;line-height:1.35}
+    .menu-row-desc{margin-top:4px;color:var(--muted);font-size:.82rem;line-height:1.4}
+    .menu-row-variants{margin-top:6px;color:var(--muted);font-size:.8rem;line-height:1.45}
+    .menu-row-price{font-weight:800;white-space:nowrap;font-size:1rem;color:var(--brand-dark);padding-top:1px}
     .veg,.nonveg{
-      display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:middle;
-      box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);
+      display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;vertical-align:middle;
     }
-    .veg{background:#22a45a}
+    .veg{background:var(--brand)}
     .nonveg{background:var(--danger)}
     .menu-loading,.menu-empty{color:var(--muted);font-size:.9rem;padding:16px 0;text-align:center}
   </style>
 </head>
 <body>
   <div class="page">
-    <div class="card">
-      <div class="hero">
-        <div class="brand">BillGenie · Table session</div>
-        <h1 id="restaurant">%s</h1>
-        <p class="sub">Table <strong id="tableName">%s</strong></p>
+    <header class="header">
+      <div class="brand">Table session</div>
+      <h1 id="restaurant">%s</h1>
+      <p class="sub">Table <strong id="tableName">%s</strong></p>
+      <div class="meta">
+        <span id="orderMeta">Loading…</span>
+        <span id="totalMeta"></span>
       </div>
-      <div class="body">
-        <div class="meta">
-          <span id="orderMeta">Loading…</span>
-          <span id="totalMeta"></span>
-        </div>
-        <button class="btn btn-call" id="callBtn" type="button">Call waiter</button>
-        <p class="note" id="note"></p>
-        <div class="items" id="itemsPanel">
-          <h2>Bill items</h2>
-          <div id="itemsList"></div>
-        </div>
-        <div class="totals" id="totalsPanel"></div>
-        <div class="bill" id="billPanel">
-          <h2>Your bill</h2>
-          <p class="hint">Review your bill and download a copy. Link stays valid for about an hour.</p>
-          <a class="download" id="billDownload" href="#">Download bill</a>
-        </div>
-        <div class="menu" id="menuPanel">
-          <div class="menu-head">
-            <h2>Menu</h2>
-            <span class="menu-count" id="menuCount"></span>
-          </div>
-          <div class="cat-scroll" id="menuCats" hidden></div>
-          <div id="menuList" class="menu-items menu-loading">Loading menu…</div>
-        </div>
-      </div>
+    </header>
+    <div class="actions">
+      <button class="btn btn-call" id="callBtn" type="button">Call waiter</button>
     </div>
+    <p class="note" id="note"></p>
+    <main class="content">
+      <div class="items" id="itemsPanel">
+        <h2>Bill items</h2>
+        <div id="itemsList"></div>
+      </div>
+      <div class="totals" id="totalsPanel"></div>
+      <div class="bill" id="billPanel">
+        <h2>Your bill</h2>
+        <p class="hint">Review your bill and download a copy. Link stays valid for about an hour.</p>
+        <a class="download" id="billDownload" href="#">Download bill</a>
+      </div>
+      <div class="menu" id="menuPanel">
+        <div class="menu-head">
+          <h2>Menu</h2>
+          <span class="menu-count" id="menuCount"></span>
+        </div>
+        <div class="cat-scroll" id="menuCats" hidden></div>
+        <div id="menuList" class="menu-items menu-loading">Loading menu…</div>
+      </div>
+    </main>
   </div>
   <script>
     const token = %q;
@@ -311,12 +271,12 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       });
     }
 
-    function renderMenuItemCard(item){
+    function renderMenuItemRow(item){
       const row = document.createElement('div');
-      row.className = 'menu-card';
+      row.className = 'menu-row';
       const left = document.createElement('div');
       const name = document.createElement('div');
-      name.className = 'menu-card-name';
+      name.className = 'menu-row-name';
       const dot = document.createElement('span');
       dot.className = item.is_veg ? 'veg' : 'nonveg';
       name.appendChild(dot);
@@ -324,24 +284,19 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       left.appendChild(name);
       if (item.description) {
         const sub = document.createElement('div');
-        sub.className = 'menu-card-desc';
+        sub.className = 'menu-row-desc';
         sub.textContent = item.description;
         left.appendChild(sub);
       }
       const variants = Array.isArray(item.variants) ? item.variants : [];
       if (variants.length) {
-        const wrap = document.createElement('div');
-        wrap.className = 'menu-card-variants';
-        variants.forEach(v => {
-          const pill = document.createElement('span');
-          pill.className = 'variant-pill';
-          pill.textContent = (v.label || 'Option') + ' · ' + money(v.price);
-          wrap.appendChild(pill);
-        });
-        left.appendChild(wrap);
+        const sub = document.createElement('div');
+        sub.className = 'menu-row-variants';
+        sub.textContent = variants.map(v => (v.label || 'Option') + ' ' + money(v.price)).join(' · ');
+        left.appendChild(sub);
       }
       const right = document.createElement('div');
-      right.className = 'menu-card-price';
+      right.className = 'menu-row-price';
       right.textContent = variants.length ? '' : money(item.price);
       row.appendChild(left);
       row.appendChild(right);
@@ -366,7 +321,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         menuList.textContent = 'No items in this category.';
         return;
       }
-      filtered.forEach(item => menuList.appendChild(renderMenuItemCard(item)));
+      filtered.forEach(item => menuList.appendChild(renderMenuItemRow(item)));
     }
 
     function renderMenu(){
