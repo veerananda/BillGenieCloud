@@ -29,16 +29,16 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       --ink-soft:#334155;
       --muted:#64748b;
       --line:rgba(15,23,42,.08);
-      --surface:rgba(255,255,255,.88);
+      --surface:#ffffff;
       --bg:#faf6f0;
       --brand:#1bae76;
       --brand-dark:#0f8a5c;
-      --brand-wash:#e8f8f1;
+      --brand-wash:rgba(232,248,241,.72);
       --call:#d97706;
       --call-hover:#b45309;
       --call-disabled:#fbbf24;
       --danger:#dc2626;
-      --food-tile:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><g fill='none' stroke='%%230f8a5c' stroke-width='2.2' opacity='.22' stroke-linecap='round' stroke-linejoin='round'><path d='M28 36c10-2 18 6 18 16 0 12-10 20-18 22-8-2-18-10-18-22 0-10 8-18 18-16z'/><path d='M18 54h20'/><circle cx='118' cy='40' r='14'/><path d='M104 40h28M118 26v28'/><path d='M36 108c0-10 8-18 18-18h8c10 0 18 8 18 18v6H36v-6z'/><path d='M44 96v-6c0-6 4-10 10-10s10 4 10 10v6'/><path d='M112 100c12 0 22 6 22 14s-10 14-22 14-22-6-22-14 10-14 22-14z'/><path d='M98 114h28'/></g><g fill='%%23d97706' opacity='.14'><circle cx='72' cy='28' r='3'/><circle cx='48' cy='78' r='2.5'/><circle cx='132' cy='88' r='3'/><circle cx='24' cy='132' r='2.5'/><circle cx='96' cy='140' r='3'/></g></svg>");
+      --food-tile:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><g fill='none' stroke='%%230f8a5c' stroke-width='2.2' opacity='.28' stroke-linecap='round' stroke-linejoin='round'><path d='M28 36c10-2 18 6 18 16 0 12-10 20-18 22-8-2-18-10-18-22 0-10 8-18 18-16z'/><path d='M18 54h20'/><circle cx='118' cy='40' r='14'/><path d='M104 40h28M118 26v28'/><path d='M36 108c0-10 8-18 18-18h8c10 0 18 8 18 18v6H36v-6z'/><path d='M44 96v-6c0-6 4-10 10-10s10 4 10 10v6'/><path d='M112 100c12 0 22 6 22 14s-10 14-22 14-22-6-22-14 10-14 22-14z'/><path d='M98 114h28'/></g><g fill='%%23d97706' opacity='.18'><circle cx='72' cy='28' r='3'/><circle cx='48' cy='78' r='2.5'/><circle cx='132' cy='88' r='3'/><circle cx='24' cy='132' r='2.5'/><circle cx='96' cy='140' r='3'/></g></svg>");
     }
     *{box-sizing:border-box}
     html,body{margin:0;min-height:100%%}
@@ -48,8 +48,8 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       background-color:var(--bg);
       background-image:
         var(--food-tile),
-        radial-gradient(900px 420px at 0%% -10%%, rgba(217,119,6,.12), transparent 55%%),
-        radial-gradient(700px 360px at 100%% 0%%, rgba(27,174,118,.14), transparent 50%%),
+        radial-gradient(900px 420px at 0%% -10%%, rgba(217,119,6,.14), transparent 55%%),
+        radial-gradient(700px 360px at 100%% 0%%, rgba(27,174,118,.16), transparent 50%%),
         linear-gradient(180deg, #fff8ef 0%%, #f7faf6 45%%, #f3f7f4 100%%);
       background-size:160px 160px, auto, auto, auto;
       background-attachment:fixed;
@@ -57,19 +57,25 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .page{
       min-height:100vh;max-width:560px;margin:0 auto;
       display:flex;flex-direction:column;
+      background:transparent;
     }
     .header{
-      padding:20px 16px 16px;border-bottom:1px solid rgba(15,138,92,.12);
-      background:rgba(255,252,247,.9);backdrop-filter:blur(10px);
+      padding:20px 16px 12px;
+      background:transparent;
+      border-bottom:0;
       position:sticky;top:0;z-index:5;
     }
-    h1{margin:0 0 4px;font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:var(--ink)}
-    .sub{margin:0;color:var(--muted);font-size:.95rem}
-    .sub strong{color:var(--ink-soft);font-weight:700}
+    h1{
+      margin:0 0 4px;font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:var(--ink);
+      text-shadow:0 1px 0 rgba(255,255,255,.65);
+    }
+    .sub{margin:0;color:var(--ink-soft);font-size:.95rem;text-shadow:0 1px 0 rgba(255,255,255,.55)}
+    .sub strong{color:var(--ink);font-weight:700}
     .meta{
       display:flex;justify-content:space-between;gap:12px;align-items:center;
       margin-top:14px;padding:10px 12px;border-radius:10px;
       background:var(--brand-wash);color:var(--ink-soft);font-size:.9rem;font-weight:600;
+      backdrop-filter:blur(4px);
     }
     .meta:empty,.meta.hidden{display:none}
     #totalMeta{color:var(--brand-dark);font-weight:800}
@@ -85,37 +91,38 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
     .btn-call:hover:not(:disabled){background:var(--call-hover)}
     .btn-call:disabled{background:var(--call-disabled);color:#78350f;box-shadow:none;cursor:default}
-    .note{margin:10px 16px 0;text-align:center;color:var(--muted);font-size:.85rem;min-height:1.2em}
+    .note{margin:10px 16px 0;text-align:center;color:var(--ink-soft);font-size:.85rem;min-height:1.2em;text-shadow:0 1px 0 rgba(255,255,255,.5)}
     .content{
       padding:8px 16px 32px;flex:1;
-      margin:12px 12px 20px;
-      background:var(--surface);
-      border:1px solid rgba(255,255,255,.7);
-      border-radius:18px;
-      box-shadow:0 10px 30px rgba(15,23,42,.06);
-      backdrop-filter:blur(8px);
+      margin:4px 0 0;
+      background:transparent;
+      border:0;
+      border-radius:0;
+      box-shadow:none;
+      backdrop-filter:none;
     }
     .items{margin-top:18px;display:none}
     .items.show{display:block}
     .items h2,.bill h2,.menu-head h2{
       margin:0 0 10px;font-size:1.05rem;font-weight:800;color:var(--ink);
+      text-shadow:0 1px 0 rgba(255,255,255,.65);
     }
-    .line{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+    .line{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid rgba(15,23,42,.1)}
     .line:last-child{border-bottom:0}
     .line-name{font-weight:700}
     .line-sub{margin-top:3px;color:var(--muted);font-size:.85rem}
     .line-total{font-weight:800;white-space:nowrap;color:var(--ink)}
-    .totals{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:none}
+    .totals{margin-top:14px;padding-top:12px;border-top:1px solid rgba(15,23,42,.1);display:none}
     .totals.show{display:block}
     .tot-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;color:var(--ink-soft);font-size:.95rem}
     .tot-row.discount{color:var(--brand-dark);font-weight:700}
     .tot-row.total{
-      margin-top:8px;padding-top:10px;border-top:1px solid var(--line);
+      margin-top:8px;padding-top:10px;border-top:1px solid rgba(15,23,42,.1);
       font-size:1.1rem;font-weight:800;color:var(--ink);
     }
     .bill{margin-top:18px;display:none}
     .bill.show{display:block}
-    .bill .hint{color:var(--muted);margin:0 0 4px;font-size:.9rem}
+    .bill .hint{color:var(--ink-soft);margin:0 0 4px;font-size:.9rem}
     .bill a{
       display:flex;width:100%%;align-items:center;justify-content:center;
       padding:13px 14px;border-radius:12px;font-size:.95rem;font-weight:700;
@@ -126,7 +133,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .menu.show{display:block}
     .menu-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
     .menu-head h2{margin:0}
-    .menu-count{font-size:.8rem;color:var(--muted);font-weight:600}
+    .menu-count{font-size:.8rem;color:var(--ink-soft);font-weight:600;text-shadow:0 1px 0 rgba(255,255,255,.55)}
     .cat-scroll{
       display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;
       -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
@@ -134,20 +141,25 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
     .cat-scroll::-webkit-scrollbar{display:none}
     .cat-chip{
-      flex:0 0 auto;border:1px solid rgba(15,138,92,.18);background:rgba(255,255,255,.92);color:var(--ink-soft);
+      flex:0 0 auto;border:1px solid rgba(15,138,92,.28);background:transparent;color:var(--ink-soft);
       border-radius:999px;padding:8px 14px;font-size:.86rem;font-weight:700;
       cursor:pointer;white-space:nowrap;font-family:inherit;
-      box-shadow:0 2px 8px rgba(15,23,42,.04);
+      backdrop-filter:blur(2px);
     }
     .cat-chip.active{
       background:var(--brand);border-color:var(--brand);color:#fff;
+      backdrop-filter:none;
     }
-    .menu-items{display:flex;flex-direction:column}
+    .menu-items{display:flex;flex-direction:column;gap:10px}
     .menu-row{
       display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
-      padding:14px 0;border-bottom:1px solid var(--line);
+      padding:14px 14px;
+      border:1px solid rgba(15,23,42,.06);
+      border-radius:14px;
+      background:var(--surface);
+      box-shadow:0 4px 14px rgba(15,23,42,.06);
     }
-    .menu-row:last-child{border-bottom:0}
+    .menu-row:last-child{border-bottom:1px solid rgba(15,23,42,.06)}
     .menu-row-name{font-weight:700;font-size:.98rem;line-height:1.35}
     .menu-row-desc{margin-top:4px;color:var(--muted);font-size:.82rem;line-height:1.4}
     .menu-row-variants{margin-top:6px;color:var(--muted);font-size:.8rem;line-height:1.45}
@@ -157,7 +169,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
     .veg{background:var(--brand)}
     .nonveg{background:var(--danger)}
-    .menu-loading,.menu-empty{color:var(--muted);font-size:.9rem;padding:16px 0;text-align:center}
+    .menu-loading,.menu-empty{color:var(--ink-soft);font-size:.9rem;padding:16px 0;text-align:center;text-shadow:0 1px 0 rgba(255,255,255,.55)}
   </style>
 </head>
 <body>
