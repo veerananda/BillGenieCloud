@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -227,50 +226,6 @@ func (h *PlatformHandler) ResendVerificationEmail(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": msg})
-}
-
-// SMTPStatus returns non-secret SMTP configuration currently loaded by the API.
-func (h *PlatformHandler) SMTPStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, services.SMTPConfigSummary())
-}
-
-// TestSMTP verifies SMTP dial+auth and optionally sends a test message.
-func (h *PlatformHandler) TestSMTP(c *gin.Context) {
-	var req struct {
-		To string `json:"to"`
-	}
-	_ = c.ShouldBindJSON(&req)
-
-	summary := services.SMTPConfigSummary()
-	if err := services.ProbeSMTPDial(); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  err.Error(),
-			"config": summary,
-		})
-		return
-	}
-
-	to := strings.TrimSpace(req.To)
-	if to == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "SMTP authentication succeeded (no test message sent)",
-			"config":  summary,
-		})
-		return
-	}
-
-	if err := services.SendSMTPTestEmail(to); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  err.Error(),
-			"config": summary,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("SMTP test email sent to %s", to),
-		"config":  summary,
-	})
 }
 
 // DeleteRestaurant permanently removes a tenant and all related data.
