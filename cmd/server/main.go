@@ -110,6 +110,7 @@ func main() {
 	handlers.SetupWebhookRoutes(router, db)
 	handlers.SetupPlatformRoutes(router, db)
 	handlers.SetupPrintRoutes(router, db)
+	handlers.SetupPushRoutes(router, db)
 
 	// WebSocket route — prefer Sec-WebSocket-Protocol; temporary ?token= fallback
 	authService := services.NewAuthService(db, cfg.JWTSecret, cfg.RefreshJWTSecret)

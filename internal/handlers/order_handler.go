@@ -1345,6 +1345,10 @@ func (h *OrderHandler) UpdateOrderItemStatus(c *gin.Context) {
 		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
 	}
 
+	if updatedOrder != nil {
+		notifyOrderItemStatusPush(h.orderService.GetDB(), restaurantID.(string), updatedOrder, input.Status)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "Order item status updated successfully",
 		"item_id":  itemID,
@@ -1558,17 +1562,17 @@ func (h *OrderHandler) UpdateOrderItemsByMenuID(c *gin.Context) {
 
 	log.Printf("✅ Order items with menu_id %s updated to status: %s", menuItemID, input.Status)
 
-	// Broadcast with full order context
-	if globalHub != nil {
-		updatedOrder, fetchErr := h.orderService.GetOrderByID(restaurantID.(string), orderID)
-		if fetchErr == nil {
-			if completedOrder, didComplete, completeErr := h.orderService.TryCompleteCounterOrderAfterKitchen(restaurantID.(string), orderID); completeErr == nil && didComplete {
-				BroadcastOrderEvent(globalHub, restaurantID.(string), "order_completed", completedOrder)
-			} else {
-				BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, "", menuItemID, true)
-			}
-			NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
+	updatedOrder, fetchErr := h.orderService.GetOrderByID(restaurantID.(string), orderID)
+	if fetchErr == nil && globalHub != nil {
+		if completedOrder, didComplete, completeErr := h.orderService.TryCompleteCounterOrderAfterKitchen(restaurantID.(string), orderID); completeErr == nil && didComplete {
+			BroadcastOrderEvent(globalHub, restaurantID.(string), "order_completed", completedOrder)
+		} else {
+			BroadcastOrderItemStatusEvent(globalHub, restaurantID.(string), updatedOrder, "", menuItemID, true)
 		}
+		NotifyOrderTrackingUpdate(h.orderService, orderID, restaurantID.(string))
+	}
+	if fetchErr == nil && updatedOrder != nil {
+		notifyOrderItemStatusPush(h.orderService.GetDB(), restaurantID.(string), updatedOrder, input.Status)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
