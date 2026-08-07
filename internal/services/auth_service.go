@@ -1,8 +1,11 @@
 package services
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
+	"net/mail"
 	"net/smtp"
 	"os"
 	"regexp"
@@ -1182,36 +1185,61 @@ func publicAppBaseURL() string {
 	return "http://localhost:3000"
 }
 
-// sendEmailSMTP sends an email using SMTP settings from environment variables
+func smtpEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return strings.Trim(v, `"'`)
+		}
+	}
+	return ""
+}
+
+// smtpEnvelopeAddress returns the bare email for SMTP MAIL FROM.
+// Display names like `BillGenie <ops@example.com>` are valid in headers but
+// not as the envelope sender.
+func smtpEnvelopeAddress(from string) (string, error) {
+	from = strings.TrimSpace(from)
+	if from == "" {
+		return "", errors.New("empty from address")
+	}
+	addr, err := mail.ParseAddress(from)
+	if err != nil {
+		return "", fmt.Errorf("invalid SMTP from address %q: %w", from, err)
+	}
+	if addr.Address == "" {
+		return "", fmt.Errorf("invalid SMTP from address %q", from)
+	}
+	return addr.Address, nil
+}
+
+// sendEmailSMTP sends an email using SMTP settings from environment variables.
 // Required env vars: SMTP_HOST, SMTP_PORT and either
 // SMTP_USER/SMTP_PASS or SMTP_MAIL/SMTP_APP_PASSWORD
 // Optional: SMTP_FROM (defaults to SMTP_USER/SMTP_MAIL)
+//
+// Port 465 uses implicit TLS (GoDaddy default). Port 587 uses STARTTLS.
 func sendEmailSMTP(to, subject, body string) error {
-	host := os.Getenv("SMTP_HOST")
-	port := os.Getenv("SMTP_PORT")
-	user := os.Getenv("SMTP_USER")
-	if user == "" {
-		user = os.Getenv("SMTP_MAIL")
-	}
-	pass := os.Getenv("SMTP_PASS")
-	if pass == "" {
-		pass = os.Getenv("SMTP_APP_PASSWORD")
-	}
-	from := os.Getenv("SMTP_FROM")
-	if from == "" {
-		from = user
+	host := smtpEnv("SMTP_HOST")
+	port := smtpEnv("SMTP_PORT")
+	user := smtpEnv("SMTP_USER", "SMTP_MAIL")
+	pass := smtpEnv("SMTP_PASS", "SMTP_APP_PASSWORD")
+	fromHeader := smtpEnv("SMTP_FROM")
+	if fromHeader == "" {
+		fromHeader = user
 	}
 
 	if host == "" || port == "" || user == "" || pass == "" {
 		return errors.New("smtp is not configured (SMTP_HOST/SMTP_PORT and SMTP_USER/SMTP_PASS or SMTP_MAIL/SMTP_APP_PASSWORD)")
 	}
 
-	addr := fmt.Sprintf("%s:%s", host, port)
-	auth := smtp.PlainAuth("", user, pass, host)
+	fromAddr, err := smtpEnvelopeAddress(fromHeader)
+	if err != nil {
+		return err
+	}
 
 	msg := []byte(
 		"To: " + to + "\r\n" +
-			"From: " + from + "\r\n" +
+			"From: " + fromHeader + "\r\n" +
 			"Subject: " + subject + "\r\n" +
 			"MIME-Version: 1.0\r\n" +
 			"Content-Type: text/plain; charset=\"utf-8\"\r\n" +
@@ -1219,5 +1247,50 @@ func sendEmailSMTP(to, subject, body string) error {
 			body,
 	)
 
-	return smtp.SendMail(addr, auth, from, []string{to}, msg)
+	addr := net.JoinHostPort(host, port)
+	auth := smtp.PlainAuth("", user, pass, host)
+	tlsConfig := &tls.Config{ServerName: host}
+
+	// Implicit TLS (SMTPS) — required for GoDaddy's documented port 465.
+	if port == "465" {
+		conn, dialErr := tls.Dial("tcp", addr, tlsConfig)
+		if dialErr != nil {
+			return fmt.Errorf("smtp tls dial %s: %w", addr, dialErr)
+		}
+		defer conn.Close()
+
+		client, clientErr := smtp.NewClient(conn, host)
+		if clientErr != nil {
+			return fmt.Errorf("smtp client: %w", clientErr)
+		}
+		defer client.Close()
+
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+		if err := client.Mail(fromAddr); err != nil {
+			return fmt.Errorf("smtp mail from: %w", err)
+		}
+		if err := client.Rcpt(to); err != nil {
+			return fmt.Errorf("smtp rcpt: %w", err)
+		}
+		w, err := client.Data()
+		if err != nil {
+			return fmt.Errorf("smtp data: %w", err)
+		}
+		if _, err := w.Write(msg); err != nil {
+			_ = w.Close()
+			return fmt.Errorf("smtp write: %w", err)
+		}
+		if err := w.Close(); err != nil {
+			return fmt.Errorf("smtp data close: %w", err)
+		}
+		return client.Quit()
+	}
+
+	// Port 587 (and similar): plain connect + STARTTLS via SendMail.
+	if err := smtp.SendMail(addr, auth, fromAddr, []string{to}, msg); err != nil {
+		return fmt.Errorf("smtp send (%s): %w", addr, err)
+	}
+	return nil
 }
