@@ -24,7 +24,7 @@ func SetAssistanceHub(hub *services.AssistanceHub) {
 	globalAssistanceHub = hub
 }
 
-// SetupAssistanceRoutes registers public customer assistance pages (no auth).
+// SetupAssistanceRoutes registers public customer table-session pages (no auth).
 func SetupAssistanceRoutes(router *gin.Engine, db *gorm.DB) {
 	handler := &AssistanceHandler{
 		db:           db,
@@ -35,8 +35,9 @@ func SetupAssistanceRoutes(router *gin.Engine, db *gorm.DB) {
 	router.GET("/a/:token", handler.AssistancePage)
 	router.GET("/a/:token/status", handler.AssistanceStatus)
 	router.GET("/a/:token/events", handler.AssistanceEvents)
+	router.GET("/a/:token/menu", handler.AssistanceMenu)
 	router.POST("/a/:token/call-waiter", callWaiterLimit, handler.CallWaiter)
-	log.Println("✅ Customer assistance routes registered at /a/:token")
+	log.Println("✅ Customer table session routes registered at /a/:token")
 }
 
 type AssistanceHandler struct {
@@ -45,125 +46,34 @@ type AssistanceHandler struct {
 	hub          *services.AssistanceHub
 }
 
-func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus, *models.Order, int, string) {
-	order, restaurant, err := h.orderService.GetOrderByTrackingToken(token)
+func (h *AssistanceHandler) loadStatus(token string) (*services.AssistanceStatus, *models.RestaurantTable, int, string) {
+	table, err := services.ResolveTableByAssistanceToken(h.db, token)
 	if err != nil {
-		return nil, nil, http.StatusNotFound, "Assistance link not found or expired."
+		return nil, nil, http.StatusNotFound, "Table link not found."
 	}
-
-	tableName := order.TableNumber
-	var table models.RestaurantTable
-	tableMatchesOrder := false
-	if order.TableID != nil && strings.TrimSpace(*order.TableID) != "" {
-		if err := h.db.Where("id = ? AND restaurant_id = ?", *order.TableID, order.RestaurantID).First(&table).Error; err == nil {
-			tableName = table.Name
-			tableMatchesOrder = table.CurrentOrderID != nil && *table.CurrentOrderID == order.ID
-		}
+	if err := services.EnsureTableAssistanceToken(h.db, table); err != nil {
+		return nil, nil, http.StatusInternalServerError, "Could not open table session."
 	}
-
-	isActiveOrder := order.Status != "completed" && order.Status != "cancelled"
-
-	status := &services.AssistanceStatus{
-		TableName:      tableName,
-		IsOccupied:     isActiveOrder && tableMatchesOrder && table.IsOccupied,
-		HasActiveOrder: isActiveOrder && tableMatchesOrder,
-		OrderStatus:    order.Status,
+	status, err := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
+	if err != nil || status == nil {
+		return nil, nil, http.StatusInternalServerError, "Could not load table status."
 	}
-	if restaurant != nil {
-		status.RestaurantName = restaurant.Name
-	}
-	if isActiveOrder && tableMatchesOrder {
-		status.AssistanceRequested = services.TableNeedsAssistance(&table)
-	}
-
-	status.OrderTotal = order.Total
-	if order.Total <= 0 {
-		status.OrderTotal = order.SubTotal
-	}
-
-	if strings.TrimSpace(order.BillToken) != "" {
-		if order.BillExpiresAt == nil || order.BillExpiresAt.After(time.Now()) {
-			status.BillAvailable = true
-			status.BillURL = services.BuildBillURL(order.BillToken)
-			status.BillDownloadURL = status.BillURL + "/download"
-		}
-	}
-
-	if status.BillAvailable {
-		summary := services.BuildBillSummary(order, restaurant)
-		status.SubTotal = summary.SubTotal
-		status.TaxAmount = summary.TaxAmount
-		status.DiscountAmount = summary.DiscountAmount
-		status.OrderTotal = summary.Total
-		status.PricesIncludeGST = summary.PricesIncludeGST
-		status.CompositeScheme = summary.CompositeScheme
-		status.ShowTax = summary.TaxAmount > 0 && !summary.CompositeScheme
-
-		groupedItems := make(map[string]int)
-		for _, item := range order.Items {
-			if item.Status == "cancelled" {
-				continue
-			}
-			status.ItemCount += item.Quantity
-			unitRate := item.UnitRate
-			if unitRate <= 0 && item.Quantity > 0 {
-				unitRate = item.Total / float64(item.Quantity)
-			}
-			name := strings.TrimSpace(item.MenuID)
-			category := ""
-			if item.MenuItem != nil {
-				if strings.TrimSpace(item.MenuItem.Name) != "" {
-					name = item.MenuItem.Name
-				}
-				category = item.MenuItem.Category
-			}
-			blocklist := []string(nil)
-			if restaurant != nil {
-				blocklist = services.ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
-			}
-			name = services.FormatItemDisplayName(name, category, item.VariantLabel, blocklist)
-			displayCategory := ""
-			if services.IsBlockedDisplayCategory(category, blocklist) {
-				displayCategory = category
-			}
-			lineTotal := item.Total
-			if lineTotal <= 0 {
-				lineTotal = unitRate * float64(item.Quantity)
-			}
-
-			variantKey := ""
-			if item.VariantID != nil {
-				variantKey = *item.VariantID
-			}
-			key := fmt.Sprintf("%s|%s|%s|%s|%.2f", item.MenuID, variantKey, strings.ToLower(name), strings.ToLower(displayCategory), unitRate)
-			if idx, ok := groupedItems[key]; ok {
-				status.Items[idx].Quantity += item.Quantity
-				status.Items[idx].Total += lineTotal
-				continue
-			}
-
-			groupedItems[key] = len(status.Items)
-			status.Items = append(status.Items, services.AssistanceBillItem{
-				Name:     name,
-				Quantity: item.Quantity,
-				UnitRate: unitRate,
-				Total:    lineTotal,
-				Category: displayCategory,
-			})
-		}
-	}
-
-	return status, order, http.StatusOK, ""
+	return status, table, http.StatusOK, ""
 }
 
 func (h *AssistanceHandler) AssistancePage(c *gin.Context) {
 	token := c.Param("token")
-	status, _, code, message := h.loadStatus(token)
+	status, table, code, message := h.loadStatus(token)
 	if status == nil {
 		c.Data(code, "text/html; charset=utf-8", []byte(assistanceErrorHTML(message)))
 		return
 	}
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(renderAssistancePageHTML(token, *status)))
+	// Prefer the permanent table token in the page so SSE/API calls stay on the fixed QR.
+	pageToken := token
+	if table != nil && table.AssistanceToken != nil && strings.TrimSpace(*table.AssistanceToken) != "" {
+		pageToken = *table.AssistanceToken
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(renderAssistancePageHTML(pageToken, *status)))
 }
 
 func (h *AssistanceHandler) AssistanceStatus(c *gin.Context) {
@@ -176,9 +86,24 @@ func (h *AssistanceHandler) AssistanceStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
+func (h *AssistanceHandler) AssistanceMenu(c *gin.Context) {
+	token := c.Param("token")
+	table, err := services.ResolveTableByAssistanceToken(h.db, token)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Table link not found."})
+		return
+	}
+	items, err := services.LoadAssistanceMenu(h.db, table.RestaurantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not load menu"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
 func (h *AssistanceHandler) AssistanceEvents(c *gin.Context) {
 	token := c.Param("token")
-	status, _, code, message := h.loadStatus(token)
+	status, table, code, message := h.loadStatus(token)
 	if status == nil {
 		c.JSON(code, gin.H{"error": message})
 		return
@@ -203,6 +128,11 @@ func (h *AssistanceHandler) AssistanceEvents(c *gin.Context) {
 
 	writeSSE(*status)
 
+	subscribeToken := token
+	if table != nil && table.AssistanceToken != nil && strings.TrimSpace(*table.AssistanceToken) != "" {
+		subscribeToken = *table.AssistanceToken
+	}
+
 	if h.hub == nil {
 		ticker := time.NewTicker(25 * time.Second)
 		defer ticker.Stop()
@@ -217,8 +147,8 @@ func (h *AssistanceHandler) AssistanceEvents(c *gin.Context) {
 		}
 	}
 
-	ch := h.hub.Subscribe(token)
-	defer h.hub.Unsubscribe(token, ch)
+	ch := h.hub.Subscribe(subscribeToken)
+	defer h.hub.Unsubscribe(subscribeToken, ch)
 
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
@@ -241,46 +171,39 @@ func (h *AssistanceHandler) AssistanceEvents(c *gin.Context) {
 
 func (h *AssistanceHandler) CallWaiter(c *gin.Context) {
 	token := c.Param("token")
-	order, _, err := h.orderService.GetOrderByTrackingToken(token)
+	table, err := services.ResolveTableByAssistanceToken(h.db, token)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Assistance link not found or expired."})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Table link not found."})
 		return
 	}
-	if order.Status == "completed" || order.Status == "cancelled" || order.TableID == nil || strings.TrimSpace(*order.TableID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "This table session is no longer active."})
+	if err := services.EnsureTableAssistanceToken(h.db, table); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not open table session."})
 		return
 	}
 
-	var table models.RestaurantTable
-	if err := h.db.Where("id = ? AND restaurant_id = ?", *order.TableID, order.RestaurantID).First(&table).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Table not found."})
-		return
-	}
-	if table.CurrentOrderID == nil || *table.CurrentOrderID != order.ID || !table.IsOccupied {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "This table session is no longer active."})
-		return
-	}
-	if err := services.RequestTableAssistance(h.db, &table); err != nil {
+	newly, err := services.RequestTableAssistance(h.db, table)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not notify staff"})
 		return
 	}
 
-	if globalHub != nil {
-		BroadcastTableUpdate(globalHub, table.RestaurantID, &table)
+	if newly {
+		if globalHub != nil {
+			BroadcastTableUpdate(globalHub, table.RestaurantID, table)
+		}
+		notifyStaffPush(h.db, table.RestaurantID, services.PushAlertAssistance,
+			"Customer needs assistance",
+			"Table "+table.Name+" requested a waiter",
+			map[string]string{
+				"table_id":   table.ID,
+				"table_name": table.Name,
+			},
+		)
 	}
 
-	notifyStaffPush(h.db, table.RestaurantID, services.PushAlertAssistance,
-		"Customer needs assistance",
-		"Table "+table.Name+" requested a waiter",
-		map[string]string{
-			"table_id":   table.ID,
-			"table_name": table.Name,
-		},
-	)
-
-	status, _, _, _ := h.loadStatus(token)
-	if status != nil {
-		publishAssistanceStatus(token, *status)
+	status, err := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
+	if err == nil && status != nil {
+		publishAssistanceStatusForTable(table, *status)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -296,9 +219,16 @@ func publishAssistanceStatus(token string, status services.AssistanceStatus) {
 	globalAssistanceHub.Publish(token, status)
 }
 
-// NotifyAssistanceUpdateByTableID rebuilds and publishes assistance SSE status for the table's current order.
+func publishAssistanceStatusForTable(table *models.RestaurantTable, status services.AssistanceStatus) {
+	if table == nil || table.AssistanceToken == nil {
+		return
+	}
+	publishAssistanceStatus(strings.TrimSpace(*table.AssistanceToken), status)
+}
+
+// NotifyAssistanceUpdateByTableID rebuilds and publishes live table-session SSE status.
 func NotifyAssistanceUpdateByTableID(db *gorm.DB, orderService *services.OrderService, tableID string) {
-	if globalAssistanceHub == nil || db == nil || orderService == nil || strings.TrimSpace(tableID) == "" {
+	if globalAssistanceHub == nil || db == nil || strings.TrimSpace(tableID) == "" {
 		return
 	}
 
@@ -306,39 +236,29 @@ func NotifyAssistanceUpdateByTableID(db *gorm.DB, orderService *services.OrderSe
 	if err := db.Where("id = ?", tableID).First(&table).Error; err != nil {
 		return
 	}
-	if table.CurrentOrderID == nil || strings.TrimSpace(*table.CurrentOrderID) == "" {
+	if err := services.EnsureTableAssistanceToken(db, &table); err != nil {
 		return
 	}
-
-	order, err := orderService.GetOrderByID(table.RestaurantID, *table.CurrentOrderID)
-	if err != nil || order == nil || strings.TrimSpace(order.TrackingToken) == "" {
+	status, err := services.BuildAssistanceStatusForTable(db, orderService, &table)
+	if err != nil || status == nil {
 		return
 	}
-	NotifyAssistanceUpdateByOrder(db, orderService, order)
+	publishAssistanceStatusForTable(&table, *status)
 }
 
-// NotifyAssistanceUpdateByOrder publishes assistance SSE updates for a dine-in order QR.
+// NotifyAssistanceUpdateByOrder publishes SSE updates for the order's dine-in table.
 func NotifyAssistanceUpdateByOrder(db *gorm.DB, orderService *services.OrderService, order *models.Order) {
-	if globalAssistanceHub == nil || db == nil || orderService == nil || order == nil {
+	if order == nil || order.TableID == nil || strings.TrimSpace(*order.TableID) == "" {
 		return
 	}
-	token := strings.TrimSpace(order.TrackingToken)
-	if token == "" {
-		return
-	}
-	handler := &AssistanceHandler{db: db, orderService: orderService, hub: globalAssistanceHub}
-	status, _, _, _ := handler.loadStatus(token)
-	if status == nil {
-		return
-	}
-	publishAssistanceStatus(token, *status)
+	NotifyAssistanceUpdateByTableID(db, orderService, *order.TableID)
 }
 
 func assistanceErrorHTML(message string) string {
 	return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Table assistance</title>
+<title>Table</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f5;color:#333}
 .card{background:#fff;padding:32px;border-radius:16px;max-width:360px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08)}</style></head>
-<body><div class="card"><h1>Table assistance</h1><p>` + html.EscapeString(message) + `</p></div></body></html>`
+<body><div class="card"><h1>Table</h1><p>` + html.EscapeString(message) + `</p></div></body></html>`
 }
