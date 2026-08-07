@@ -21,7 +21,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <meta name="theme-color" content="#d97706"/>
+  <meta name="theme-color" content="#9ca3af"/>
   <title>%s · Table %s</title>
   <style>
     :root{
@@ -30,7 +30,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       --muted:#64748b;
       --line:rgba(15,23,42,.08);
       --surface:#ffffff;
-      --bg:#faf6f0;
+      --bg:#e8eaed;
       --brand:#1bae76;
       --brand-dark:#0f8a5c;
       --brand-wash:rgba(232,248,241,.72);
@@ -38,7 +38,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       --call-hover:#b45309;
       --call-disabled:#fbbf24;
       --danger:#dc2626;
-      --food-tile:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><g fill='none' stroke='%%230f8a5c' stroke-width='2.2' opacity='.28' stroke-linecap='round' stroke-linejoin='round'><path d='M28 36c10-2 18 6 18 16 0 12-10 20-18 22-8-2-18-10-18-22 0-10 8-18 18-16z'/><path d='M18 54h20'/><circle cx='118' cy='40' r='14'/><path d='M104 40h28M118 26v28'/><path d='M36 108c0-10 8-18 18-18h8c10 0 18 8 18 18v6H36v-6z'/><path d='M44 96v-6c0-6 4-10 10-10s10 4 10 10v6'/><path d='M112 100c12 0 22 6 22 14s-10 14-22 14-22-6-22-14 10-14 22-14z'/><path d='M98 114h28'/></g><g fill='%%23d97706' opacity='.18'><circle cx='72' cy='28' r='3'/><circle cx='48' cy='78' r='2.5'/><circle cx='132' cy='88' r='3'/><circle cx='24' cy='132' r='2.5'/><circle cx='96' cy='140' r='3'/></g></svg>");
+      --food-tile:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'><g fill='none' stroke='%%236b7280' stroke-width='2.4' opacity='.34' stroke-linecap='round' stroke-linejoin='round'><path d='M28 42c2-12 14-18 32-18s30 6 32 18'/><path d='M28 48h64'/><path d='M30 54h60'/><path d='M28 60h64'/><path d='M28 66c2 12 14 18 32 18s30-6 32-18'/><path d='M138 28c14 2 26 16 22 32-6 22-30 42-34 46l-10-10c8-8 26-24 30-38 2-8-2-20-8-30z'/><circle cx='128' cy='104' r='5'/><circle cx='140' cy='112' r='4'/><path d='M34 128h44c4 0 8 4 8 8v10H26v-10c0-4 4-8 8-8z'/><path d='M40 118v10M50 116v12M60 118v10M70 117v11'/><path d='M148 148h40c3 0 6 3 6 6v8H142v-8c0-3 3-6 6-6z'/><path d='M154 138v10M164 136v12M174 138v10M184 137v11'/></g></svg>");
     }
     *{box-sizing:border-box}
     html,body{margin:0;min-height:100%%}
@@ -48,10 +48,10 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       background-color:var(--bg);
       background-image:
         var(--food-tile),
-        radial-gradient(900px 420px at 0%% -10%%, rgba(217,119,6,.14), transparent 55%%),
-        radial-gradient(700px 360px at 100%% 0%%, rgba(27,174,118,.16), transparent 50%%),
-        linear-gradient(180deg, #fff8ef 0%%, #f7faf6 45%%, #f3f7f4 100%%);
-      background-size:160px 160px, auto, auto, auto;
+        radial-gradient(900px 420px at 0%% -10%%, rgba(148,163,184,.22), transparent 55%%),
+        radial-gradient(700px 360px at 100%% 0%%, rgba(100,116,139,.16), transparent 50%%),
+        linear-gradient(180deg, #eef1f4 0%%, #e8eaed 45%%, #e2e5e9 100%%);
+      background-size:200px 200px, auto, auto, auto;
       background-attachment:fixed;
     }
     .page{
