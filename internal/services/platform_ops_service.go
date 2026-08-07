@@ -104,6 +104,10 @@ type SetApprovedRequest struct {
 	Reason string `json:"reason" validate:"required"`
 }
 
+type MarkEmailVerifiedRequest struct {
+	Reason string `json:"reason"`
+}
+
 type DeleteRestaurantRequest struct {
 	Reason      string `json:"reason" validate:"required"`
 	ConfirmName string `json:"confirm_name" validate:"required"`
@@ -612,6 +616,45 @@ func (s *PlatformOpsService) ApproveRestaurant(restaurantID string, req SetAppro
 
 	s.writePlatformAudit(restaurantID, actor, "platform_approve_restaurant", reason, oldSnapshot, restaurant)
 	s.sendApprovalEmail(&restaurant)
+	return &restaurant, nil
+}
+
+// MarkEmailVerified manually sets is_email_verified so ops can unblock approval
+// when outbound SMTP is unavailable (e.g. provider blocks mail ports).
+func (s *PlatformOpsService) MarkEmailVerified(restaurantID string, req MarkEmailVerifiedRequest, actor string) (*models.Restaurant, error) {
+	restaurantID = strings.TrimSpace(restaurantID)
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("restaurant not found")
+		}
+		return nil, err
+	}
+
+	if strings.TrimSpace(restaurant.Email) == "" {
+		return nil, errors.New("restaurant has no registered email")
+	}
+	if restaurant.IsEmailVerified {
+		return nil, errors.New("restaurant email is already verified")
+	}
+
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "Ops manually marked email verified (SMTP unavailable)"
+	}
+
+	oldSnapshot, _ := json.Marshal(restaurant)
+	restaurant.IsEmailVerified = true
+	if err := s.db.Save(&restaurant).Error; err != nil {
+		return nil, err
+	}
+
+	// Invalidate unused verification tokens so old links cannot be reused.
+	_ = s.db.Model(&models.EmailVerification{}).
+		Where("restaurant_id = ? AND email = ? AND is_used = false", restaurant.ID, restaurant.Email).
+		Update("is_used", true).Error
+
+	s.writePlatformAudit(restaurantID, actor, "platform_mark_email_verified", reason, oldSnapshot, restaurant)
 	return &restaurant, nil
 }
 

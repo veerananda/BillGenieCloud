@@ -210,6 +210,25 @@ func (h *PlatformHandler) ApproveRestaurant(c *gin.Context) {
 	})
 }
 
+// MarkEmailVerified manually marks the restaurant email as verified.
+func (h *PlatformHandler) MarkEmailVerified(c *gin.Context) {
+	var req services.MarkEmailVerifiedRequest
+	_ = c.ShouldBindJSON(&req)
+	restaurant, err := h.ops.MarkEmailVerified(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		if err.Error() == "restaurant not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Restaurant email marked as verified",
+		"restaurant": h.ops.BuildSummaryPublic(restaurant),
+	})
+}
+
 // ResendVerificationEmail sends a verification link to the restaurant's registered email.
 func (h *PlatformHandler) ResendVerificationEmail(c *gin.Context) {
 	var req struct {
