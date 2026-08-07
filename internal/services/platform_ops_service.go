@@ -104,6 +104,10 @@ type SetApprovedRequest struct {
 	Reason string `json:"reason" validate:"required"`
 }
 
+type MarkEmailVerifiedRequest struct {
+	Reason string `json:"reason"`
+}
+
 type DeleteRestaurantRequest struct {
 	Reason      string `json:"reason" validate:"required"`
 	ConfirmName string `json:"confirm_name" validate:"required"`
@@ -613,6 +617,102 @@ func (s *PlatformOpsService) ApproveRestaurant(restaurantID string, req SetAppro
 	s.writePlatformAudit(restaurantID, actor, "platform_approve_restaurant", reason, oldSnapshot, restaurant)
 	s.sendApprovalEmail(&restaurant)
 	return &restaurant, nil
+}
+
+// MarkEmailVerified manually sets is_email_verified so ops can unblock approval
+// when outbound SMTP is unavailable (e.g. provider blocks mail ports).
+func (s *PlatformOpsService) MarkEmailVerified(restaurantID string, req MarkEmailVerifiedRequest, actor string) (*models.Restaurant, error) {
+	restaurantID = strings.TrimSpace(restaurantID)
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("restaurant not found")
+		}
+		return nil, err
+	}
+
+	if strings.TrimSpace(restaurant.Email) == "" {
+		return nil, errors.New("restaurant has no registered email")
+	}
+	if restaurant.IsEmailVerified {
+		return nil, errors.New("restaurant email is already verified")
+	}
+
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "Ops manually marked email verified (SMTP unavailable)"
+	}
+
+	oldSnapshot, _ := json.Marshal(restaurant)
+	restaurant.IsEmailVerified = true
+	if err := s.db.Save(&restaurant).Error; err != nil {
+		return nil, err
+	}
+
+	// Invalidate unused verification tokens so old links cannot be reused.
+	_ = s.db.Model(&models.EmailVerification{}).
+		Where("restaurant_id = ? AND email = ? AND is_used = false", restaurant.ID, restaurant.Email).
+		Update("is_used", true).Error
+
+	s.writePlatformAudit(restaurantID, actor, "platform_mark_email_verified", reason, oldSnapshot, restaurant)
+	return &restaurant, nil
+}
+
+// PasswordResetLinkResult is returned to platform so ops can email the link manually.
+type PasswordResetLinkResult struct {
+	ResetLink string    `json:"reset_link"`
+	Email     string    `json:"email"`
+	LoginID   string    `json:"login_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// IssuePasswordResetLink creates a password reset URL for the restaurant admin
+// without sending email (ops copy/paste from hello@thebillgenie.com when SMTP is down).
+func (s *PlatformOpsService) IssuePasswordResetLink(restaurantID, actor, reason string) (*PasswordResetLinkResult, error) {
+	restaurantID = strings.TrimSpace(restaurantID)
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("restaurant not found")
+		}
+		return nil, err
+	}
+
+	var admin models.User
+	if err := s.db.Where("restaurant_id = ? AND role = ? AND is_active = ?", restaurant.ID, "admin", true).
+		Order("created_at ASC").First(&admin).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("no active admin user found for this restaurant")
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(admin.Email) == "" {
+		return nil, errors.New("admin user has no email on file")
+	}
+
+	auth := NewAuthService(s.db, "", "")
+	link, expiresAt, err := auth.IssueAdminPasswordResetLink(&admin)
+	if err != nil {
+		return nil, err
+	}
+
+	auditReason := strings.TrimSpace(reason)
+	if auditReason == "" {
+		auditReason = "Ops issued password reset link for manual email delivery"
+	}
+	oldSnapshot, _ := json.Marshal(map[string]interface{}{
+		"admin_user_id": admin.ID,
+		"admin_email":   admin.Email,
+		"login_id":      admin.StaffKey,
+	})
+	s.writePlatformAudit(restaurantID, actor, "platform_issue_password_reset_link", auditReason, oldSnapshot, restaurant)
+
+	return &PasswordResetLinkResult{
+		ResetLink: link,
+		Email:     admin.Email,
+		LoginID:   admin.StaffKey,
+		ExpiresAt: expiresAt,
+	}, nil
 }
 
 // ResendVerificationEmail sends a fresh verification link to the restaurant's

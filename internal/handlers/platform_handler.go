@@ -210,6 +210,49 @@ func (h *PlatformHandler) ApproveRestaurant(c *gin.Context) {
 	})
 }
 
+// MarkEmailVerified manually marks the restaurant email as verified.
+func (h *PlatformHandler) MarkEmailVerified(c *gin.Context) {
+	var req services.MarkEmailVerifiedRequest
+	_ = c.ShouldBindJSON(&req)
+	restaurant, err := h.ops.MarkEmailVerified(c.Param("restaurant_id"), req, h.platformActor(c))
+	if err != nil {
+		if err.Error() == "restaurant not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Restaurant email marked as verified",
+		"restaurant": h.ops.BuildSummaryPublic(restaurant),
+	})
+}
+
+// IssuePasswordResetLink creates a reset URL for the restaurant admin (no email send).
+func (h *PlatformHandler) IssuePasswordResetLink(c *gin.Context) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	result, err := h.ops.IssuePasswordResetLink(c.Param("restaurant_id"), h.platformActor(c), req.Reason)
+	if err != nil {
+		if err.Error() == "restaurant not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Password reset link created. Copy it and email from hello@thebillgenie.com.",
+		"reset_link": result.ResetLink,
+		"email":      result.Email,
+		"login_id":   result.LoginID,
+		"expires_at": result.ExpiresAt,
+	})
+}
+
 // ResendVerificationEmail sends a verification link to the restaurant's registered email.
 func (h *PlatformHandler) ResendVerificationEmail(c *gin.Context) {
 	var req struct {

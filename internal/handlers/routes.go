@@ -431,6 +431,8 @@ func SetupPlatformRoutes(router *gin.Engine, db *gorm.DB) {
 		platform.POST("/restaurants/:restaurant_id/cancel-custom-deal-request", platformHandler.CancelCustomDealRequest)
 		platform.PUT("/restaurants/:restaurant_id/active", platformHandler.SetActive)
 		platform.POST("/restaurants/:restaurant_id/approve", platformHandler.ApproveRestaurant)
+		platform.POST("/restaurants/:restaurant_id/mark-email-verified", platformHandler.MarkEmailVerified)
+		platform.POST("/restaurants/:restaurant_id/password-reset-link", platformHandler.IssuePasswordResetLink)
 		platform.POST("/restaurants/:restaurant_id/resend-verification", platformHandler.ResendVerificationEmail)
 		platform.DELETE("/restaurants/:restaurant_id", platformHandler.DeleteRestaurant)
 		platform.POST("/restaurants/:restaurant_id/menu/bulk", platformHandler.BulkUploadMenu)
