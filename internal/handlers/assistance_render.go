@@ -42,19 +42,20 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     html,body{margin:0;min-height:100%%}
     body{
       font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      color:var(--ink);background:var(--bg);
+      color:var(--ink);
+      background:
+        radial-gradient(900px 420px at 0%% -10%%, rgba(27,174,118,.16), transparent 55%%),
+        radial-gradient(700px 360px at 100%% 0%%, rgba(15,138,92,.10), transparent 50%%),
+        linear-gradient(180deg, #eefaf4 0%%, #f5fbf8 40%%, #f8fafc 100%%);
     }
     .page{
       min-height:100vh;max-width:560px;margin:0 auto;
-      background:var(--surface);display:flex;flex-direction:column;
+      display:flex;flex-direction:column;
     }
     .header{
-      padding:20px 16px 16px;border-bottom:1px solid var(--line);
-      background:var(--surface);position:sticky;top:0;z-index:5;
-    }
-    .brand{
-      font-size:11px;letter-spacing:.12em;text-transform:uppercase;
-      color:var(--brand-dark);font-weight:700;margin:0 0 6px;
+      padding:20px 16px 16px;border-bottom:1px solid rgba(27,174,118,.14);
+      background:rgba(255,255,255,.82);backdrop-filter:blur(8px);
+      position:sticky;top:0;z-index:5;
     }
     h1{margin:0 0 4px;font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:var(--ink)}
     .sub{margin:0;color:var(--muted);font-size:.95rem}
@@ -64,6 +65,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       margin-top:14px;padding:10px 12px;border-radius:10px;
       background:var(--brand-wash);color:var(--ink-soft);font-size:.9rem;font-weight:600;
     }
+    .meta:empty,.meta.hidden{display:none}
     #totalMeta{color:var(--brand-dark);font-weight:800}
     .actions{padding:14px 16px 0}
     .btn{
@@ -74,7 +76,12 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .btn-call{background:var(--call);color:#fff}
     .btn-call:disabled{background:var(--call-disabled);cursor:default}
     .note{margin:10px 16px 0;text-align:center;color:var(--muted);font-size:.85rem;min-height:1.2em}
-    .content{padding:8px 16px 32px;flex:1}
+    .content{
+      padding:8px 16px 32px;flex:1;
+      background:rgba(255,255,255,.55);
+      border-top:1px solid rgba(27,174,118,.08);
+      margin-top:12px;
+    }
     .items{margin-top:18px;display:none}
     .items.show{display:block}
     .items h2,.bill h2,.menu-head h2{
@@ -142,11 +149,10 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 <body>
   <div class="page">
     <header class="header">
-      <div class="brand">Table session</div>
       <h1 id="restaurant">%s</h1>
       <p class="sub">Table <strong id="tableName">%s</strong></p>
-      <div class="meta">
-        <span id="orderMeta">Loading…</span>
+      <div class="meta" id="metaRow">
+        <span id="orderMeta"></span>
         <span id="totalMeta"></span>
       </div>
     </header>
@@ -357,18 +363,18 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       state = s || state;
       document.getElementById('restaurant').textContent = state.restaurant_name || 'Restaurant';
       document.getElementById('tableName').textContent = state.table_name || '';
+      const metaRow = document.getElementById('metaRow');
       const meta = document.getElementById('orderMeta');
       const total = document.getElementById('totalMeta');
       const phase = state.phase || (state.bill_available ? 'checkout' : (state.has_active_order ? 'seated' : 'idle'));
       if (phase === 'checkout' || state.bill_available) {
         meta.textContent = 'Bill ready — please review';
         total.textContent = money(state.order_total);
-      } else if (phase === 'seated' || state.has_active_order) {
-        meta.textContent = 'Tell your order to the staff';
-        total.textContent = '';
+        metaRow.classList.remove('hidden');
       } else {
-        meta.textContent = 'Welcome — browse the menu';
+        meta.textContent = '';
         total.textContent = '';
+        metaRow.classList.add('hidden');
       }
 
       if (state.assistance_requested) {
