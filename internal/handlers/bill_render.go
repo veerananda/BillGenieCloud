@@ -49,21 +49,14 @@ func customerBillStylesBlock() string {
 }
 
 func buildBillMetaLine(summary services.BillSummaryView) string {
-	metaParts := []string{}
-	if summary.TicketNumber > 0 {
-		metaParts = append(metaParts, fmt.Sprintf("Ticket #%d", summary.TicketNumber))
-	} else {
-		metaParts = append(metaParts, fmt.Sprintf("Order #%d", summary.OrderNumber))
+	table := strings.TrimSpace(summary.TableNumber)
+	if table == "" {
+		return ""
 	}
-	if summary.ServiceMode == "takeaway" {
-		metaParts = append(metaParts, "Takeaway")
-	} else if summary.ServiceMode == "eat_here" {
-		metaParts = append(metaParts, "Eat here")
+	if table == "Counter" || table == "Takeaway" {
+		return escapeBillHTML(table)
 	}
-	if summary.TableNumber != "" && summary.TableNumber != "Counter" && summary.TableNumber != "Takeaway" {
-		metaParts = append(metaParts, fmt.Sprintf("Table %s", escapeBillHTML(summary.TableNumber)))
-	}
-	return strings.Join(metaParts, " · ")
+	return "Table " + escapeBillHTML(table)
 }
 
 func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
@@ -121,17 +114,16 @@ func renderCustomerBillPageFragment(summary services.BillSummaryView) string {
 	meta := buildBillMetaLine(summary)
 	dateLine := formatBillDateTime(summary.CreatedAt)
 	customerLine := ""
-	if summary.CustomerName != "" && summary.CustomerName != "Guest" &&
-		summary.CustomerName != "Takeaway" && summary.CustomerName != "Counter" &&
-		summary.CustomerName != "Self Service" {
-		customerLine = fmt.Sprintf(`<p class="customer">Customer: %s</p>`, escapeBillHTML(summary.CustomerName))
+	if n := strings.TrimSpace(summary.CustomerName); n != "" &&
+		n != "Guest" && n != "Takeaway" && n != "Counter" && n != "Self Service" {
+		customerLine = fmt.Sprintf(`<p class="customer">Customer: %s</p>`, escapeBillHTML(n))
 	}
 	if phone := strings.TrimSpace(summary.CustomerPhone); phone != "" {
 		customerLine += fmt.Sprintf(`<p class="customer">Phone: %s</p>`, escapeBillHTML(phone))
 	}
 	attendedLine := ""
-	if summary.AttendedByName != "" {
-		attendedLine = fmt.Sprintf(`<p class="customer">Attended by: %s</p>`, escapeBillHTML(summary.AttendedByName))
+	if a := strings.TrimSpace(summary.AttendedByName); a != "" {
+		attendedLine = fmt.Sprintf(`<p class="customer">Attended by: %s</p>`, escapeBillHTML(a))
 	}
 
 	return fmt.Sprintf(`<div class="page">

@@ -78,8 +78,7 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 	if !summary.CreatedAt.IsZero() {
 		centerText(summary.CreatedAt.In(time.Local).Format("02 Jan 2006, 03:04 PM"), 9, false)
 	}
-	if n := strings.TrimSpace(summary.CustomerName); n != "" &&
-		n != "Guest" && n != "Takeaway" && n != "Counter" && n != "Self Service" {
+	if n := displayCustomerName(summary.CustomerName); n != "" {
 		centerText("Customer: "+n, 9, false)
 	}
 	if p := strings.TrimSpace(summary.CustomerPhone); p != "" {
@@ -198,21 +197,24 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 }
 
 func billPDFMetaLine(summary BillSummaryView) string {
-	parts := []string{}
-	if summary.TicketNumber > 0 {
-		parts = append(parts, fmt.Sprintf("Ticket #%d", summary.TicketNumber))
-	} else {
-		parts = append(parts, fmt.Sprintf("Order #%d", summary.OrderNumber))
+	table := strings.TrimSpace(summary.TableNumber)
+	if table == "" {
+		return ""
 	}
-	if summary.ServiceMode == "takeaway" {
-		parts = append(parts, "Takeaway")
-	} else if summary.ServiceMode == "eat_here" {
-		parts = append(parts, "Eat here")
+	if table == "Counter" || table == "Takeaway" {
+		return table
 	}
-	if summary.TableNumber != "" && summary.TableNumber != "Counter" && summary.TableNumber != "Takeaway" {
-		parts = append(parts, fmt.Sprintf("Table %s", summary.TableNumber))
+	return "Table " + table
+}
+
+func displayCustomerName(name string) string {
+	n := strings.TrimSpace(name)
+	switch n {
+	case "", "Guest", "Takeaway", "Counter", "Self Service":
+		return ""
+	default:
+		return n
 	}
-	return strings.Join(parts, " | ")
 }
 
 func formatPDFMoney(amount float64) string {
