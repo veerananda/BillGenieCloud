@@ -46,10 +46,6 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 		writeText(text, size, x, y, bold)
 		y -= size + 5
 	}
-	leftText := func(text string, size float64, bold bool) {
-		writeText(text, size, left, y, bold)
-		y -= size + 5
-	}
 	hline := func() {
 		body.WriteString("0.75 w 0.85 0.88 0.91 RG\n")
 		body.WriteString(fmt.Sprintf("%.1f %.1f m %.1f %.1f l S\n", left, y, right, y))
