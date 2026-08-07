@@ -62,11 +62,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	log.Printf("✅ New restaurant registered: %s (ID: %s, Code: %s)", restaurant.Name, restaurant.ID, restaurant.RestaurantCode)
 
-	emailSent := true
-	if _, err := h.authService.SendVerificationEmail(restaurant.ID, restaurant.Email); err != nil {
-		log.Printf("⚠️ Verification email failed for %s: %v", restaurant.Email, err)
-		emailSent = false
-	}
+	// Send verification mail in the background. Blocking SMTP (or a hung GoDaddy
+	// connection) previously held this request until nginx returned 504, which
+	// made registration look broken even when the restaurant was already created.
+	go func(restaurantID, email string) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("⚠️ Verification email panic for %s: %v", email, rec)
+			}
+		}()
+		if _, err := h.authService.SendVerificationEmail(restaurantID, email); err != nil {
+			log.Printf("⚠️ Verification email failed for %s: %v", email, err)
+			return
+		}
+		log.Printf("✅ Verification email queued/sent for %s", email)
+	}(restaurant.ID, restaurant.Email)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"restaurant_id":               restaurant.ID,
@@ -82,8 +92,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"is_email_verified":           restaurant.IsEmailVerified,
 		"requires_approval":           true,
 		"is_approved":                 restaurant.IsApproved,
-		"verification_email_sent":     emailSent,
-		"message":                     fmt.Sprintf("Restaurant registered successfully! Verify your email, then wait for BillGenie approval before signing in with login number: %s", user.StaffKey),
+		"verification_email_sent":     true,
+		"message":                     fmt.Sprintf("Restaurant registered successfully! Check %s for a verification link (and spam), then wait for BillGenie approval before signing in with login number: %s", restaurant.Email, user.StaffKey),
 	})
 }
 

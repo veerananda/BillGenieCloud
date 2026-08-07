@@ -1217,7 +1217,8 @@ func smtpEnvelopeAddress(from string) (string, error) {
 // SMTP_USER/SMTP_PASS or SMTP_MAIL/SMTP_APP_PASSWORD
 // Optional: SMTP_FROM (defaults to SMTP_USER/SMTP_MAIL)
 //
-// Port 465 uses implicit TLS (GoDaddy default). Port 587 uses STARTTLS.
+// Port 465 uses implicit TLS (GoDaddy default). Other ports use STARTTLS when offered.
+// All network ops are bounded so a stuck SMTP host cannot hang HTTP handlers into 504s.
 func sendEmailSMTP(to, subject, body string) error {
 	host := smtpEnv("SMTP_HOST")
 	port := smtpEnv("SMTP_PORT")
@@ -1247,50 +1248,66 @@ func sendEmailSMTP(to, subject, body string) error {
 			body,
 	)
 
+	const smtpTimeout = 12 * time.Second
 	addr := net.JoinHostPort(host, port)
 	auth := smtp.PlainAuth("", user, pass, host)
 	tlsConfig := &tls.Config{ServerName: host}
+	dialer := &net.Dialer{Timeout: smtpTimeout}
 
-	// Implicit TLS (SMTPS) — required for GoDaddy's documented port 465.
+	var conn net.Conn
 	if port == "465" {
-		conn, dialErr := tls.Dial("tcp", addr, tlsConfig)
-		if dialErr != nil {
-			return fmt.Errorf("smtp tls dial %s: %w", addr, dialErr)
-		}
-		defer conn.Close()
-
-		client, clientErr := smtp.NewClient(conn, host)
-		if clientErr != nil {
-			return fmt.Errorf("smtp client: %w", clientErr)
-		}
-		defer client.Close()
-
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("smtp auth: %w", err)
-		}
-		if err := client.Mail(fromAddr); err != nil {
-			return fmt.Errorf("smtp mail from: %w", err)
-		}
-		if err := client.Rcpt(to); err != nil {
-			return fmt.Errorf("smtp rcpt: %w", err)
-		}
-		w, err := client.Data()
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 		if err != nil {
-			return fmt.Errorf("smtp data: %w", err)
+			return fmt.Errorf("smtp tls dial %s: %w", addr, err)
 		}
-		if _, err := w.Write(msg); err != nil {
-			_ = w.Close()
-			return fmt.Errorf("smtp write: %w", err)
+	} else {
+		conn, err = dialer.Dial("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("smtp dial %s: %w", addr, err)
 		}
-		if err := w.Close(); err != nil {
-			return fmt.Errorf("smtp data close: %w", err)
-		}
-		return client.Quit()
+	}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(smtpTimeout)); err != nil {
+		return fmt.Errorf("smtp deadline: %w", err)
 	}
 
-	// Port 587 (and similar): plain connect + STARTTLS via SendMail.
-	if err := smtp.SendMail(addr, auth, fromAddr, []string{to}, msg); err != nil {
-		return fmt.Errorf("smtp send (%s): %w", addr, err)
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer client.Close()
+
+	if port != "465" {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(tlsConfig); err != nil {
+				return fmt.Errorf("smtp starttls: %w", err)
+			}
+		}
+	}
+
+	if err := client.Auth(auth); err != nil {
+		return fmt.Errorf("smtp auth: %w", err)
+	}
+	if err := client.Mail(fromAddr); err != nil {
+		return fmt.Errorf("smtp mail from: %w", err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return fmt.Errorf("smtp rcpt: %w", err)
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		_ = w.Close()
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("smtp data close: %w", err)
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("smtp quit: %w", err)
 	}
 	return nil
 }
