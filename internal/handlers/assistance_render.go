@@ -54,11 +54,39 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .bill .download{background:#0f172a;color:#fff}
     .menu{margin-top:22px;display:none}
     .menu.show{display:block}
-    .menu-cat{margin:18px 0 6px;font-size:.75rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#64748b}
-    .menu-cat:first-child{margin-top:0}
+    .menu-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .menu-head h2{margin:0;font-size:1.05rem}
+    .menu-count{font-size:.8rem;color:#94a3b8;font-weight:600}
+    .cat-scroll{
+      display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+      padding:2px 2px 12px;margin:0 -4px 4px;scrollbar-width:none
+    }
+    .cat-scroll::-webkit-scrollbar{display:none}
+    .cat-chip{
+      flex:0 0 auto;border:1px solid #e2e8f0;background:#f8fafc;color:#334155;
+      border-radius:999px;padding:8px 14px;font-size:.86rem;font-weight:700;
+      cursor:pointer;white-space:nowrap;transition:background .15s,color .15s,border-color .15s,box-shadow .15s
+    }
+    .cat-chip.active{
+      background:#0f172a;border-color:#0f172a;color:#fff;
+      box-shadow:0 6px 16px rgba(15,23,42,.18)
+    }
+    .menu-items{display:flex;flex-direction:column;gap:10px;min-height:80px}
+    .menu-card{
+      display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
+      padding:14px 14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc
+    }
+    .menu-card-name{font-weight:700;font-size:.98rem;line-height:1.35}
+    .menu-card-desc{margin-top:4px;color:#64748b;font-size:.82rem;line-height:1.4}
+    .menu-card-variants{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
+    .variant-pill{
+      display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;
+      background:#fff;border:1px solid #e2e8f0;font-size:.75rem;font-weight:600;color:#475569
+    }
+    .menu-card-price{font-weight:800;white-space:nowrap;font-size:1rem;color:#0f172a;padding-top:1px}
     .veg{display:inline-block;width:8px;height:8px;border-radius:2px;background:#16a34a;margin-right:6px;vertical-align:middle}
     .nonveg{display:inline-block;width:8px;height:8px;border-radius:2px;background:#dc2626;margin-right:6px;vertical-align:middle}
-    .menu-loading,.menu-empty{color:#94a3b8;font-size:.9rem;padding:8px 0}
+    .menu-loading,.menu-empty{color:#94a3b8;font-size:.9rem;padding:12px 0;text-align:center}
   </style>
 </head>
 <body>
@@ -84,8 +112,12 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         <a class="download" id="billDownload" href="#">Download bill</a>
       </div>
       <div class="menu" id="menuPanel">
-        <h2>Menu</h2>
-        <div id="menuList" class="menu-loading">Loading menu…</div>
+        <div class="menu-head">
+          <h2>Menu</h2>
+          <span class="menu-count" id="menuCount"></span>
+        </div>
+        <div class="cat-scroll" id="menuCats" hidden></div>
+        <div id="menuList" class="menu-items menu-loading">Loading menu…</div>
       </div>
     </div>
   </div>
@@ -94,6 +126,8 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     let state = %s;
     let menuLoaded = false;
     let menuItems = [];
+    let menuCategories = [];
+    let selectedCategory = '';
     const callBtn = document.getElementById('callBtn');
     const note = document.getElementById('note');
     const itemsPanel = document.getElementById('itemsPanel');
@@ -103,6 +137,8 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     const billDownload = document.getElementById('billDownload');
     const menuPanel = document.getElementById('menuPanel');
     const menuList = document.getElementById('menuList');
+    const menuCats = document.getElementById('menuCats');
+    const menuCount = document.getElementById('menuCount');
 
     function money(n){ return '₹' + Number(n||0).toFixed(2); }
 
@@ -142,54 +178,110 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       totalsPanel.classList.add('show');
     }
 
-    function renderMenu(){
-      menuList.innerHTML = '';
-      if (!menuItems.length) {
-        menuList.className = 'menu-empty';
-        menuList.textContent = 'Menu will appear here when available.';
+    function buildCategories(){
+      const seen = {};
+      const cats = [];
+      menuItems.forEach(item => {
+        const cat = (item.category && String(item.category).trim()) || 'Other';
+        if (!seen[cat]) {
+          seen[cat] = true;
+          cats.push(cat);
+        }
+      });
+      return cats;
+    }
+
+    function renderCategoryChips(){
+      menuCats.innerHTML = '';
+      if (menuCategories.length <= 1) {
+        menuCats.hidden = true;
         return;
       }
-      menuList.className = '';
-      let lastCat = null;
-      menuItems.forEach(item => {
-        const cat = item.category || 'Other';
-        if (cat !== lastCat) {
-          lastCat = cat;
-          const h = document.createElement('div');
-          h.className = 'menu-cat';
-          h.textContent = cat;
-          menuList.appendChild(h);
-        }
-        const row = document.createElement('div');
-        row.className = 'line';
-        const left = document.createElement('div');
-        const name = document.createElement('div');
-        name.className = 'line-name';
-        const dot = document.createElement('span');
-        dot.className = item.is_veg ? 'veg' : 'nonveg';
-        name.appendChild(dot);
-        name.appendChild(document.createTextNode(item.name || 'Item'));
-        left.appendChild(name);
-        if (item.description) {
-          const sub = document.createElement('div');
-          sub.className = 'line-sub';
-          sub.textContent = item.description;
-          left.appendChild(sub);
-        }
-        const variants = Array.isArray(item.variants) ? item.variants : [];
-        if (variants.length) {
-          const sub = document.createElement('div');
-          sub.className = 'line-sub';
-          sub.textContent = variants.map(v => (v.label || '') + ' ' + money(v.price)).join(' · ');
-          left.appendChild(sub);
-        }
-        const right = document.createElement('div');
-        right.className = 'line-total';
-        right.textContent = variants.length ? '' : money(item.price);
-        row.appendChild(left);
-        row.appendChild(right);
-        menuList.appendChild(row);
+      menuCats.hidden = false;
+      menuCategories.forEach(cat => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'cat-chip' + (cat === selectedCategory ? ' active' : '');
+        btn.textContent = cat;
+        btn.addEventListener('click', () => {
+          if (selectedCategory === cat) return;
+          selectedCategory = cat;
+          renderCategoryChips();
+          renderMenuItems();
+          const active = menuCats.querySelector('.cat-chip.active');
+          if (active && active.scrollIntoView) {
+            active.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+          }
+        });
+        menuCats.appendChild(btn);
       });
+    }
+
+    function renderMenuItemCard(item){
+      const row = document.createElement('div');
+      row.className = 'menu-card';
+      const left = document.createElement('div');
+      const name = document.createElement('div');
+      name.className = 'menu-card-name';
+      const dot = document.createElement('span');
+      dot.className = item.is_veg ? 'veg' : 'nonveg';
+      name.appendChild(dot);
+      name.appendChild(document.createTextNode(item.name || 'Item'));
+      left.appendChild(name);
+      if (item.description) {
+        const sub = document.createElement('div');
+        sub.className = 'menu-card-desc';
+        sub.textContent = item.description;
+        left.appendChild(sub);
+      }
+      const variants = Array.isArray(item.variants) ? item.variants : [];
+      if (variants.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'menu-card-variants';
+        variants.forEach(v => {
+          const pill = document.createElement('span');
+          pill.className = 'variant-pill';
+          pill.textContent = (v.label || 'Option') + ' · ' + money(v.price);
+          wrap.appendChild(pill);
+        });
+        left.appendChild(wrap);
+      }
+      const right = document.createElement('div');
+      right.className = 'menu-card-price';
+      right.textContent = variants.length ? '' : money(item.price);
+      row.appendChild(left);
+      row.appendChild(right);
+      return row;
+    }
+
+    function renderMenuItems(){
+      menuList.innerHTML = '';
+      menuList.className = 'menu-items';
+      if (!menuItems.length) {
+        menuList.className = 'menu-items menu-empty';
+        menuList.textContent = 'Menu will appear here when available.';
+        menuCount.textContent = '';
+        return;
+      }
+      const filtered = menuCategories.length <= 1
+        ? menuItems
+        : menuItems.filter(item => ((item.category && String(item.category).trim()) || 'Other') === selectedCategory);
+      menuCount.textContent = filtered.length + (filtered.length === 1 ? ' item' : ' items');
+      if (!filtered.length) {
+        menuList.className = 'menu-items menu-empty';
+        menuList.textContent = 'No items in this category.';
+        return;
+      }
+      filtered.forEach(item => menuList.appendChild(renderMenuItemCard(item)));
+    }
+
+    function renderMenu(){
+      menuCategories = buildCategories();
+      if (!selectedCategory || menuCategories.indexOf(selectedCategory) < 0) {
+        selectedCategory = menuCategories[0] || '';
+      }
+      renderCategoryChips();
+      renderMenuItems();
     }
 
     async function ensureMenu(){
@@ -205,7 +297,9 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         menuLoaded = true;
         renderMenu();
       } catch (e) {
-        menuList.className = 'menu-empty';
+        menuCats.hidden = true;
+        menuCount.textContent = '';
+        menuList.className = 'menu-items menu-empty';
         menuList.textContent = 'Could not load menu.';
       }
     }
