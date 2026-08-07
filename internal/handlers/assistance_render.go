@@ -21,40 +21,46 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <meta name="theme-color" content="#1bae76"/>
+  <meta name="theme-color" content="#d97706"/>
   <title>%s · Table %s</title>
   <style>
     :root{
       --ink:#0f172a;
       --ink-soft:#334155;
       --muted:#64748b;
-      --line:#e2e8f0;
-      --surface:#ffffff;
-      --bg:#f8fafc;
+      --line:rgba(15,23,42,.08);
+      --surface:rgba(255,255,255,.88);
+      --bg:#faf6f0;
       --brand:#1bae76;
       --brand-dark:#0f8a5c;
       --brand-wash:#e8f8f1;
-      --call:#2563eb;
-      --call-disabled:#93c5fd;
+      --call:#d97706;
+      --call-hover:#b45309;
+      --call-disabled:#fbbf24;
       --danger:#dc2626;
+      --food-tile:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><g fill='none' stroke='%%230f8a5c' stroke-width='2.2' opacity='.22' stroke-linecap='round' stroke-linejoin='round'><path d='M28 36c10-2 18 6 18 16 0 12-10 20-18 22-8-2-18-10-18-22 0-10 8-18 18-16z'/><path d='M18 54h20'/><circle cx='118' cy='40' r='14'/><path d='M104 40h28M118 26v28'/><path d='M36 108c0-10 8-18 18-18h8c10 0 18 8 18 18v6H36v-6z'/><path d='M44 96v-6c0-6 4-10 10-10s10 4 10 10v6'/><path d='M112 100c12 0 22 6 22 14s-10 14-22 14-22-6-22-14 10-14 22-14z'/><path d='M98 114h28'/></g><g fill='%%23d97706' opacity='.14'><circle cx='72' cy='28' r='3'/><circle cx='48' cy='78' r='2.5'/><circle cx='132' cy='88' r='3'/><circle cx='24' cy='132' r='2.5'/><circle cx='96' cy='140' r='3'/></g></svg>");
     }
     *{box-sizing:border-box}
     html,body{margin:0;min-height:100%%}
     body{
       font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
       color:var(--ink);
-      background:
-        radial-gradient(900px 420px at 0%% -10%%, rgba(27,174,118,.16), transparent 55%%),
-        radial-gradient(700px 360px at 100%% 0%%, rgba(15,138,92,.10), transparent 50%%),
-        linear-gradient(180deg, #eefaf4 0%%, #f5fbf8 40%%, #f8fafc 100%%);
+      background-color:var(--bg);
+      background-image:
+        var(--food-tile),
+        radial-gradient(900px 420px at 0%% -10%%, rgba(217,119,6,.12), transparent 55%%),
+        radial-gradient(700px 360px at 100%% 0%%, rgba(27,174,118,.14), transparent 50%%),
+        linear-gradient(180deg, #fff8ef 0%%, #f7faf6 45%%, #f3f7f4 100%%);
+      background-size:160px 160px, auto, auto, auto;
+      background-attachment:fixed;
     }
     .page{
       min-height:100vh;max-width:560px;margin:0 auto;
       display:flex;flex-direction:column;
     }
     .header{
-      padding:20px 16px 16px;border-bottom:1px solid rgba(27,174,118,.14);
-      background:rgba(255,255,255,.82);backdrop-filter:blur(8px);
+      padding:20px 16px 16px;border-bottom:1px solid rgba(15,138,92,.12);
+      background:rgba(255,252,247,.9);backdrop-filter:blur(10px);
       position:sticky;top:0;z-index:5;
     }
     h1{margin:0 0 4px;font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:var(--ink)}
@@ -73,14 +79,21 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       padding:14px 16px;border-radius:12px;border:0;font-size:1rem;font-weight:700;
       cursor:pointer;font-family:inherit;
     }
-    .btn-call{background:var(--call);color:#fff}
-    .btn-call:disabled{background:var(--call-disabled);cursor:default}
+    .btn-call{
+      background:var(--call);color:#fff;
+      box-shadow:0 8px 20px rgba(217,119,6,.28);
+    }
+    .btn-call:hover:not(:disabled){background:var(--call-hover)}
+    .btn-call:disabled{background:var(--call-disabled);color:#78350f;box-shadow:none;cursor:default}
     .note{margin:10px 16px 0;text-align:center;color:var(--muted);font-size:.85rem;min-height:1.2em}
     .content{
       padding:8px 16px 32px;flex:1;
-      background:rgba(255,255,255,.55);
-      border-top:1px solid rgba(27,174,118,.08);
-      margin-top:12px;
+      margin:12px 12px 20px;
+      background:var(--surface);
+      border:1px solid rgba(255,255,255,.7);
+      border-radius:18px;
+      box-shadow:0 10px 30px rgba(15,23,42,.06);
+      backdrop-filter:blur(8px);
     }
     .items{margin-top:18px;display:none}
     .items.show{display:block}
@@ -121,9 +134,10 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
     .cat-scroll::-webkit-scrollbar{display:none}
     .cat-chip{
-      flex:0 0 auto;border:1px solid var(--line);background:var(--bg);color:var(--ink-soft);
+      flex:0 0 auto;border:1px solid rgba(15,138,92,.18);background:rgba(255,255,255,.92);color:var(--ink-soft);
       border-radius:999px;padding:8px 14px;font-size:.86rem;font-weight:700;
       cursor:pointer;white-space:nowrap;font-family:inherit;
+      box-shadow:0 2px 8px rgba(15,23,42,.04);
     }
     .cat-chip.active{
       background:var(--brand);border-color:var(--brand);color:#fff;
