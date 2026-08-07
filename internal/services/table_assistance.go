@@ -350,7 +350,12 @@ func dineInVariantPrice(v *models.MenuItemVariant, item *models.MenuItem) float6
 }
 
 // LoadAssistanceMenu returns browse-only dine-in menu items for the table's restaurant.
+// Item names use FormatItemDisplayName (same smart naming as bills/KOTs).
 func LoadAssistanceMenu(db *gorm.DB, restaurantID string) ([]AssistanceMenuItem, error) {
+	var restaurant models.Restaurant
+	_ = db.Select("id", "category_display_blocklist").Where("id = ?", restaurantID).First(&restaurant).Error
+	blocklist := ParseCategoryDisplayBlocklist(restaurant.CategoryDisplayBlocklist)
+
 	var items []models.MenuItem
 	if err := db.Preload("Variants", func(tx *gorm.DB) *gorm.DB {
 		return tx.Where("is_available = ?", true).Order("sort_order ASC, created_at ASC")
@@ -367,7 +372,7 @@ func LoadAssistanceMenu(db *gorm.DB, restaurantID string) ([]AssistanceMenuItem,
 			continue
 		}
 		row := AssistanceMenuItem{
-			Name:        item.Name,
+			Name:        FormatItemDisplayName(item.Name, item.Category, "", blocklist),
 			Category:    item.Category,
 			Description: strings.TrimSpace(item.Description),
 			IsVeg:       item.IsVeg,
