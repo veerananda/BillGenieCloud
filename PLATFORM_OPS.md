@@ -87,14 +87,43 @@ Upsert menu items from platform onboarding (JSON body; Excel parsed client-side)
       "price": 280,
       "is_veg": true,
       "is_available": true,
-      "is_readily_available": false
+      "is_readily_available": false,
+      "is_taxable": true,
+      "available_channels": ["dine_in", "counter_eat_here", "counter_takeaway", "swiggy", "zomato"],
+      "channel_prices": {
+        "dine_in": 280,
+        "swiggy": 300,
+        "zomato": 300
+      },
+      "variants": [
+        {
+          "label": "Half",
+          "price": 160,
+          "recipe_scale": 0.5,
+          "is_default": false,
+          "is_available": true,
+          "channel_prices": { "dine_in": 160, "swiggy": 180 }
+        },
+        {
+          "label": "Full",
+          "price": 280,
+          "recipe_scale": 1,
+          "is_default": true
+        }
+      ]
     }
   ]
 }
 ```
 
-Excel columns: `category`, `type`, `price`, `isVeg`, `isAvailable`, `isReadilyAvailable`.  
-Upsert key: **category + type** (name), case-insensitive.
+**Menu sheet columns:** `category`, `type`, `price`, `isVeg`, `isAvailable`, `isReadilyAvailable`, `isTaxable`, `availableChannels`, optional `price_dine_in` / `price_counter_eat_here` / `price_counter_takeaway` / `price_swiggy` / `price_zomato`.
+
+**Portions sheet (optional):** `category`, `type`, `label`, `price`, `recipeScale`, `isDefault`, `isAvailable`, plus the same optional `price_*` channel columns. Rows match Menu by **category + type**. Omit the sheet (or leave empty) to keep / auto-create a default Full portion.
+
+- `isTaxable`: default **true** when omitted; use `no` for MRP items.
+- `availableChannels`: comma-separated channel ids; blank = all channels.
+- Channel price blanks fall back to the item/portion base `price`.
+- Upsert key: **category + type** (name), case-insensitive.
 
 ### `POST /platform/restaurants/:id/recipes/bulk`
 Replace recipes per menu item; ingredients are auto-created for inventory (no stock columns).

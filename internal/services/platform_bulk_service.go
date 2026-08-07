@@ -35,13 +35,26 @@ type BulkRowError struct {
 	Message string `json:"message"`
 }
 
+type BulkMenuVariantRow struct {
+	Label         string             `json:"label"`
+	Price         float64            `json:"price"`
+	RecipeScale   float64            `json:"recipe_scale"`
+	IsDefault     bool               `json:"is_default"`
+	IsAvailable   *bool              `json:"is_available,omitempty"`
+	ChannelPrices map[string]float64 `json:"channel_prices,omitempty"`
+}
+
 type BulkMenuUploadRow struct {
-	Category           string  `json:"category"`
-	Type               string  `json:"type"`
-	Price              float64 `json:"price"`
-	IsVeg              bool    `json:"is_veg"`
-	IsAvailable        bool    `json:"is_available"`
-	IsReadilyAvailable bool    `json:"is_readily_available"`
+	Category           string               `json:"category"`
+	Type               string               `json:"type"`
+	Price              float64              `json:"price"`
+	IsVeg              bool                 `json:"is_veg"`
+	IsAvailable        bool                 `json:"is_available"`
+	IsReadilyAvailable bool                 `json:"is_readily_available"`
+	IsTaxable          *bool                `json:"is_taxable"`
+	AvailableChannels  []string             `json:"available_channels"`
+	ChannelPrices      map[string]float64   `json:"channel_prices"`
+	Variants           []BulkMenuVariantRow `json:"variants"`
 }
 
 type BulkMenuUploadRequest struct {
@@ -118,6 +131,29 @@ func (s *PlatformOpsService) BulkUploadMenu(restaurantID string, req BulkMenuUpl
 			continue
 		}
 
+		channels, err := NormalizeMenuAvailableChannels(row.AvailableChannels, true)
+		if err != nil {
+			result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Field: "available_channels", Message: err.Error()})
+			result.Skipped++
+			continue
+		}
+		channelPrices, err := NormalizeMenuChannelPrices(channels, row.ChannelPrices, price)
+		if err != nil {
+			result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Field: "channel_prices", Message: err.Error()})
+			result.Skipped++
+			continue
+		}
+		isTaxable := true
+		if row.IsTaxable != nil {
+			isTaxable = *row.IsTaxable
+		}
+		variantInputs, verr := bulkVariantInputs(row.Variants, price)
+		if verr != nil {
+			result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Field: "variants", Message: verr.Error()})
+			result.Skipped++
+			continue
+		}
+
 		existing, err := findMenuItemByCategoryAndName(s.db, restaurantID, category, name)
 
 		if err != nil && err != gorm.ErrRecordNotFound {
@@ -134,10 +170,17 @@ func (s *PlatformOpsService) BulkUploadMenu(restaurantID string, req BulkMenuUpl
 				IsVeg:             row.IsVeg,
 				IsAvailable:       row.IsAvailable,
 				ReadilyAvailable:  row.IsReadilyAvailable,
-				AvailableChannels: append([]string(nil), DefaultMenuAvailableChannels...),
+				IsTaxable:         isTaxable,
+				AvailableChannels: channels,
+				ChannelPrices:     channelPrices,
 			}
 			if err := s.db.Create(&item).Error; err != nil {
 				result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Message: err.Error()})
+				result.Skipped++
+				continue
+			}
+			if _, err := SyncMenuItemVariants(s.db, item, variantInputs); err != nil {
+				result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Field: "variants", Message: err.Error()})
 				result.Skipped++
 				continue
 			}
@@ -151,8 +194,18 @@ func (s *PlatformOpsService) BulkUploadMenu(restaurantID string, req BulkMenuUpl
 		existing.IsVeg = row.IsVeg
 		existing.IsAvailable = row.IsAvailable
 		existing.ReadilyAvailable = row.IsReadilyAvailable
+		if row.IsTaxable != nil {
+			existing.IsTaxable = *row.IsTaxable
+		}
+		existing.AvailableChannels = channels
+		existing.ChannelPrices = channelPrices
 		if err := s.db.Save(&existing).Error; err != nil {
 			result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Message: err.Error()})
+			result.Skipped++
+			continue
+		}
+		if _, err := SyncMenuItemVariants(s.db, existing, variantInputs); err != nil {
+			result.Errors = append(result.Errors, BulkRowError{Row: rowNum, Field: "variants", Message: err.Error()})
 			result.Skipped++
 			continue
 		}
@@ -164,6 +217,50 @@ func (s *PlatformOpsService) BulkUploadMenu(restaurantID string, req BulkMenuUpl
 	s.writePlatformAudit(restaurantID, actor, "platform_bulk_menu", reason, oldSnapshot, restaurant)
 	result.Items = savedItems
 	return result, nil
+}
+
+func bulkVariantInputs(rows []BulkMenuVariantRow, basePrice float64) ([]VariantInput, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	out := make([]VariantInput, 0, len(rows))
+	for i, row := range rows {
+		label := strings.TrimSpace(row.Label)
+		if label == "" {
+			return nil, fmt.Errorf("variant[%d].label is required", i)
+		}
+		price := row.Price
+		if price < 0 {
+			return nil, fmt.Errorf("variant[%d].price cannot be negative", i)
+		}
+		if price == 0 {
+			price = basePrice
+		}
+		scale := row.RecipeScale
+		if scale <= 0 {
+			scale = 1
+		}
+		out = append(out, VariantInput{
+			Label:         label,
+			Price:         price,
+			RecipeScale:   scale,
+			ChannelPrices: row.ChannelPrices,
+			IsDefault:     row.IsDefault,
+			IsAvailable:   row.IsAvailable,
+			SortOrder:     i,
+		})
+	}
+	hasDefault := false
+	for _, v := range out {
+		if v.IsDefault {
+			hasDefault = true
+			break
+		}
+	}
+	if !hasDefault && len(out) > 0 {
+		out[len(out)-1].IsDefault = true
+	}
+	return out, nil
 }
 
 type recipeLineInput struct {
