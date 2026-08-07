@@ -1,15 +1,16 @@
-// Print agent: polls BillGenieCloud for queued KOT/bill jobs and prints over
-// LAN ESC/POS (TCP :9100) or Bluetooth-classic printers exposed as serial ports
-// (Windows COM after OS pairing, or /dev/cu.* on macOS/Linux).
+// Print agent: listens for BillGenieCloud SSE wake events, claims queued KOT/bill
+// jobs, and prints over LAN ESC/POS (TCP :9100) or Bluetooth-classic printers
+// exposed as serial ports (Windows COM after OS pairing, or /dev/cu.* on macOS/Linux).
 //
 // Usage:
 //
-//	set BILLGENIE_API_URL=https://billgenie-api.fly.dev
+//	set BILLGENIE_API_URL=https://api.thebillgenie.com
 //	set BILLGENIE_PRINT_AGENT_KEY=bgpa_...
 //	go run ./cmd/print-agent
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -55,34 +56,135 @@ func main() {
 		hostname, _ := os.Hostname()
 		agentID = hostname
 	}
-	pollSeconds := 2
 	if apiURL == "" || agentKey == "" {
 		log.Fatal("Set BILLGENIE_API_URL and BILLGENIE_PRINT_AGENT_KEY")
 	}
 
 	log.Printf("Print agent starting → %s (agent_id=%s)", apiURL, agentID)
 	log.Printf("Supports TCP (LAN/Wi-Fi) and serial/Bluetooth COM ports (e.g. COM5, serial:COM5)")
+	log.Printf("Mode: event-driven SSE (no polling)")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	ticker := time.NewTicker(time.Duration(pollSeconds) * time.Second)
-	defer ticker.Stop()
+	wake := make(chan struct{}, 1)
+	go func() {
+		backoff := time.Second
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			err := listenEvents(apiURL, agentKey, wake, stop)
+			if err != nil {
+				log.Printf("SSE error: %v — reconnecting in %s", err, backoff)
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(backoff):
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
+			}
+		}
+	}()
+
+	// Catch any jobs queued before SSE connected.
+	signalWake(wake)
+
+	debounce := time.NewTimer(0)
+	if !debounce.Stop() {
+		<-debounce.C
+	}
+	pending := false
 
 	for {
 		select {
 		case <-stop:
 			log.Println("Shutting down")
 			return
-		case <-ticker.C:
-			if err := pollOnce(apiURL, agentKey, agentID); err != nil {
-				log.Printf("poll error: %v", err)
+		case <-wake:
+			pending = true
+			if !debounce.Stop() {
+				select {
+				case <-debounce.C:
+				default:
+				}
+			}
+			debounce.Reset(150 * time.Millisecond)
+		case <-debounce.C:
+			if !pending {
+				continue
+			}
+			pending = false
+			if err := claimAndPrint(apiURL, agentKey, agentID); err != nil {
+				log.Printf("claim error: %v", err)
 			}
 		}
 	}
 }
 
-func pollOnce(apiURL, agentKey, agentID string) error {
+func signalWake(wake chan struct{}) {
+	select {
+	case wake <- struct{}{}:
+	default:
+	}
+}
+
+func listenEvents(apiURL, agentKey string, wake chan struct{}, stop <-chan os.Signal) error {
+	req, err := http.NewRequest(http.MethodGet, apiURL+"/print-agent/events", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Print-Agent-Key", agentKey)
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("events %s: %s", resp.Status, string(raw))
+	}
+
+	log.Printf("SSE connected to %s/print-agent/events", apiURL)
+	signalWake(wake)
+
+	reader := bufio.NewReader(resp.Body)
+	for {
+		select {
+		case <-stop:
+			return nil
+		default:
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				return fmt.Errorf("SSE stream closed")
+			}
+			return err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			continue
+		}
+		// Wake on named jobs events or generic data frames from the API.
+		if strings.HasPrefix(line, "event: jobs") || strings.HasPrefix(line, "data:") {
+			signalWake(wake)
+		}
+	}
+}
+
+func claimAndPrint(apiURL, agentKey, agentID string) error {
 	body, _ := json.Marshal(map[string]interface{}{
 		"agent_id": agentID,
 		"limit":    5,
@@ -117,6 +219,10 @@ func pollOnce(apiURL, agentKey, agentID string) error {
 			continue
 		}
 		_ = reportJob(apiURL, agentKey, job.ID, false, "")
+	}
+	// If the batch was full, drain remaining jobs immediately.
+	if len(claimed.Jobs) >= 5 {
+		return claimAndPrint(apiURL, agentKey, agentID)
 	}
 	return nil
 }

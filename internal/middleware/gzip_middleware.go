@@ -5,8 +5,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GzipMiddleware enables gzip compression for responses
-// Reduces bandwidth usage by ~60% for JSON responses
+// GzipMiddleware enables gzip compression for responses.
+// SSE streams are excluded — compressing them breaks EventSource / print-agent clients.
 func GzipMiddleware() gin.HandlerFunc {
-	return gzip.Gzip(gzip.DefaultCompression)
+	return gzip.Gzip(
+		gzip.DefaultCompression,
+		gzip.WithExcludedPathsRegexs([]string{
+			`/events$`,
+			`^/print-agent/events`,
+		}),
+	)
 }

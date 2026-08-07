@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"restaurant-api/internal/middleware"
 	"restaurant-api/internal/services"
@@ -20,7 +22,7 @@ func NewPrintHandler(printService *services.PrintService) *PrintHandler {
 	return &PrintHandler{printService: printService}
 }
 
-// SetupPrintRoutes registers restaurant print settings + print-agent poll APIs.
+// SetupPrintRoutes registers restaurant print settings + print-agent claim/SSE APIs.
 func SetupPrintRoutes(router *gin.Engine, db *gorm.DB) {
 	printService := services.NewPrintService(db)
 	h := NewPrintHandler(printService)
@@ -47,6 +49,7 @@ func SetupPrintRoutes(router *gin.Engine, db *gorm.DB) {
 	agent := router.Group("/print-agent")
 	agent.Use(middleware.PrintAgentAuthMiddleware(printService))
 	{
+		agent.GET("/events", h.AgentEvents)
 		agent.POST("/jobs/claim", h.ClaimJobs)
 		agent.POST("/jobs/:job_id/complete", h.CompleteJob)
 		agent.POST("/jobs/:job_id/fail", h.FailJob)
@@ -235,6 +238,63 @@ func (h *PrintHandler) ClaimJobs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+}
+
+// AgentEvents is an SSE stream that wakes the on-site print agent when jobs are queued.
+func (h *PrintHandler) AgentEvents(c *gin.Context) {
+	restaurantID, _ := c.Get("restaurant_id")
+	rid, _ := restaurantID.(string)
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// Immediate wake so agents catch jobs queued while disconnected.
+	fmt.Fprintf(c.Writer, "event: jobs\ndata: {\"ready\":true}\n\n")
+	flusher.Flush()
+
+	hub := h.printService.NotifyHub()
+	if hub == nil {
+		ticker := time.NewTicker(25 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-c.Request.Context().Done():
+				return
+			case <-ticker.C:
+				fmt.Fprintf(c.Writer, ": keepalive\n\n")
+				flusher.Flush()
+			}
+		}
+	}
+
+	ch := hub.Subscribe(rid)
+	defer hub.Unsubscribe(rid, ch)
+
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(c.Writer, "event: jobs\ndata: {\"ready\":true}\n\n")
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprintf(c.Writer, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
 }
 
 func (h *PrintHandler) CompleteJob(c *gin.Context) {

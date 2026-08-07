@@ -2,7 +2,7 @@
 # 1. Web → Printers → Generate agent key, paste below
 # 2. From restaurant-api:  .\cmd\print-agent\run-print-agent.ps1
 
-$env:BILLGENIE_API_URL = "https://billgenie-api.fly.dev"
+$env:BILLGENIE_API_URL = "https://api.thebillgenie.com"
 $env:BILLGENIE_PRINT_AGENT_KEY = "bgpa_PASTE_KEY_HERE"
 # Optional: $env:BILLGENIE_PRINT_AGENT_ID = "laptop"
 
