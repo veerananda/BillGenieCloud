@@ -210,6 +210,24 @@ func (h *PlatformHandler) ApproveRestaurant(c *gin.Context) {
 	})
 }
 
+// ResendVerificationEmail sends a verification link to the restaurant's registered email.
+func (h *PlatformHandler) ResendVerificationEmail(c *gin.Context) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	msg, err := h.ops.ResendVerificationEmail(c.Param("restaurant_id"), h.platformActor(c), req.Reason)
+	if err != nil {
+		if err.Error() == "restaurant not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": msg})
+}
+
 // DeleteRestaurant permanently removes a tenant and all related data.
 func (h *PlatformHandler) DeleteRestaurant(c *gin.Context) {
 	var req services.DeleteRestaurantRequest

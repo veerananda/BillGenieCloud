@@ -615,6 +615,45 @@ func (s *PlatformOpsService) ApproveRestaurant(restaurantID string, req SetAppro
 	return &restaurant, nil
 }
 
+// ResendVerificationEmail sends a fresh verification link to the restaurant's
+// registered email (ops recovery when the original mail was missed or expired).
+func (s *PlatformOpsService) ResendVerificationEmail(restaurantID, actor, reason string) (string, error) {
+	restaurantID = strings.TrimSpace(restaurantID)
+	var restaurant models.Restaurant
+	if err := s.db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", errors.New("restaurant not found")
+		}
+		return "", err
+	}
+
+	email := strings.TrimSpace(restaurant.Email)
+	if email == "" {
+		return "", errors.New("restaurant has no registered email")
+	}
+
+	auth := NewAuthService(s.db, "", "")
+	if err := auth.ResendVerificationEmail(restaurant.ID, email); err != nil {
+		return "", err
+	}
+
+	auditReason := strings.TrimSpace(reason)
+	if auditReason == "" {
+		auditReason = "Ops resent email verification link"
+	}
+	oldSnapshot, _ := json.Marshal(map[string]interface{}{
+		"email":              email,
+		"was_email_verified": restaurant.IsEmailVerified,
+	})
+	s.writePlatformAudit(restaurantID, actor, "platform_resend_verification_email", auditReason, oldSnapshot, restaurant)
+
+	msg := fmt.Sprintf("Verification email sent to %s", email)
+	if restaurant.IsEmailVerified {
+		msg += " (restaurant was already marked verified; new link issued anyway)"
+	}
+	return msg, nil
+}
+
 func (s *PlatformOpsService) sendApprovalEmail(restaurant *models.Restaurant) {
 	if restaurant.Email == "" {
 		return
