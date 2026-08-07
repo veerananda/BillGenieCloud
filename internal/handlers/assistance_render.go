@@ -21,61 +21,49 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <meta name="theme-color" content="#9ca3af"/>
+  <meta name="theme-color" content="#1bae76"/>
   <title>%s · Table %s</title>
   <style>
     :root{
       --ink:#0f172a;
       --ink-soft:#334155;
       --muted:#64748b;
-      --line:rgba(15,23,42,.08);
+      --line:#e2e8f0;
       --surface:#ffffff;
-      --bg:#e8eaed;
+      --bg:#f8fafc;
       --brand:#1bae76;
       --brand-dark:#0f8a5c;
-      --brand-wash:rgba(232,248,241,.72);
+      --brand-wash:#e8f8f1;
       --call:#d97706;
       --call-hover:#b45309;
       --call-disabled:#fbbf24;
       --danger:#dc2626;
-      --food-tile:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'><g fill='none' stroke='%%236b7280' stroke-width='2.4' opacity='.34' stroke-linecap='round' stroke-linejoin='round'><path d='M28 42c2-12 14-18 32-18s30 6 32 18'/><path d='M28 48h64'/><path d='M30 54h60'/><path d='M28 60h64'/><path d='M28 66c2 12 14 18 32 18s30-6 32-18'/><path d='M138 28c14 2 26 16 22 32-6 22-30 42-34 46l-10-10c8-8 26-24 30-38 2-8-2-20-8-30z'/><circle cx='128' cy='104' r='5'/><circle cx='140' cy='112' r='4'/><path d='M34 128h44c4 0 8 4 8 8v10H26v-10c0-4 4-8 8-8z'/><path d='M40 118v10M50 116v12M60 118v10M70 117v11'/><path d='M148 148h40c3 0 6 3 6 6v8H142v-8c0-3 3-6 6-6z'/><path d='M154 138v10M164 136v12M174 138v10M184 137v11'/></g></svg>");
     }
     *{box-sizing:border-box}
     html,body{margin:0;min-height:100%%}
     body{
       font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
       color:var(--ink);
-      background-color:var(--bg);
-      background-image:
-        var(--food-tile),
-        radial-gradient(900px 420px at 0%% -10%%, rgba(148,163,184,.22), transparent 55%%),
-        radial-gradient(700px 360px at 100%% 0%%, rgba(100,116,139,.16), transparent 50%%),
-        linear-gradient(180deg, #eef1f4 0%%, #e8eaed 45%%, #e2e5e9 100%%);
-      background-size:200px 200px, auto, auto, auto;
-      background-attachment:fixed;
+      background:var(--bg);
     }
     .page{
       min-height:100vh;max-width:560px;margin:0 auto;
       display:flex;flex-direction:column;
-      background:transparent;
+      background:var(--surface);
     }
     .header{
       padding:20px 16px 12px;
-      background:transparent;
-      border-bottom:0;
+      background:var(--surface);
+      border-bottom:1px solid var(--line);
       position:sticky;top:0;z-index:5;
     }
-    h1{
-      margin:0 0 4px;font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:var(--ink);
-      text-shadow:0 1px 0 rgba(255,255,255,.65);
-    }
-    .sub{margin:0;color:var(--ink-soft);font-size:.95rem;text-shadow:0 1px 0 rgba(255,255,255,.55)}
-    .sub strong{color:var(--ink);font-weight:700}
+    h1{margin:0 0 4px;font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:var(--ink)}
+    .sub{margin:0;color:var(--muted);font-size:.95rem}
+    .sub strong{color:var(--ink-soft);font-weight:700}
     .meta{
       display:flex;justify-content:space-between;gap:12px;align-items:center;
       margin-top:14px;padding:10px 12px;border-radius:10px;
       background:var(--brand-wash);color:var(--ink-soft);font-size:.9rem;font-weight:600;
-      backdrop-filter:blur(4px);
     }
     .meta:empty,.meta.hidden{display:none}
     #totalMeta{color:var(--brand-dark);font-weight:800}
@@ -85,44 +73,32 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       padding:14px 16px;border-radius:12px;border:0;font-size:1rem;font-weight:700;
       cursor:pointer;font-family:inherit;
     }
-    .btn-call{
-      background:var(--call);color:#fff;
-      box-shadow:0 8px 20px rgba(217,119,6,.28);
-    }
+    .btn-call{background:var(--call);color:#fff}
     .btn-call:hover:not(:disabled){background:var(--call-hover)}
-    .btn-call:disabled{background:var(--call-disabled);color:#78350f;box-shadow:none;cursor:default}
-    .note{margin:10px 16px 0;text-align:center;color:var(--ink-soft);font-size:.85rem;min-height:1.2em;text-shadow:0 1px 0 rgba(255,255,255,.5)}
-    .content{
-      padding:8px 16px 32px;flex:1;
-      margin:4px 0 0;
-      background:transparent;
-      border:0;
-      border-radius:0;
-      box-shadow:none;
-      backdrop-filter:none;
-    }
+    .btn-call:disabled{background:var(--call-disabled);color:#78350f;cursor:default}
+    .note{margin:10px 16px 0;text-align:center;color:var(--muted);font-size:.85rem;min-height:1.2em}
+    .content{padding:8px 16px 32px;flex:1}
     .items{margin-top:18px;display:none}
     .items.show{display:block}
     .items h2,.bill h2,.menu-head h2{
       margin:0 0 10px;font-size:1.05rem;font-weight:800;color:var(--ink);
-      text-shadow:0 1px 0 rgba(255,255,255,.65);
     }
-    .line{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid rgba(15,23,42,.1)}
+    .line{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
     .line:last-child{border-bottom:0}
     .line-name{font-weight:700}
     .line-sub{margin-top:3px;color:var(--muted);font-size:.85rem}
     .line-total{font-weight:800;white-space:nowrap;color:var(--ink)}
-    .totals{margin-top:14px;padding-top:12px;border-top:1px solid rgba(15,23,42,.1);display:none}
+    .totals{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:none}
     .totals.show{display:block}
     .tot-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;color:var(--ink-soft);font-size:.95rem}
     .tot-row.discount{color:var(--brand-dark);font-weight:700}
     .tot-row.total{
-      margin-top:8px;padding-top:10px;border-top:1px solid rgba(15,23,42,.1);
+      margin-top:8px;padding-top:10px;border-top:1px solid var(--line);
       font-size:1.1rem;font-weight:800;color:var(--ink);
     }
     .bill{margin-top:18px;display:none}
     .bill.show{display:block}
-    .bill .hint{color:var(--ink-soft);margin:0 0 4px;font-size:.9rem}
+    .bill .hint{color:var(--muted);margin:0 0 4px;font-size:.9rem}
     .bill a{
       display:flex;width:100%%;align-items:center;justify-content:center;
       padding:13px 14px;border-radius:12px;font-size:.95rem;font-weight:700;
@@ -133,7 +109,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .menu.show{display:block}
     .menu-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
     .menu-head h2{margin:0}
-    .menu-count{font-size:.8rem;color:var(--ink-soft);font-weight:600;text-shadow:0 1px 0 rgba(255,255,255,.55)}
+    .menu-count{font-size:.8rem;color:var(--muted);font-weight:600}
     .cat-scroll{
       display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;
       -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
@@ -141,25 +117,19 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
     .cat-scroll::-webkit-scrollbar{display:none}
     .cat-chip{
-      flex:0 0 auto;border:1px solid rgba(15,138,92,.28);background:transparent;color:var(--ink-soft);
+      flex:0 0 auto;border:1px solid var(--line);background:var(--bg);color:var(--ink-soft);
       border-radius:999px;padding:8px 14px;font-size:.86rem;font-weight:700;
       cursor:pointer;white-space:nowrap;font-family:inherit;
-      backdrop-filter:blur(2px);
     }
     .cat-chip.active{
       background:var(--brand);border-color:var(--brand);color:#fff;
-      backdrop-filter:none;
     }
-    .menu-items{display:flex;flex-direction:column;gap:10px}
+    .menu-items{display:flex;flex-direction:column}
     .menu-row{
       display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
-      padding:14px 14px;
-      border:1px solid rgba(15,23,42,.06);
-      border-radius:14px;
-      background:var(--surface);
-      box-shadow:0 4px 14px rgba(15,23,42,.06);
+      padding:14px 0;border-bottom:1px solid var(--line);
     }
-    .menu-row:last-child{border-bottom:1px solid rgba(15,23,42,.06)}
+    .menu-row:last-child{border-bottom:0}
     .menu-row-name{font-weight:700;font-size:.98rem;line-height:1.35}
     .menu-row-desc{margin-top:4px;color:var(--muted);font-size:.82rem;line-height:1.4}
     .menu-row-variants{margin-top:6px;color:var(--muted);font-size:.8rem;line-height:1.45}
@@ -169,7 +139,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
     .veg{background:var(--brand)}
     .nonveg{background:var(--danger)}
-    .menu-loading,.menu-empty{color:var(--ink-soft);font-size:.9rem;padding:16px 0;text-align:center;text-shadow:0 1px 0 rgba(255,255,255,.55)}
+    .menu-loading,.menu-empty{color:var(--muted);font-size:.9rem;padding:16px 0;text-align:center}
   </style>
 </head>
 <body>
