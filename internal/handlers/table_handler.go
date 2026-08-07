@@ -80,6 +80,9 @@ func (h *TableHandler) CreateTable(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create table"})
 		return
 	}
+	if err := services.EnsureTableAssistanceToken(h.db, &table); err != nil {
+		log.Printf("⚠️ CreateTable: could not mint assistance token: %v", err)
+	}
 
 	c.JSON(http.StatusCreated, table)
 }
@@ -137,6 +140,9 @@ func (h *TableHandler) CreateBulkTables(c *gin.Context) {
 		}
 
 		if err := h.db.Create(&table).Error; err == nil {
+			if err := services.EnsureTableAssistanceToken(h.db, &table); err != nil {
+				log.Printf("⚠️ CreateBulkTables: could not mint assistance token: %v", err)
+			}
 			tables = append(tables, table)
 		}
 	}
@@ -279,6 +285,8 @@ func (h *TableHandler) SetTableOccupied(c *gin.Context) {
 		log.Printf("⚠️  SetTableOccupied: WebSocket hub not available, skipping broadcast")
 	}
 
+	NotifyAssistanceUpdateByTableID(h.db, services.NewOrderService(h.db), table.ID)
+
 	log.Printf("✅ SetTableOccupied success: Table %s now occupied with order %s", tableID, req.OrderID)
 	c.JSON(http.StatusOK, table)
 }
@@ -326,7 +334,7 @@ func (h *TableHandler) SetTableVacant(c *gin.Context) {
 	c.JSON(http.StatusOK, table)
 }
 
-// GetAssistanceQR ensures the active order has a token and returns its customer assistance URL.
+// GetAssistanceQR returns the permanent customer QR for this table (menu + call waiter + bill).
 // GET /tables/:id/assistance-qr
 func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 	restaurantID := c.GetString("restaurant_id")
@@ -343,67 +351,26 @@ func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 		return
 	}
 
-	var order models.Order
-	inactive := []string{"completed", "cancelled"}
-
-	// Prefer the table's linked order when it is still active.
-	if table.CurrentOrderID != nil && strings.TrimSpace(*table.CurrentOrderID) != "" {
-		err := h.db.Where(
-			"id = ? AND restaurant_id = ? AND status NOT IN ?",
-			*table.CurrentOrderID,
-			restaurantID,
-			inactive,
-		).First(&order).Error
-		if err != nil {
-			order = models.Order{}
-		}
-	}
-
-	// Fallback: resolve the latest active dine-in order for this table (covers auto-occupy races).
-	if order.ID == "" {
-		if err := h.db.Where(
-			"restaurant_id = ? AND table_id = ? AND status NOT IN ?",
-			restaurantID,
-			table.ID,
-			inactive,
-		).Order("created_at DESC").First(&order).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No active order for this table"})
-			return
-		}
-	}
-
-	// Keep table occupancy linked to the resolved order so later QR/calls succeed.
-	needsRepair := !table.IsOccupied ||
-		table.CurrentOrderID == nil ||
-		*table.CurrentOrderID != order.ID
-	if needsRepair {
-		orderID := order.ID
-		if err := h.db.Model(&table).Updates(map[string]interface{}{
-			"is_occupied":      true,
-			"current_order_id": orderID,
-		}).Error; err != nil {
-			log.Printf("⚠️ GetAssistanceQR: could not repair table link: %v", err)
-		} else {
-			table.IsOccupied = true
-			table.CurrentOrderID = &orderID
-			if globalHub != nil {
-				BroadcastTableUpdate(globalHub, restaurantID, &table)
-			}
-		}
-	}
-
-	if err := services.EnsureOrderAssistanceToken(h.db, &order); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create assistance QR"})
+	if err := services.EnsureTableAssistanceToken(h.db, &table); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create table QR"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	token := ""
+	if table.AssistanceToken != nil {
+		token = *table.AssistanceToken
+	}
+
+	resp := gin.H{
 		"table_id":         table.ID,
 		"table_name":       table.Name,
-		"order_id":         order.ID,
-		"assistance_token": order.TrackingToken,
-		"assistance_url":   services.BuildAssistanceURL(order.TrackingToken),
-	})
+		"assistance_token": token,
+		"assistance_url":   services.BuildAssistanceURL(token),
+	}
+	if table.CurrentOrderID != nil && strings.TrimSpace(*table.CurrentOrderID) != "" {
+		resp["order_id"] = *table.CurrentOrderID
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // ClearAssistance clears the call-waiter attention flag for a table.

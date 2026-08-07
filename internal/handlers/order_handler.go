@@ -123,6 +123,10 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		h.printService.EnqueueKOTForOrder(order, false)
 	}
 
+	if order.TableID != nil && strings.TrimSpace(*order.TableID) != "" {
+		NotifyAssistanceUpdateByTableID(h.orderService.GetDB(), h.orderService, *order.TableID)
+	}
+
 	tableIDValue := ""
 	if order.TableID != nil {
 		tableIDValue = *order.TableID

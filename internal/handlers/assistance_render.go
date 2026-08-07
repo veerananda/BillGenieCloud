@@ -37,7 +37,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .note{margin-top:12px;text-align:center;color:#94a3b8;font-size:.85rem;min-height:1.2em}
     .items{margin-top:20px;display:none}
     .items.show{display:block}
-    .items h2,.bill h2{margin:0 0 10px;font-size:1.05rem}
+    .items h2,.bill h2,.menu h2{margin:0 0 10px;font-size:1.05rem}
     .line{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #e2e8f0}
     .line:last-child{border-bottom:0}
     .line-name{font-weight:700}
@@ -52,12 +52,19 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     .bill.show{display:block}
     .bill a{display:flex;width:100%%;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;font-size:.95rem;font-weight:600;text-decoration:none;margin-top:8px}
     .bill .download{background:#0f172a;color:#fff}
+    .menu{margin-top:22px;display:none}
+    .menu.show{display:block}
+    .menu-cat{margin:18px 0 6px;font-size:.75rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#64748b}
+    .menu-cat:first-child{margin-top:0}
+    .veg{display:inline-block;width:8px;height:8px;border-radius:2px;background:#16a34a;margin-right:6px;vertical-align:middle}
+    .nonveg{display:inline-block;width:8px;height:8px;border-radius:2px;background:#dc2626;margin-right:6px;vertical-align:middle}
+    .menu-loading,.menu-empty{color:#94a3b8;font-size:.9rem;padding:8px 0}
   </style>
 </head>
 <body>
   <div class="page">
     <div class="card">
-      <div class="brand">Customer assistance</div>
+      <div class="brand">Table session</div>
       <h1 id="restaurant">%s</h1>
       <p class="sub">Table <strong id="tableName">%s</strong></p>
       <div class="meta">
@@ -72,15 +79,21 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       </div>
       <div class="totals" id="totalsPanel"></div>
       <div class="bill" id="billPanel">
-        <h2>Download bill</h2>
-        <p class="sub" style="margin-bottom:0">Your bill is ready to download.</p>
+        <h2>Your bill</h2>
+        <p class="sub" style="margin-bottom:0">Review your bill and download a copy. Link stays valid for about an hour.</p>
         <a class="download" id="billDownload" href="#">Download bill</a>
+      </div>
+      <div class="menu" id="menuPanel">
+        <h2>Menu</h2>
+        <div id="menuList" class="menu-loading">Loading menu…</div>
       </div>
     </div>
   </div>
   <script>
     const token = %q;
     let state = %s;
+    let menuLoaded = false;
+    let menuItems = [];
     const callBtn = document.getElementById('callBtn');
     const note = document.getElementById('note');
     const itemsPanel = document.getElementById('itemsPanel');
@@ -88,6 +101,8 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     const totalsPanel = document.getElementById('totalsPanel');
     const billPanel = document.getElementById('billPanel');
     const billDownload = document.getElementById('billDownload');
+    const menuPanel = document.getElementById('menuPanel');
+    const menuList = document.getElementById('menuList');
 
     function money(n){ return '₹' + Number(n||0).toFixed(2); }
 
@@ -127,33 +142,93 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       totalsPanel.classList.add('show');
     }
 
+    function renderMenu(){
+      menuList.innerHTML = '';
+      if (!menuItems.length) {
+        menuList.className = 'menu-empty';
+        menuList.textContent = 'Menu will appear here when available.';
+        return;
+      }
+      menuList.className = '';
+      let lastCat = null;
+      menuItems.forEach(item => {
+        const cat = item.category || 'Other';
+        if (cat !== lastCat) {
+          lastCat = cat;
+          const h = document.createElement('div');
+          h.className = 'menu-cat';
+          h.textContent = cat;
+          menuList.appendChild(h);
+        }
+        const row = document.createElement('div');
+        row.className = 'line';
+        const left = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'line-name';
+        const dot = document.createElement('span');
+        dot.className = item.is_veg ? 'veg' : 'nonveg';
+        name.appendChild(dot);
+        name.appendChild(document.createTextNode(item.name || 'Item'));
+        left.appendChild(name);
+        if (item.description) {
+          const sub = document.createElement('div');
+          sub.className = 'line-sub';
+          sub.textContent = item.description;
+          left.appendChild(sub);
+        }
+        const variants = Array.isArray(item.variants) ? item.variants : [];
+        if (variants.length) {
+          const sub = document.createElement('div');
+          sub.className = 'line-sub';
+          sub.textContent = variants.map(v => (v.label || '') + ' ' + money(v.price)).join(' · ');
+          left.appendChild(sub);
+        }
+        const right = document.createElement('div');
+        right.className = 'line-total';
+        right.textContent = variants.length ? '' : money(item.price);
+        row.appendChild(left);
+        row.appendChild(right);
+        menuList.appendChild(row);
+      });
+    }
+
+    async function ensureMenu(){
+      if (menuLoaded) {
+        renderMenu();
+        return;
+      }
+      try {
+        const res = await fetch('/a/' + token + '/menu');
+        if (!res.ok) throw new Error('menu');
+        const data = await res.json();
+        menuItems = Array.isArray(data.items) ? data.items : [];
+        menuLoaded = true;
+        renderMenu();
+      } catch (e) {
+        menuList.className = 'menu-empty';
+        menuList.textContent = 'Could not load menu.';
+      }
+    }
+
     function render(s){
       state = s || state;
       document.getElementById('restaurant').textContent = state.restaurant_name || 'Restaurant';
       document.getElementById('tableName').textContent = state.table_name || '';
       const meta = document.getElementById('orderMeta');
       const total = document.getElementById('totalMeta');
-      if (state.bill_available) {
+      const phase = state.phase || (state.bill_available ? 'checkout' : (state.has_active_order ? 'seated' : 'idle'));
+      if (phase === 'checkout' || state.bill_available) {
         meta.textContent = 'Bill ready — please review';
         total.textContent = money(state.order_total);
-      } else if (state.has_active_order) {
-        meta.textContent = 'Table session active';
-        total.textContent = '';
-      } else if (state.order_status === 'completed') {
-        meta.textContent = 'Order completed';
-        total.textContent = money(state.order_total);
-      } else if (state.order_status === 'cancelled') {
-        meta.textContent = 'Order cancelled';
+      } else if (phase === 'seated' || state.has_active_order) {
+        meta.textContent = 'Tell your order to the staff';
         total.textContent = '';
       } else {
-        meta.textContent = 'No active order yet';
+        meta.textContent = 'Welcome — browse the menu';
         total.textContent = '';
       }
-      if (!state.has_active_order) {
-        callBtn.disabled = true;
-        callBtn.textContent = 'Session closed';
-        note.textContent = 'This table session is no longer active.';
-      } else if (state.assistance_requested) {
+
+      if (state.assistance_requested) {
         callBtn.disabled = true;
         callBtn.textContent = 'Waiter notified';
         note.textContent = 'Staff has been notified. Someone will be with you shortly.';
@@ -162,9 +237,13 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         callBtn.textContent = 'Call waiter';
         note.textContent = '';
       }
+
+      const showBill = !!(state.bill_available && state.bill_url);
+      const showMenu = state.menu_visible !== false && !showBill;
+
       const items = Array.isArray(state.items) ? state.items : [];
       itemsList.innerHTML = '';
-      if (items.length) {
+      if (showBill && items.length) {
         itemsPanel.classList.add('show');
         items.forEach(item => {
           const row = document.createElement('div');
@@ -193,11 +272,17 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         itemsPanel.classList.remove('show');
       }
       renderTotals(state);
-      if (state.bill_available && state.bill_url) {
+      if (showBill) {
         billPanel.classList.add('show');
         billDownload.href = state.bill_download_url || (state.bill_url + '/download');
       } else {
         billPanel.classList.remove('show');
+      }
+      if (showMenu) {
+        menuPanel.classList.add('show');
+        ensureMenu();
+      } else {
+        menuPanel.classList.remove('show');
       }
     }
 
@@ -225,7 +310,6 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 
     render(state);
 
-    // Poll so discount/GST updates appear even if SSE is delayed.
     const pollId = setInterval(() => { refresh(); }, 2500);
 
     if (window.EventSource) {
@@ -233,9 +317,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       es.onmessage = (ev) => {
         try { render(JSON.parse(ev.data)); } catch (e) {}
       };
-      es.onerror = () => {
-        // Browser reconnects automatically; keep last known UI state.
-      };
+      es.onerror = () => {};
       window.addEventListener('beforeunload', () => { clearInterval(pollId); es.close(); });
     }
   </script>
