@@ -21,103 +21,197 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="theme-color" content="#0f8a5c"/>
   <title>%s · Table %s</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,500;9..40,600;9..40,700;9..40,800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"/>
   <style>
+    :root{
+      --ink:#14352a;
+      --ink-soft:#3d5c50;
+      --muted:#6b857a;
+      --line:#d7ebe2;
+      --surface:#ffffff;
+      --surface-soft:#f3faf7;
+      --brand:#1bae76;
+      --brand-dark:#0f8a5c;
+      --brand-deep:#0a6b48;
+      --brand-wash:#dff7ec;
+      --brand-mist:#eefaf4;
+      --amber:#c47a1a;
+      --amber-soft:#fff6e8;
+      --danger:#c43c3c;
+      --shadow:0 18px 40px rgba(15,90,60,.10);
+    }
     *{box-sizing:border-box}
-    body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#f8fafc;color:#0f172a;padding:24px 16px 40px}
+    body{
+      font-family:"DM Sans",system-ui,-apple-system,sans-serif;
+      margin:0;color:var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10%% -10%%, rgba(27,174,118,.22), transparent 55%%),
+        radial-gradient(900px 420px at 100%% 0%%, rgba(196,122,26,.12), transparent 50%%),
+        linear-gradient(165deg, #eaf8f1 0%%, #f7fbf9 42%%, #fff8f0 100%%);
+      min-height:100vh;padding:20px 14px 48px;
+    }
     .page{max-width:420px;margin:0 auto}
-    .card{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:24px 20px;box-shadow:0 10px 30px rgba(15,23,42,.08)}
-    .brand{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#64748b;font-weight:700}
-    h1{margin:8px 0 4px;font-size:1.5rem}
-    .sub{color:#64748b;margin:0 0 20px;font-size:.95rem}
-    .meta{display:flex;justify-content:space-between;gap:12px;padding:12px 14px;border-radius:12px;background:#f8fafc;margin-bottom:16px;font-size:.92rem;color:#475569}
-    .btn{display:flex;width:100%%;align-items:center;justify-content:center;padding:14px 16px;border-radius:12px;border:0;font-size:1rem;font-weight:700;cursor:pointer}
-    .btn-call{background:#2563eb;color:#fff}
-    .btn-call:disabled{opacity:.55;cursor:default}
-    .note{margin-top:12px;text-align:center;color:#94a3b8;font-size:.85rem;min-height:1.2em}
+    .card{
+      background:var(--surface);border:1px solid rgba(15,138,92,.12);
+      border-radius:24px;overflow:hidden;box-shadow:var(--shadow);
+    }
+    .hero{
+      background:linear-gradient(145deg, var(--brand-deep) 0%%, var(--brand-dark) 52%%, #1bae76 100%%);
+      color:#fff;padding:22px 20px 20px;position:relative;
+    }
+    .hero::after{
+      content:"";position:absolute;inset:auto -20%% -40%% auto;width:180px;height:180px;
+      background:radial-gradient(circle, rgba(255,255,255,.18), transparent 70%%);pointer-events:none;
+    }
+    .brand{
+      font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+      color:rgba(255,255,255,.78);font-weight:700;
+    }
+    h1{
+      font-family:"Fraunces",Georgia,serif;margin:10px 0 6px;
+      font-size:1.7rem;font-weight:700;letter-spacing:-.02em;line-height:1.15;
+    }
+    .sub{color:rgba(255,255,255,.88);margin:0;font-size:.95rem}
+    .sub strong{color:#fff;font-weight:800}
+    .body{padding:18px 18px 22px}
+    .meta{
+      display:flex;justify-content:space-between;gap:12px;align-items:center;
+      padding:12px 14px;border-radius:14px;margin-bottom:14px;
+      background:linear-gradient(135deg, var(--brand-mist), var(--amber-soft));
+      border:1px solid rgba(27,174,118,.14);font-size:.9rem;color:var(--ink-soft);font-weight:600;
+    }
+    #totalMeta{color:var(--brand-dark);font-weight:800}
+    .btn{
+      display:flex;width:100%%;align-items:center;justify-content:center;
+      padding:15px 16px;border-radius:14px;border:0;font-size:1rem;font-weight:800;cursor:pointer;
+      font-family:inherit;letter-spacing:.01em;
+    }
+    .btn-call{
+      background:linear-gradient(135deg, #e8a23a 0%%, #c47a1a 100%%);color:#fff;
+      box-shadow:0 10px 22px rgba(196,122,26,.28);
+    }
+    .btn-call:disabled{
+      background:linear-gradient(135deg, #9ed9bf, #6fbf9a);color:#fff;
+      box-shadow:none;cursor:default;opacity:.9;
+    }
+    .note{margin-top:12px;text-align:center;color:var(--muted);font-size:.85rem;min-height:1.2em}
     .items{margin-top:20px;display:none}
     .items.show{display:block}
-    .items h2,.bill h2,.menu h2{margin:0 0 10px;font-size:1.05rem}
-    .line{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #e2e8f0}
+    .items h2,.bill h2,.menu-head h2{
+      margin:0 0 10px;font-size:1.05rem;font-family:"Fraunces",Georgia,serif;color:var(--brand-deep);
+    }
+    .line{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
     .line:last-child{border-bottom:0}
     .line-name{font-weight:700}
-    .line-sub{margin-top:3px;color:#64748b;font-size:.85rem}
-    .line-total{font-weight:800;white-space:nowrap}
-    .totals{margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;display:none}
+    .line-sub{margin-top:3px;color:var(--muted);font-size:.85rem}
+    .line-total{font-weight:800;white-space:nowrap;color:var(--brand-dark)}
+    .totals{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:none}
     .totals.show{display:block}
-    .tot-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;color:#475569;font-size:.95rem}
-    .tot-row.discount{color:#16a34a}
-    .tot-row.total{margin-top:8px;padding-top:10px;border-top:1px solid #e2e8f0;font-size:1.1rem;font-weight:800;color:#0f172a}
+    .tot-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;color:var(--ink-soft);font-size:.95rem}
+    .tot-row.discount{color:var(--brand-dark);font-weight:700}
+    .tot-row.total{
+      margin-top:8px;padding-top:10px;border-top:1px solid var(--line);
+      font-size:1.12rem;font-weight:800;color:var(--brand-deep);
+    }
     .bill{margin-top:20px;display:none}
     .bill.show{display:block}
-    .bill a{display:flex;width:100%%;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;font-size:.95rem;font-weight:600;text-decoration:none;margin-top:8px}
-    .bill .download{background:#0f172a;color:#fff}
+    .bill .hint{color:var(--muted);margin:0 0 4px;font-size:.9rem}
+    .bill a{
+      display:flex;width:100%%;align-items:center;justify-content:center;
+      padding:13px 14px;border-radius:14px;font-size:.95rem;font-weight:700;
+      text-decoration:none;margin-top:10px;
+    }
+    .bill .download{
+      background:linear-gradient(135deg, var(--brand-dark), var(--brand-deep));color:#fff;
+      box-shadow:0 10px 20px rgba(15,138,92,.25);
+    }
     .menu{margin-top:22px;display:none}
     .menu.show{display:block}
     .menu-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
-    .menu-head h2{margin:0;font-size:1.05rem}
-    .menu-count{font-size:.8rem;color:#94a3b8;font-weight:600}
+    .menu-head h2{margin:0}
+    .menu-count{
+      font-size:.78rem;color:var(--brand-dark);font-weight:700;
+      background:var(--brand-wash);border:1px solid rgba(27,174,118,.2);
+      border-radius:999px;padding:4px 10px;
+    }
     .cat-scroll{
       display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;
-      padding:2px 2px 12px;margin:0 -4px 4px;scrollbar-width:none
+      padding:2px 2px 14px;margin:0 -2px 2px;scrollbar-width:none;
     }
     .cat-scroll::-webkit-scrollbar{display:none}
     .cat-chip{
-      flex:0 0 auto;border:1px solid #e2e8f0;background:#f8fafc;color:#334155;
-      border-radius:999px;padding:8px 14px;font-size:.86rem;font-weight:700;
-      cursor:pointer;white-space:nowrap;transition:background .15s,color .15s,border-color .15s,box-shadow .15s
+      flex:0 0 auto;border:1px solid rgba(15,138,92,.18);background:var(--brand-mist);color:var(--brand-deep);
+      border-radius:999px;padding:9px 15px;font-size:.86rem;font-weight:700;
+      cursor:pointer;white-space:nowrap;font-family:inherit;
+      transition:background .15s,color .15s,border-color .15s,box-shadow .15s,transform .15s;
     }
     .cat-chip.active{
-      background:#0f172a;border-color:#0f172a;color:#fff;
-      box-shadow:0 6px 16px rgba(15,23,42,.18)
+      background:linear-gradient(135deg, var(--brand), var(--brand-dark));
+      border-color:transparent;color:#fff;
+      box-shadow:0 8px 18px rgba(27,174,118,.28);
+      transform:translateY(-1px);
     }
     .menu-items{display:flex;flex-direction:column;gap:10px;min-height:80px}
     .menu-card{
       display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
-      padding:14px 14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc
+      padding:14px;border:1px solid rgba(15,138,92,.12);border-radius:16px;
+      background:linear-gradient(180deg, #ffffff 0%%, var(--brand-mist) 160%%);
     }
-    .menu-card-name{font-weight:700;font-size:.98rem;line-height:1.35}
-    .menu-card-desc{margin-top:4px;color:#64748b;font-size:.82rem;line-height:1.4}
+    .menu-card-name{font-weight:700;font-size:.98rem;line-height:1.35;color:var(--ink)}
+    .menu-card-desc{margin-top:4px;color:var(--muted);font-size:.82rem;line-height:1.4}
     .menu-card-variants{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
     .variant-pill{
-      display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:999px;
-      background:#fff;border:1px solid #e2e8f0;font-size:.75rem;font-weight:600;color:#475569
+      display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:999px;
+      background:var(--amber-soft);border:1px solid rgba(196,122,26,.22);
+      font-size:.74rem;font-weight:700;color:var(--amber);
     }
-    .menu-card-price{font-weight:800;white-space:nowrap;font-size:1rem;color:#0f172a;padding-top:1px}
-    .veg{display:inline-block;width:8px;height:8px;border-radius:2px;background:#16a34a;margin-right:6px;vertical-align:middle}
-    .nonveg{display:inline-block;width:8px;height:8px;border-radius:2px;background:#dc2626;margin-right:6px;vertical-align:middle}
-    .menu-loading,.menu-empty{color:#94a3b8;font-size:.9rem;padding:12px 0;text-align:center}
+    .menu-card-price{font-weight:800;white-space:nowrap;font-size:1.02rem;color:var(--brand-dark);padding-top:1px}
+    .veg,.nonveg{
+      display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:middle;
+      box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);
+    }
+    .veg{background:#22a45a}
+    .nonveg{background:var(--danger)}
+    .menu-loading,.menu-empty{color:var(--muted);font-size:.9rem;padding:16px 0;text-align:center}
   </style>
 </head>
 <body>
   <div class="page">
     <div class="card">
-      <div class="brand">Table session</div>
-      <h1 id="restaurant">%s</h1>
-      <p class="sub">Table <strong id="tableName">%s</strong></p>
-      <div class="meta">
-        <span id="orderMeta">Loading…</span>
-        <span id="totalMeta"></span>
+      <div class="hero">
+        <div class="brand">BillGenie · Table session</div>
+        <h1 id="restaurant">%s</h1>
+        <p class="sub">Table <strong id="tableName">%s</strong></p>
       </div>
-      <button class="btn btn-call" id="callBtn" type="button">Call waiter</button>
-      <p class="note" id="note"></p>
-      <div class="items" id="itemsPanel">
-        <h2>Bill items</h2>
-        <div id="itemsList"></div>
-      </div>
-      <div class="totals" id="totalsPanel"></div>
-      <div class="bill" id="billPanel">
-        <h2>Your bill</h2>
-        <p class="sub" style="margin-bottom:0">Review your bill and download a copy. Link stays valid for about an hour.</p>
-        <a class="download" id="billDownload" href="#">Download bill</a>
-      </div>
-      <div class="menu" id="menuPanel">
-        <div class="menu-head">
-          <h2>Menu</h2>
-          <span class="menu-count" id="menuCount"></span>
+      <div class="body">
+        <div class="meta">
+          <span id="orderMeta">Loading…</span>
+          <span id="totalMeta"></span>
         </div>
-        <div class="cat-scroll" id="menuCats" hidden></div>
-        <div id="menuList" class="menu-items menu-loading">Loading menu…</div>
+        <button class="btn btn-call" id="callBtn" type="button">Call waiter</button>
+        <p class="note" id="note"></p>
+        <div class="items" id="itemsPanel">
+          <h2>Bill items</h2>
+          <div id="itemsList"></div>
+        </div>
+        <div class="totals" id="totalsPanel"></div>
+        <div class="bill" id="billPanel">
+          <h2>Your bill</h2>
+          <p class="hint">Review your bill and download a copy. Link stays valid for about an hour.</p>
+          <a class="download" id="billDownload" href="#">Download bill</a>
+        </div>
+        <div class="menu" id="menuPanel">
+          <div class="menu-head">
+            <h2>Menu</h2>
+            <span class="menu-count" id="menuCount"></span>
+          </div>
+          <div class="cat-scroll" id="menuCats" hidden></div>
+          <div id="menuList" class="menu-items menu-loading">Loading menu…</div>
+        </div>
       </div>
     </div>
   </div>
