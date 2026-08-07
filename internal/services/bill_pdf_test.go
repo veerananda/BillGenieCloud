@@ -33,9 +33,22 @@ func TestBuildBillPDF_LooksLikeReceipt(t *testing.T) {
 		t.Fatalf("missing PDF trailer")
 	}
 	body := string(pdf)
-	for _, want := range []string{"Test Kitchen", "Masala Dosa", "Total", "Rs."} {
+	for _, want := range []string{"Test Kitchen", "Masala Dosa", "Total", "Rs.", "Powered by BillGenie", "BILL SUMMARY"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("PDF missing %q", want)
 		}
+	}
+}
+
+func TestHelveticaStringWidth_CentersTitles(t *testing.T) {
+	// Bold uppercase should be wider than the old len*0.48 heuristic.
+	w := helveticaStringWidth("BILL SUMMARY", 8, true)
+	old := float64(len("BILL SUMMARY")) * 8 * 0.48
+	if w <= old {
+		t.Fatalf("expected AFM width %.1f > crude %.1f", w, old)
+	}
+	nameW := helveticaStringWidth("Test Kitchen", 14, true)
+	if nameW <= 0 {
+		t.Fatal("restaurant name width should be positive")
 	}
 }
