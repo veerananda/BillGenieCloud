@@ -127,6 +127,7 @@ func (s *OrderService) AssignCounterTrackingToken(orderID, restaurantID string) 
 func (s *OrderService) GetOrderByTrackingToken(token string) (*models.Order, *models.Restaurant, error) {
 	var order models.Order
 	err := s.db.Preload("Items.MenuItem").
+		Preload("AttendedBy").
 		Where("tracking_token = ?", token).
 		First(&order).Error
 	if err != nil {

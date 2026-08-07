@@ -15,6 +15,9 @@ func TestBuildBillPDF_LooksLikeReceipt(t *testing.T) {
 		TableNumber:    "5",
 		OrderNumber:    42,
 		TicketNumber:   42,
+		CustomerName:   "Ravi",
+		CustomerPhone:  "9998887777",
+		AttendedByName: "Priya",
 		Items: []BillItemView{
 			{Name: "Masala Dosa", Quantity: 2, UnitRate: 80, Total: 160},
 			{Name: "Filter Coffee", Quantity: 1, UnitRate: 40, Total: 40},
@@ -33,9 +36,28 @@ func TestBuildBillPDF_LooksLikeReceipt(t *testing.T) {
 		t.Fatalf("missing PDF trailer")
 	}
 	body := string(pdf)
-	for _, want := range []string{"Test Kitchen", "Masala Dosa", "Total", "Rs."} {
+	for _, want := range []string{
+		"Test Kitchen", "Masala Dosa", "Total", "Rs.", "Powered by BillGenie",
+		"BILL SUMMARY", "Table 5", "Customer: Ravi", "Phone: 9998887777", "Attended by: Priya",
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("PDF missing %q", want)
 		}
+	}
+	if strings.Contains(body, "Ticket #") || strings.Contains(body, "Order #") {
+		t.Fatalf("PDF should not include ticket/order number")
+	}
+}
+
+func TestHelveticaStringWidth_CentersTitles(t *testing.T) {
+	// Bold uppercase should be wider than the old len*0.48 heuristic.
+	w := helveticaStringWidth("BILL SUMMARY", 8, true)
+	old := float64(len("BILL SUMMARY")) * 8 * 0.48
+	if w <= old {
+		t.Fatalf("expected AFM width %.1f > crude %.1f", w, old)
+	}
+	nameW := helveticaStringWidth("Test Kitchen", 14, true)
+	if nameW <= 0 {
+		t.Fatal("restaurant name width should be positive")
 	}
 }

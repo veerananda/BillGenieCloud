@@ -33,12 +33,11 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 		body.WriteString(fmt.Sprintf("BT /%s %.1f Tf %.1f %.1f Td (%s) Tj ET\n",
 			font, size, x, baseline, pdfEscape(text)))
 	}
-	approxWidth := func(text string, size float64) float64 {
-		// Helvetica average glyph width ~0.5em for mixed case.
-		return float64(len(text)) * size * 0.48
+	textWidth := func(text string, size float64, bold bool) float64 {
+		return helveticaStringWidth(text, size, bold)
 	}
 	centerText := func(text string, size float64, bold bool) {
-		w := approxWidth(text, size)
+		w := textWidth(text, size, bold)
 		x := left + (contentW-w)/2
 		if x < left {
 			x = left
@@ -46,8 +45,12 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 		writeText(text, size, x, y, bold)
 		y -= size + 5
 	}
+	rightText := func(text string, size, rightEdge float64, bold bool) {
+		w := textWidth(text, size, bold)
+		writeText(text, size, rightEdge-w, y, bold)
+	}
 	hline := func() {
-		body.WriteString("0.75 w 0.85 0.88 0.91 RG\n")
+		body.WriteString("0.6 w 0.82 0.86 0.90 RG\n")
 		body.WriteString(fmt.Sprintf("%.1f %.1f m %.1f %.1f l S\n", left, y, right, y))
 		body.WriteString("0 g\n")
 		y -= 10
@@ -55,7 +58,7 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 	space := func(dy float64) { y -= dy }
 
 	centerText("BILL SUMMARY", 8, true)
-	space(2)
+	space(4)
 	centerText(title, 14, true)
 
 	if a := strings.TrimSpace(summary.Address); a != "" {
@@ -75,8 +78,7 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 	if !summary.CreatedAt.IsZero() {
 		centerText(summary.CreatedAt.In(time.Local).Format("02 Jan 2006, 03:04 PM"), 9, false)
 	}
-	if n := strings.TrimSpace(summary.CustomerName); n != "" &&
-		n != "Guest" && n != "Takeaway" && n != "Counter" && n != "Self Service" {
+	if n := displayCustomerName(summary.CustomerName); n != "" {
 		centerText("Customer: "+n, 9, false)
 	}
 	if p := strings.TrimSpace(summary.CustomerPhone); p != "" {
@@ -86,43 +88,43 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 		centerText("Attended by: "+a, 9, false)
 	}
 
-	space(8)
+	space(10)
 	hline()
 
-	colQty := left + contentW*0.52
-	colRate := left + contentW*0.68
-	colPrice := left + contentW*0.84
+	// Column right-edges: give RATE and PRICE a clear gap between values.
+	const colQtyRight = left + 168
+	const colRateRight = left + 228
+	const colPriceRight = right
 
 	writeText("ITEM", 7, left, y, true)
-	writeText("QTY", 7, colQty, y, true)
-	writeText("RATE", 7, colRate, y, true)
-	writeText("PRICE", 7, colPrice, y, true)
+	rightText("QTY", 7, colQtyRight, true)
+	rightText("RATE", 7, colRateRight, true)
+	rightText("PRICE", 7, colPriceRight, true)
 	y -= 12
 	hline()
 
 	for _, item := range summary.Items {
-		if y < 90 {
+		if y < 100 {
 			break
 		}
 		rate := item.UnitRate
 		if rate <= 0 && item.Quantity > 0 {
 			rate = item.Total / float64(item.Quantity)
 		}
-		name := truncatePDF(item.Name, 28)
+		name := truncatePDF(item.Name, 26)
 		writeText(name, 9, left, y, false)
-		writeText(fmt.Sprintf("%d", item.Quantity), 9, colQty, y, false)
-		writeText(formatPDFMoney(rate), 9, colRate, y, false)
-		writeText(formatPDFMoney(item.Total), 9, colPrice, y, false)
+		rightText(fmt.Sprintf("%d", item.Quantity), 9, colQtyRight, false)
+		rightText(formatPDFMoney(rate), 9, colRateRight, false)
+		rightText(formatPDFMoney(item.Total), 9, colPriceRight, false)
 		y -= 14
 	}
 
-	space(4)
+	space(6)
 	hline()
 
 	totalsRow := func(label, value string, bold bool, size float64) {
 		writeText(label, size, left, y, bold)
-		vw := approxWidth(value, size)
-		writeText(value, size, right-vw, y, bold)
+		rightText(value, size, right, bold)
 		y -= size + 6
 	}
 
@@ -139,17 +141,23 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 	if summary.DiscountAmount > 0 {
 		totalsRow("Discount", "-"+formatPDFMoney(summary.DiscountAmount), false, 9)
 	}
-	space(2)
-	body.WriteString("0.75 w 0.89 0.91 0.94 RG\n")
-	body.WriteString(fmt.Sprintf("%.1f %.1f m %.1f %.1f l S\n", left, y+4, right, y+4))
+
+	// Divider above Total — leave clear gap so the line does not cross the text.
+	space(6)
+	body.WriteString("0.7 w 0.78 0.82 0.86 RG\n")
+	body.WriteString(fmt.Sprintf("%.1f %.1f m %.1f %.1f l S\n", left, y, right, y))
 	body.WriteString("0 g\n")
+	space(12)
 	totalsRow("Total", formatPDFMoney(summary.Total), true, 12)
 	if summary.IsPaid && strings.TrimSpace(summary.PaymentMethod) != "" {
+		space(2)
 		totalsRow("Payment", strings.ToUpper(summary.PaymentMethod), false, 9)
 	}
 
-	space(14)
+	space(16)
 	centerText("Thank you for dining with us.", 9, false)
+	space(8)
+	centerText("Powered by BillGenie", 8, false)
 
 	content := body.String()
 	contentLen := len(content)
@@ -189,21 +197,24 @@ func BuildBillPDF(summary BillSummaryView) ([]byte, error) {
 }
 
 func billPDFMetaLine(summary BillSummaryView) string {
-	parts := []string{}
-	if summary.TicketNumber > 0 {
-		parts = append(parts, fmt.Sprintf("Ticket #%d", summary.TicketNumber))
-	} else {
-		parts = append(parts, fmt.Sprintf("Order #%d", summary.OrderNumber))
+	table := strings.TrimSpace(summary.TableNumber)
+	if table == "" {
+		return ""
 	}
-	if summary.ServiceMode == "takeaway" {
-		parts = append(parts, "Takeaway")
-	} else if summary.ServiceMode == "eat_here" {
-		parts = append(parts, "Eat here")
+	if table == "Counter" || table == "Takeaway" {
+		return table
 	}
-	if summary.TableNumber != "" && summary.TableNumber != "Counter" && summary.TableNumber != "Takeaway" {
-		parts = append(parts, fmt.Sprintf("Table %s", summary.TableNumber))
+	return "Table " + table
+}
+
+func displayCustomerName(name string) string {
+	n := strings.TrimSpace(name)
+	switch n {
+	case "", "Guest", "Takeaway", "Counter", "Self Service":
+		return ""
+	default:
+		return n
 	}
-	return strings.Join(parts, " | ")
 }
 
 func formatPDFMoney(amount float64) string {
@@ -234,4 +245,57 @@ func truncatePDF(s string, max int) string {
 		return s
 	}
 	return string(runes[:max-3]) + "..."
+}
+
+// helveticaStringWidth returns approximate rendered width using Adobe AFM glyph widths.
+func helveticaStringWidth(s string, size float64, bold bool) float64 {
+	widths := helveticaWidths
+	if bold {
+		widths = helveticaBoldWidths
+	}
+	var total float64
+	for _, r := range s {
+		if r > 255 {
+			total += 600
+			continue
+		}
+		w := widths[byte(r)]
+		if w == 0 {
+			w = 600
+		}
+		total += float64(w)
+	}
+	return total * size / 1000
+}
+
+// Standard Helvetica AFM widths (1/1000 em) for ASCII.
+var helveticaWidths = [256]uint16{
+	32: 278, 33: 278, 34: 355, 35: 556, 36: 556, 37: 889, 38: 667, 39: 191,
+	40: 333, 41: 333, 42: 389, 43: 584, 44: 278, 45: 333, 46: 278, 47: 278,
+	48: 556, 49: 556, 50: 556, 51: 556, 52: 556, 53: 556, 54: 556, 55: 556,
+	56: 556, 57: 556, 58: 278, 59: 278, 60: 584, 61: 584, 62: 584, 63: 556,
+	64: 1015, 65: 667, 66: 667, 67: 722, 68: 722, 69: 667, 70: 611, 71: 778,
+	72: 722, 73: 278, 74: 500, 75: 667, 76: 556, 77: 833, 78: 722, 79: 778,
+	80: 667, 81: 778, 82: 722, 83: 667, 84: 611, 85: 722, 86: 667, 87: 944,
+	88: 667, 89: 667, 90: 611, 91: 278, 92: 278, 93: 278, 94: 469, 95: 556,
+	96: 333, 97: 556, 98: 556, 99: 500, 100: 556, 101: 556, 102: 278, 103: 556,
+	104: 556, 105: 222, 106: 222, 107: 500, 108: 222, 109: 833, 110: 556, 111: 556,
+	112: 556, 113: 556, 114: 333, 115: 500, 116: 278, 117: 556, 118: 500, 119: 722,
+	120: 500, 121: 500, 122: 500, 123: 334, 124: 260, 125: 334, 126: 584,
+}
+
+// Standard Helvetica-Bold AFM widths (1/1000 em) for ASCII.
+var helveticaBoldWidths = [256]uint16{
+	32: 278, 33: 333, 34: 474, 35: 556, 36: 556, 37: 889, 38: 722, 39: 238,
+	40: 333, 41: 333, 42: 389, 43: 584, 44: 278, 45: 333, 46: 278, 47: 278,
+	48: 556, 49: 556, 50: 556, 51: 556, 52: 556, 53: 556, 54: 556, 55: 556,
+	56: 556, 57: 556, 58: 333, 59: 333, 60: 584, 61: 584, 62: 584, 63: 611,
+	64: 975, 65: 722, 66: 722, 67: 722, 68: 722, 69: 667, 70: 611, 71: 778,
+	72: 722, 73: 278, 74: 556, 75: 722, 76: 611, 77: 833, 78: 722, 79: 778,
+	80: 667, 81: 778, 82: 722, 83: 667, 84: 611, 85: 722, 86: 667, 87: 944,
+	88: 667, 89: 667, 90: 611, 91: 333, 92: 278, 93: 333, 94: 584, 95: 556,
+	96: 333, 97: 556, 98: 611, 99: 556, 100: 611, 101: 556, 102: 333, 103: 611,
+	104: 611, 105: 278, 106: 278, 107: 556, 108: 278, 109: 889, 110: 611, 111: 611,
+	112: 611, 113: 611, 114: 389, 115: 556, 116: 333, 117: 611, 118: 556, 119: 778,
+	120: 556, 121: 556, 122: 500, 123: 389, 124: 280, 125: 389, 126: 584,
 }
