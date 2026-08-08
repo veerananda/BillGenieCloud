@@ -339,20 +339,12 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupPublicRoutes registers public endpoints (no authentication required)
 func SetupPublicRoutes(router *gin.Engine, db *gorm.DB) {
-	publicHandler := NewPublicHandler(db)
 	leadHandler := NewCustomPlanLeadHandler(services.NewCustomPlanLeadService(db))
 	inviteHandler := NewAccountInviteHandler(services.NewAccountInviteService(db))
 	leadLimit := middleware.RateLimit(10, 15*time.Minute)
 
 	public := router.Group("/public")
 	{
-		// Menu endpoints - accessible without authentication
-		public.GET("/menu", publicHandler.GetPublicMenu)
-		public.GET("/menu/:menu_item_id", publicHandler.GetPublicMenuItem)
-
-		// Restaurant info endpoint
-		public.GET("/restaurant", publicHandler.GetPublicRestaurant)
-
 		// Signup custom-plan sales lead (legacy; prefer account-requests)
 		public.POST("/custom-plan-leads", leadLimit, leadHandler.CreateLead)
 

@@ -117,7 +117,7 @@ Review ops actions: `GET /platform/audit-logs?restaurant_id=&limit=50`
 | `/b/:token` bill | 1h | unauthenticated (128-bit) | restaurant name/address/contact, order lines, optional customer first name — no phone |
 | `/a/:token` assistance | table-bound | unauthenticated (128-bit) | table name, order totals/items when checkout — no email |
 
-Public `/public/restaurant` returns name/address/phone only (email removed in P3).
+Public unauthenticated restaurant/menu-by-id endpoints were removed; customer menu uses `/a/:token`.
 
 ### Verify P3
 
