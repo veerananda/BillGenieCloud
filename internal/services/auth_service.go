@@ -525,7 +525,8 @@ func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
 	return tokenString, nil
 }
 
-// RefreshAccessToken validates refresh token and returns new access token
+// RefreshAccessToken validates the refresh token, rotates it, and returns a new
+// access + refresh pair. Reuse of a already-rotated refresh JWT revokes all sessions.
 func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse, error) {
 	claims, err := s.ValidateRefreshToken(refreshTokenStr)
 	if err != nil {
@@ -535,16 +536,19 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 	refreshToken, err := findRefreshTokenByRaw(s.db, refreshTokenStr)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("refresh token not found or expired")
+			// JWT still cryptographically valid but row gone → likely reuse after rotation.
+			_ = s.RevokeAllSessionsForUser(claims.UserID)
+			return nil, errors.New("refresh token reuse detected; please sign in again")
 		}
 		return nil, err
 	}
-	_ = refreshToken
 
-	// Get user
 	var user models.User
 	if err := s.db.Where("id = ?", claims.UserID).First(&user).Error; err != nil {
 		return nil, errors.New("user not found")
+	}
+	if !user.IsActive {
+		return nil, errors.New("account is inactive")
 	}
 
 	var activeSession models.UserSession
@@ -555,13 +559,21 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 		return nil, err
 	}
 
-	// Generate new access token
+	// Rotate: invalidate presented refresh before issuing a new one.
+	if err := s.db.Where("id = ?", refreshToken.ID).Delete(&models.RefreshToken{}).Error; err != nil {
+		return nil, fmt.Errorf("failed to rotate refresh token: %w", err)
+	}
+
 	newAccessToken, err := s.GenerateAccessToken(&user)
 	if err != nil {
 		return nil, err
 	}
+	newRefreshToken, err := s.GenerateRefreshToken(&user)
+	if err != nil {
+		return nil, err
+	}
 
-	// Keep the previous token valid briefly so concurrent in-flight requests
+	// Keep the previous access token valid briefly so concurrent in-flight requests
 	// that still use the old JWT are not treated as a foreign-device login.
 	graceUntil := time.Now().Add(60 * time.Second)
 	prevStored := activeSession.AccessToken
@@ -579,7 +591,7 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 
 	return &AuthResponse{
 		AccessToken:          newAccessToken,
-		RefreshToken:         refreshTokenStr,
+		RefreshToken:         newRefreshToken,
 		ExpiresIn:            3600, // 1 hour
 		TokenType:            "Bearer",
 		RestaurantID:         user.RestaurantID,

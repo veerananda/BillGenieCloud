@@ -309,13 +309,15 @@ func (c *WebSocketClient) readPump() {
 			break
 		}
 
-		// Log received event
-		log.Printf("📩 Message from %s: %s", c.userID, event.Type)
-
-		// Broadcast to room (e.g., order updates)
-		if event.Type == "order_update" || event.Type == "inventory_update" {
-			event.RoomID = c.roomID
-			c.hub.BroadcastToRoom(c.roomID, event)
+		// Clients may send heartbeats only. Never rebroadcast client-originated
+		// business events (a stolen JWT could otherwise spoof kitchen/order state).
+		switch event.Type {
+		case "ping", "pong", "heartbeat":
+			// keep-alive from client; read deadline already extended via PongHandler
+		default:
+			if event.Type != "" {
+				log.Printf("📩 Ignoring client WS event type=%s from user=%s", event.Type, c.userID)
+			}
 		}
 	}
 }

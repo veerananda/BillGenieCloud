@@ -22,9 +22,10 @@ type platformKeyEntry struct {
 //
 // Auth sources (first match wins):
 //  1. PLATFORM_OPS_API_KEYS — comma-separated actor=secret pairs (preferred; actor bound to key)
-//  2. PLATFORM_OPS_API_KEY  — legacy shared secret; optional X-Platform-Actor header
+//  2. PLATFORM_OPS_API_KEY  — legacy shared secret; actor is always "platform_ops"
 //
-// Optional PLATFORM_OPS_IP_ALLOWLIST — comma-separated IPs or CIDRs (empty = allow all).
+// PLATFORM_OPS_IP_ALLOWLIST — optional comma-separated IPs or CIDRs.
+// Useful only with stable egress; skip when client IPs rotate.
 func PlatformAuthMiddleware() gin.HandlerFunc {
 	entries := loadPlatformKeyEntries()
 	allowlist := parseIPAllowlist(os.Getenv("PLATFORM_OPS_IP_ALLOWLIST"))
@@ -59,13 +60,7 @@ func PlatformAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// When using the legacy shared key, allow an explicit actor label from the header.
-		if actor == "platform_ops" {
-			if hdr := strings.TrimSpace(c.GetHeader("X-Platform-Actor")); hdr != "" {
-				actor = hdr
-			}
-		}
-
+		// Actor is always bound to the API key. X-Platform-Actor is ignored.
 		c.Set("platform_actor", actor)
 		c.Set("platform_client_ip", c.ClientIP())
 		c.Next()

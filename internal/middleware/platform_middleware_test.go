@@ -83,6 +83,30 @@ func TestPlatformAuthIPAllowlist(t *testing.T) {
 	}
 }
 
+func TestPlatformAuthLegacyIgnoresActorHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("PLATFORM_OPS_API_KEYS", "")
+	t.Setenv("PLATFORM_OPS_API_KEY", "legacy-secret")
+	t.Setenv("PLATFORM_OPS_IP_ALLOWLIST", "")
+
+	r := gin.New()
+	r.GET("/platform/ping", PlatformAuthMiddleware(), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"actor": c.GetString("platform_actor")})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/platform/ping", nil)
+	req.Header.Set("X-Platform-Api-Key", "legacy-secret")
+	req.Header.Set("X-Platform-Actor", "attacker")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"actor":"platform_ops"`) {
+		t.Fatalf("expected actor platform_ops, got %s", w.Body.String())
+	}
+}
+
 func TestParseIPAllowlistCIDR(t *testing.T) {
 	rules := parseIPAllowlist("10.0.0.0/8,192.168.1.5")
 	if len(rules) != 2 {

@@ -100,7 +100,7 @@ Optional IP allowlist:
 fly secrets set PLATFORM_OPS_IP_ALLOWLIST="x.x.x.x,y.y.y.y/24" -a billgenie-api
 ```
 
-Legacy `PLATFORM_OPS_API_KEY` still works; when used alone, `X-Platform-Actor` remains a soft label.
+Legacy `PLATFORM_OPS_API_KEY` still works; audit actor is always `platform_ops` (X-Platform-Actor is ignored). Prefer `PLATFORM_OPS_API_KEYS=actor=secret` pairs.
 
 Review ops actions: `GET /platform/audit-logs?restaurant_id=&limit=50`
 
