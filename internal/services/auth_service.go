@@ -43,6 +43,9 @@ type AuthResponse struct {
 	UserID       string `json:"user_id"`
 	Role            string `json:"role"`
 	Name            string `json:"name"`
+	// LoginID / StaffKey are the same value (admin login number or staff key).
+	LoginID             string `json:"login_id"`
+	StaffKey            string `json:"staff_key"`
 	CanCancelOrders     bool   `json:"can_cancel_orders"`
 	CanRestockInventory bool   `json:"can_restock_inventory"`
 	CanDeductInventory  bool   `json:"can_deduct_inventory"`
@@ -452,14 +455,16 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	}
 
 	return &AuthResponse{
-		AccessToken:     accessToken,
-		RefreshToken:    refreshToken,
-		ExpiresIn:       3600, // 1 hour for access token
-		TokenType:       "Bearer",
-		RestaurantID:    user.RestaurantID,
-		UserID:          user.ID,
-		Role:            user.Role,
-		Name:            user.Name,
+		AccessToken:          accessToken,
+		RefreshToken:         refreshToken,
+		ExpiresIn:            3600, // 1 hour for access token
+		TokenType:            "Bearer",
+		RestaurantID:         user.RestaurantID,
+		UserID:               user.ID,
+		Role:                 user.Role,
+		Name:                 user.Name,
+		LoginID:              user.StaffKey,
+		StaffKey:             user.StaffKey,
 		CanCancelOrders:      user.CanCancelOrders,
 		CanRestockInventory:  user.CanRestockInventory,
 		CanDeductInventory:   user.CanDeductInventory,
@@ -599,6 +604,8 @@ func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (*AuthResponse,
 		UserID:               user.ID,
 		Role:                 user.Role,
 		Name:                 user.Name,
+		LoginID:              user.StaffKey,
+		StaffKey:             user.StaffKey,
 		CanCancelOrders:      user.CanCancelOrders,
 		CanRestockInventory:  user.CanRestockInventory,
 		CanDeductInventory:   user.CanDeductInventory,

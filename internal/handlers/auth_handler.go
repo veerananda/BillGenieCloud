@@ -185,11 +185,13 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	log.Printf("✅ Profile retrieved for user: %s", userID)
 
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":           userID,
-		"restaurant_id":     restaurantID,
-		"role":              role,
-		"name":              user.Name,
-		"can_cancel_orders":       user.CanCancelOrders,
+		"user_id":                userID,
+		"restaurant_id":          restaurantID,
+		"role":                   role,
+		"name":                   user.Name,
+		"login_id":               user.StaffKey,
+		"staff_key":              user.StaffKey,
+		"can_cancel_orders":      user.CanCancelOrders,
 		"can_restock_inventory":  user.CanRestockInventory,
 		"can_deduct_inventory":   user.CanDeductInventory,
 		"menu_management_access": user.MenuManagementAccess,
