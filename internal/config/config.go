@@ -99,7 +99,7 @@ func LoadConfig() *Config {
 
 	validateJWTSecrets(cfg)
 	validateCORSOrigins(cfg)
-	warnPlatformOpsAllowlist(cfg)
+	validatePlatformOpsAllowlist(cfg)
 
 	log.Printf("✅ Configuration loaded (Environment: %s)", cfg.Environment)
 	return cfg
@@ -174,12 +174,21 @@ func validateCORSOrigins(cfg *Config) {
 	cfg.CORSAllowedOrigins = origins
 }
 
-func warnPlatformOpsAllowlist(cfg *Config) {
-	if cfg.Environment != "production" {
+func validatePlatformOpsAllowlist(cfg *Config) {
+	hasKeys := strings.TrimSpace(os.Getenv("PLATFORM_OPS_API_KEY")) != "" ||
+		strings.TrimSpace(os.Getenv("PLATFORM_OPS_API_KEYS")) != ""
+	if !hasKeys {
 		return
 	}
-	if strings.TrimSpace(os.Getenv("PLATFORM_OPS_IP_ALLOWLIST")) == "" {
-		log.Println("⚠️  PLATFORM_OPS_IP_ALLOWLIST is empty in production — any IP with the platform API key can call /platform/*")
+	allowlist := strings.TrimSpace(os.Getenv("PLATFORM_OPS_IP_ALLOWLIST"))
+	if cfg.Environment == "production" {
+		if allowlist == "" {
+			log.Fatal("PLATFORM_OPS_IP_ALLOWLIST must be set in production when platform ops keys are configured")
+		}
+		return
+	}
+	if allowlist == "" {
+		log.Println("⚠️  PLATFORM_OPS_IP_ALLOWLIST is empty — any IP with the platform API key can call /platform/*")
 	}
 }
 

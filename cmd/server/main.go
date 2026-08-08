@@ -141,9 +141,15 @@ func main() {
 			return
 		}
 
+		user, err := authService.GetUserByID(claims.UserID)
+		if err != nil || user == nil || !user.IsActive {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "account is inactive or not found"})
+			return
+		}
+
 		c.Set("user_id", claims.UserID)
 		c.Set("restaurant_id", claims.RestaurantID)
-		c.Set("role", claims.Role)
+		c.Set("role", user.Role)
 
 		handlers.HandleWebSocket(c, wsHub)
 	})
