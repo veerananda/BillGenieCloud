@@ -89,9 +89,8 @@ func TableNeedsAssistance(table *models.RestaurantTable) bool {
 }
 
 var (
-	ErrTableVacant          = errors.New("table is vacant")
-	ErrWaiterSessionInvalid = errors.New("waiter session invalid")
-	ErrNoActiveOrder        = errors.New("no active order")
+	ErrTableVacant   = errors.New("table is vacant")
+	ErrNoActiveOrder = errors.New("no active order")
 )
 
 // RequestTableAssistance sets the call-waiter flag. Returns true when this call newly raised it
@@ -163,13 +162,8 @@ type AssistanceStatus struct {
 	IsOccupied          bool   `json:"is_occupied"`
 	AssistanceRequested bool   `json:"assistance_requested"`
 	CallWaiterAllowed   bool   `json:"call_waiter_allowed"`
-	// UnlockRequired means the guest must enter the staff-shown PIN before Call waiter works.
-	UnlockRequired bool `json:"unlock_required"`
-	// VisitID is the live dine-in order id (used by the guest page to bind unlock/session).
-	VisitID        string `json:"visit_id,omitempty"`
-	WaiterSession  string `json:"waiter_session,omitempty"`
-	HasActiveOrder bool   `json:"has_active_order"`
-	MenuVisible    bool   `json:"menu_visible"`
+	HasActiveOrder      bool   `json:"has_active_order"`
+	MenuVisible         bool   `json:"menu_visible"`
 	OrderStatus         string `json:"order_status,omitempty"`
 	ItemCount           int    `json:"item_count"`
 	Items               []AssistanceBillItem `json:"items,omitempty"`
@@ -258,11 +252,8 @@ func BuildAssistanceStatusForTable(db *gorm.DB, orderService *OrderService, tabl
 	status.HasActiveOrder = true
 	status.IsOccupied = true
 	status.CallWaiterAllowed = true
-	status.UnlockRequired = true
-	status.VisitID = order.ID
 	status.OrderStatus = order.Status
 	status.Phase = "seated"
-	// WaiterSession is NOT issued here — guest must unlock with the staff PIN first.
 	status.OrderTotal = order.Total
 	if order.Total <= 0 {
 		status.OrderTotal = order.SubTotal

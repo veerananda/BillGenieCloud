@@ -21,7 +21,12 @@ func TestRequestTableAssistanceRejectsVacant(t *testing.T) {
 
 func TestRequestTableAssistanceIdempotentWhenAlreadyRequested(t *testing.T) {
 	at := time.Now()
-	table := &models.RestaurantTable{IsOccupied: true, AssistanceRequestedAt: &at}
+	orderID := "order-1"
+	table := &models.RestaurantTable{
+		IsOccupied:            true,
+		CurrentOrderID:        &orderID,
+		AssistanceRequestedAt: &at,
+	}
 	newly, err := RequestTableAssistance(nil, table)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)

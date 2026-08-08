@@ -153,16 +153,6 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       </div>
     </header>
     <div class="actions">
-      <div id="unlockPanel" hidden>
-        <p class="hint" style="margin:0 0 10px;color:var(--muted);font-size:.9rem;line-height:1.4;text-align:center">
-          Enter the 4-digit code from staff to enable Call waiter for this visit.
-        </p>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="unlockCode" inputmode="numeric" maxlength="4" placeholder="••••"
-            style="flex:1;font-size:1.25rem;letter-spacing:.3em;text-align:center;padding:12px;border:1px solid var(--line);border-radius:12px;font-weight:700"/>
-          <button class="btn btn-call" id="unlockBtn" type="button" style="flex:0 0 auto;padding:12px 16px">Unlock</button>
-        </div>
-      </div>
       <button class="btn btn-call" id="callBtn" type="button">Call waiter</button>
     </div>
     <p class="note" id="note"></p>
@@ -195,9 +185,6 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     let menuCategories = [];
     let selectedCategory = '';
     const callBtn = document.getElementById('callBtn');
-    const unlockPanel = document.getElementById('unlockPanel');
-    const unlockCode = document.getElementById('unlockCode');
-    const unlockBtn = document.getElementById('unlockBtn');
     const note = document.getElementById('note');
     const itemsPanel = document.getElementById('itemsPanel');
     const itemsList = document.getElementById('itemsList');
@@ -368,61 +355,8 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       }
     }
 
-    let waiterSession = '';
-    let visitId = '';
-    try {
-      const raw = sessionStorage.getItem('bg_waiter_session_' + token);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.visit_id && parsed.session) {
-          visitId = parsed.visit_id;
-          waiterSession = parsed.session;
-        }
-      }
-    } catch (e) {}
-
-    function persistWaiterSession(){
-      try {
-        if (waiterSession && visitId) {
-          sessionStorage.setItem('bg_waiter_session_' + token, JSON.stringify({ visit_id: visitId, session: waiterSession }));
-        } else {
-          sessionStorage.removeItem('bg_waiter_session_' + token);
-        }
-      } catch (e) {}
-    }
-
-    function syncVisit(s){
-      if (!s) return;
-      if (!s.call_waiter_allowed || !s.visit_id) {
-        visitId = '';
-        waiterSession = '';
-        persistWaiterSession();
-        return;
-      }
-      if (s.visit_id !== visitId) {
-        // New seating / order — previous unlock must not carry over.
-        visitId = s.visit_id;
-        waiterSession = '';
-        persistWaiterSession();
-      }
-      if (s.waiter_session) {
-        waiterSession = s.waiter_session;
-        persistWaiterSession();
-      }
-    }
-
-    function effectiveState(s){
-      const copy = Object.assign({}, s || {});
-      if (waiterSession && copy.visit_id && copy.visit_id === visitId && copy.call_waiter_allowed) {
-        copy.unlock_required = false;
-        copy.waiter_session = waiterSession;
-      }
-      return copy;
-    }
-
     function render(s){
-      syncVisit(s || state);
-      state = effectiveState(s || state);
+      state = s || state;
       document.getElementById('restaurant').textContent = state.restaurant_name || 'Restaurant';
       document.getElementById('tableName').textContent = state.table_name || '';
       const metaRow = document.getElementById('metaRow');
@@ -439,22 +373,15 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         metaRow.classList.add('hidden');
       }
 
-      const canCall = !!(state.call_waiter_allowed && waiterSession);
-      const needsUnlock = !!(state.call_waiter_allowed && state.unlock_required && !waiterSession);
-      unlockPanel.hidden = !needsUnlock;
       if (state.assistance_requested) {
         callBtn.disabled = true;
         callBtn.textContent = 'Waiter notified';
         callBtn.hidden = false;
-        unlockPanel.hidden = true;
         note.textContent = 'Staff has been notified. Someone will be with you shortly.';
-      } else if (canCall) {
+      } else if (state.call_waiter_allowed) {
         callBtn.hidden = false;
         callBtn.disabled = false;
         callBtn.textContent = 'Call waiter';
-        note.textContent = '';
-      } else if (needsUnlock) {
-        callBtn.hidden = true;
         note.textContent = '';
       } else {
         callBtn.disabled = true;
@@ -518,66 +445,19 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       } catch (e) {}
     }
 
-    unlockBtn.addEventListener('click', async () => {
-      const code = (unlockCode.value || '').trim();
-      if (!/^\d{4}$/.test(code)) {
-        note.textContent = 'Enter the 4-digit code from staff.';
-        return;
-      }
-      unlockBtn.disabled = true;
-      note.textContent = 'Unlocking…';
-      try {
-        const res = await fetch('/a/' + token + '/unlock', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
-        });
-        const data = await res.json();
-        if (data.waiter_session) {
-          waiterSession = data.waiter_session;
-          if (data.status && data.status.visit_id) visitId = data.status.visit_id;
-          else if (state.visit_id) visitId = state.visit_id;
-          persistWaiterSession();
-        }
-        if (data.status) render(data.status);
-        else await refresh();
-        if (!res.ok) note.textContent = data.error || 'Could not unlock.';
-        else note.textContent = 'Unlocked — you can call a waiter if you need help.';
-      } catch (e) {
-        note.textContent = 'Could not unlock. Please try again.';
-      } finally {
-        unlockBtn.disabled = false;
-      }
-    });
-
     callBtn.addEventListener('click', async () => {
-      if (!(state.call_waiter_allowed && waiterSession)) {
-        note.textContent = 'Ask staff for the table code to unlock Call waiter.';
+      if (!state.call_waiter_allowed) {
+        note.textContent = 'Call waiter is available once you are seated at this table.';
         return;
       }
-      const session = waiterSession;
       callBtn.disabled = true;
       note.textContent = 'Notifying staff…';
       try {
-        const res = await fetch('/a/' + token + '/call-waiter', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Waiter-Session': session,
-          },
-          body: JSON.stringify({ waiter_session: session }),
-        });
+        const res = await fetch('/a/' + token + '/call-waiter', { method: 'POST' });
         const data = await res.json();
         if (data.status) render(data.status);
         else await refresh();
-        if (!res.ok) {
-          note.textContent = data.error || 'Could not notify staff. Please try again.';
-          if (res.status === 403) {
-            waiterSession = '';
-            persistWaiterSession();
-            await refresh();
-          }
-        }
+        if (!res.ok) note.textContent = data.error || 'Could not notify staff. Please try again.';
       } catch (e) {
         note.textContent = 'Could not notify staff. Please try again.';
         callBtn.disabled = false;
