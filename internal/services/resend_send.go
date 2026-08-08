@@ -17,6 +17,8 @@ type resendSendRequest struct {
 	To      []string `json:"to"`
 	Subject string   `json:"subject"`
 	Text    string   `json:"text"`
+	HTML    string   `json:"html,omitempty"`
+	ReplyTo string   `json:"reply_to,omitempty"`
 }
 
 type resendErrorBody struct {
@@ -25,9 +27,9 @@ type resendErrorBody struct {
 	Message    string `json:"message"`
 }
 
-// sendEmailResend sends plain-text mail via Resend's HTTPS API (port 443).
+// sendEmailResend sends mail via Resend's HTTPS API (port 443).
 // Env: RESEND_API_KEY (required), RESEND_FROM or SMTP_FROM (optional From header).
-func sendEmailResend(to, subject, body string) error {
+func sendEmailResend(to string, mail composedEmail) error {
 	apiKey := smtpEnv("RESEND_API_KEY")
 	if apiKey == "" {
 		return fmt.Errorf("resend is not configured (RESEND_API_KEY)")
@@ -35,7 +37,7 @@ func sendEmailResend(to, subject, body string) error {
 
 	from := smtpEnv("RESEND_FROM", "SMTP_FROM")
 	if from == "" {
-		from = "BillGenie <hello@thebillgenie.com>"
+		from = fmt.Sprintf("%s <%s>", emailSenderDisplayName(), defaultSupportEmail)
 	}
 	if _, err := smtpEnvelopeAddress(from); err != nil {
 		return fmt.Errorf("resend from address: %w", err)
@@ -46,11 +48,19 @@ func sendEmailResend(to, subject, body string) error {
 		return fmt.Errorf("resend recipient is empty")
 	}
 
+	subject := strings.TrimSpace(mail.Subject)
+	text := mail.Text
+	if text == "" && mail.HTML != "" {
+		text = "Please view this email in an HTML-capable client."
+	}
+
 	payload, err := json.Marshal(resendSendRequest{
 		From:    from,
 		To:      []string{to},
 		Subject: subject,
-		Text:    body,
+		Text:    text,
+		HTML:    mail.HTML,
+		ReplyTo: supportEmail(),
 	})
 	if err != nil {
 		return fmt.Errorf("resend marshal: %w", err)

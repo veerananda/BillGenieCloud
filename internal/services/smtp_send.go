@@ -40,7 +40,7 @@ func smtpEnvelopeAddress(from string) (string, error) {
 // sendEmailSMTP sends email using SMTP_* env vars (fallback when RESEND_API_KEY is unset).
 // Port 465 uses implicit TLS; other ports use STARTTLS + PLAIN auth.
 // Dial/IO are time-bounded so a blocked SMTP port cannot hang HTTP handlers.
-func sendEmailSMTP(to, subject, body string) error {
+func sendEmailSMTP(to string, mail composedEmail) error {
 	host := smtpEnv("SMTP_HOST")
 	port := smtpEnv("SMTP_PORT")
 	user := smtpEnv("SMTP_USER", "SMTP_MAIL")
@@ -59,15 +59,43 @@ func sendEmailSMTP(to, subject, body string) error {
 		return err
 	}
 
-	msg := []byte(
-		"To: " + to + "\r\n" +
-			"From: " + fromHeader + "\r\n" +
-			"Subject: " + subject + "\r\n" +
-			"MIME-Version: 1.0\r\n" +
-			"Content-Type: text/plain; charset=\"utf-8\"\r\n" +
-			"\r\n" +
-			body,
-	)
+	subject := strings.TrimSpace(mail.Subject)
+	text := mail.Text
+	if text == "" && mail.HTML != "" {
+		text = "Please view this email in an HTML-capable client."
+	}
+
+	var msg []byte
+	replyTo := supportEmail()
+	if strings.TrimSpace(mail.HTML) != "" {
+		boundary := "billgenie_alt_boundary"
+		var b strings.Builder
+		b.WriteString("To: " + to + "\r\n")
+		b.WriteString("From: " + fromHeader + "\r\n")
+		b.WriteString("Reply-To: " + replyTo + "\r\n")
+		b.WriteString("Subject: " + subject + "\r\n")
+		b.WriteString("MIME-Version: 1.0\r\n")
+		b.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n")
+		b.WriteString("--" + boundary + "\r\n")
+		b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n")
+		b.WriteString(text)
+		b.WriteString("\r\n--" + boundary + "\r\n")
+		b.WriteString("Content-Type: text/html; charset=\"utf-8\"\r\n\r\n")
+		b.WriteString(mail.HTML)
+		b.WriteString("\r\n--" + boundary + "--\r\n")
+		msg = []byte(b.String())
+	} else {
+		msg = []byte(
+			"To: " + to + "\r\n" +
+				"From: " + fromHeader + "\r\n" +
+				"Reply-To: " + replyTo + "\r\n" +
+				"Subject: " + subject + "\r\n" +
+				"MIME-Version: 1.0\r\n" +
+				"Content-Type: text/plain; charset=\"utf-8\"\r\n" +
+				"\r\n" +
+				text,
+		)
+	}
 
 	const timeout = 12 * time.Second
 	addr := net.JoinHostPort(host, port)

@@ -766,15 +766,8 @@ func (s *PlatformOpsService) sendApprovalEmail(restaurant *models.Restaurant) {
 		loginHint = admin.StaffKey
 	}
 
-	subject := "Your BillGenie account has been approved"
-	body := fmt.Sprintf(
-		"Hi %s,\n\nGood news - %s has been reviewed and approved by the BillGenie team.\n"+
-			"Your email is verified and your account is now fully active.\n\n"+
-			"Sign in now with your login number: %s\n\n- BillGenie",
-		restaurant.OwnerName, restaurant.Name, loginHint,
-	)
-
-	if err := sendEmail(restaurant.Email, subject, body); err != nil {
+	mail := buildApprovalEmail(restaurant.OwnerName, restaurant.Name, loginHint)
+	if err := sendComposedEmail(restaurant.Email, mail); err != nil {
 		log.Printf("⚠️  Failed to send approval email to %s: %v", restaurant.Email, err)
 	}
 }
