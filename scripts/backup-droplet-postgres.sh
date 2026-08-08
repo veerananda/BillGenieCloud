@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Daily (or on-demand) pg_dump of droplet-local BillGenie Postgres.
+# Daily (or on-demand) pg_dump of BillGenie Postgres on the dedicated DB droplet.
 #
-# Usage (on droplet):
+# Run ON the DB droplet (where billgenie-postgres runs):
 #   ./scripts/backup-droplet-postgres.sh
 #
 # Cron example (daily 03:15 UTC):
