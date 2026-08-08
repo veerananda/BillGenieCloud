@@ -366,7 +366,7 @@ func (s *AccountInviteService) notifyOpsNewRequest(invite models.AccountInvite) 
 		"New account request\n\nLogin ID: %s\nName: %s\nPhone: %s\nRestaurant: %s\nAddress: %s\nCity: %s\nState: %s\nSource: %s\nNotes: %s\n\nSet pricing in platform, then share login ID + register token with the customer.\n",
 		invite.LoginID, invite.Name, invite.Phone, invite.RestaurantName, invite.Address, invite.City, invite.State, invite.Source, invite.Notes,
 	)
-	if err := sendEmailSMTP(to, subject, body); err != nil {
+	if err := sendEmail(to, subject, body); err != nil {
 		fmt.Printf("⚠️ account request ops email failed: %v\n", err)
 	}
 }

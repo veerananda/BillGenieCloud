@@ -774,7 +774,7 @@ func (s *PlatformOpsService) sendApprovalEmail(restaurant *models.Restaurant) {
 		restaurant.OwnerName, restaurant.Name, loginHint,
 	)
 
-	if err := sendEmailSMTP(restaurant.Email, subject, body); err != nil {
+	if err := sendEmail(restaurant.Email, subject, body); err != nil {
 		log.Printf("⚠️  Failed to send approval email to %s: %v", restaurant.Email, err)
 	}
 }
@@ -816,7 +816,7 @@ func (s *PlatformOpsService) sendCustomDealReadyEmail(
 		formatINR(subtotal),
 	)
 
-	if err := sendEmailSMTP(restaurant.Email, subject, body); err != nil {
+	if err := sendEmail(restaurant.Email, subject, body); err != nil {
 		log.Printf("⚠️  Failed to send custom deal ready email to %s: %v", restaurant.Email, err)
 	}
 }
