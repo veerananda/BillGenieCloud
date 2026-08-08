@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"restaurant-api/internal/models"
@@ -195,6 +196,13 @@ func LoggingMiddleware() gin.HandlerFunc {
 // SubscriptionMiddleware checks if restaurant subscription is active.
 // Skips auth/public routes, subscription payment endpoints, and profile read for paywall UI.
 func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
+	type cachedRestaurant struct {
+		restaurant models.Restaurant
+		expiresAt  time.Time
+	}
+	var cache sync.Map // restaurantID string -> cachedRestaurant
+	const cacheTTL = 30 * time.Second
+
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 		if strings.HasPrefix(path, "/auth/") ||
@@ -218,13 +226,27 @@ func SubscriptionMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Check restaurant subscription status
+		rid, _ := restaurantID.(string)
 		var restaurant models.Restaurant
-		if err := db.Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
-			log.Printf("❌ Failed to fetch restaurant: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check subscription status"})
-			c.Abort()
-			return
+		if cached, ok := cache.Load(rid); ok {
+			entry := cached.(cachedRestaurant)
+			if time.Now().Before(entry.expiresAt) {
+				restaurant = entry.restaurant
+			}
+		}
+		if restaurant.ID == "" {
+			if err := db.Select(
+				"id", "is_active", "is_closed", "subscription_end", "subscription_config",
+			).Where("id = ?", restaurantID).First(&restaurant).Error; err != nil {
+				log.Printf("❌ Failed to fetch restaurant: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check subscription status"})
+				c.Abort()
+				return
+			}
+			cache.Store(rid, cachedRestaurant{
+				restaurant: restaurant,
+				expiresAt:  time.Now().Add(cacheTTL),
+			})
 		}
 
 		if !restaurant.IsActive {

@@ -373,6 +373,39 @@ func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// RotateAssistanceQR mints a new fixed table QR token (invalidate old printed sticker).
+// POST /tables/:id/assistance-qr/rotate
+func (h *TableHandler) RotateAssistanceQR(c *gin.Context) {
+	restaurantID := c.GetString("restaurant_id")
+	if restaurantID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	tableID := c.Param("id")
+	var table models.RestaurantTable
+	if err := h.db.Where("id = ? AND restaurant_id = ?", tableID, restaurantID).
+		First(&table).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Table not found"})
+		return
+	}
+
+	token, err := services.RotateTableAssistanceToken(h.db, tableID, restaurantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not rotate table QR"})
+		return
+	}
+	table.AssistanceToken = &token
+
+	c.JSON(http.StatusOK, gin.H{
+		"table_id":         table.ID,
+		"table_name":       table.Name,
+		"assistance_token": token,
+		"assistance_url":   services.BuildAssistanceURL(token),
+		"message":          "Table QR rotated. Reprint and replace the physical sticker.",
+	})
+}
+
 // ClearAssistance clears the call-waiter attention flag for a table.
 // POST /tables/:id/clear-assistance
 func (h *TableHandler) ClearAssistance(c *gin.Context) {
