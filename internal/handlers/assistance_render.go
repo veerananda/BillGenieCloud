@@ -376,8 +376,14 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       if (state.assistance_requested) {
         callBtn.disabled = true;
         callBtn.textContent = 'Waiter notified';
+        callBtn.hidden = false;
         note.textContent = 'Staff has been notified. Someone will be with you shortly.';
+      } else if (state.call_waiter_allowed === false || (!state.is_occupied && !state.has_active_order)) {
+        callBtn.disabled = true;
+        callBtn.hidden = true;
+        note.textContent = 'Call waiter is available once you are seated at this table.';
       } else {
+        callBtn.hidden = false;
         callBtn.disabled = false;
         callBtn.textContent = 'Call waiter';
         note.textContent = '';
@@ -440,6 +446,10 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
 
     callBtn.addEventListener('click', async () => {
+      if (state.call_waiter_allowed === false || (!state.is_occupied && !state.has_active_order)) {
+        note.textContent = 'Call waiter is available once you are seated at this table.';
+        return;
+      }
       callBtn.disabled = true;
       note.textContent = 'Notifying staff…';
       try {
@@ -447,6 +457,9 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         const data = await res.json();
         if (data.status) render(data.status);
         else await refresh();
+        if (!res.ok) {
+          note.textContent = data.error || 'Could not notify staff. Please try again.';
+        }
       } catch (e) {
         note.textContent = 'Could not notify staff. Please try again.';
         callBtn.disabled = false;

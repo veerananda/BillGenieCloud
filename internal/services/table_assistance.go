@@ -88,11 +88,19 @@ func TableNeedsAssistance(table *models.RestaurantTable) bool {
 	return table != nil && table.AssistanceRequestedAt != nil
 }
 
+var (
+	ErrTableVacant = errors.New("table is vacant")
+)
+
 // RequestTableAssistance sets the call-waiter flag. Returns true when this call newly raised it
 // (so staff push can be sent once until cleared).
+// Vacant tables cannot request assistance (prevents abuse from leftover QR page sessions).
 func RequestTableAssistance(db *gorm.DB, table *models.RestaurantTable) (newlyRequested bool, err error) {
 	if table == nil {
 		return false, errors.New("table not found")
+	}
+	if !table.IsOccupied {
+		return false, ErrTableVacant
 	}
 	if table.AssistanceRequestedAt != nil {
 		return false, nil
@@ -212,7 +220,9 @@ func BuildAssistanceStatusForTable(db *gorm.DB, orderService *OrderService, tabl
 	status := &AssistanceStatus{
 		TableName:         table.Name,
 		IsOccupied:        table.IsOccupied,
-		CallWaiterAllowed: true,
+		// Only while guests are seated (occupied). Vacant/idle QR pages can browse
+		// the menu but must not spam call-waiter after leaving.
+		CallWaiterAllowed: table.IsOccupied,
 		Phase:             "idle",
 		MenuVisible:       true,
 	}
@@ -238,6 +248,7 @@ func BuildAssistanceStatusForTable(db *gorm.DB, orderService *OrderService, tabl
 
 	status.HasActiveOrder = true
 	status.IsOccupied = true
+	status.CallWaiterAllowed = true
 	status.OrderStatus = order.Status
 	status.Phase = "seated"
 	status.OrderTotal = order.Total
