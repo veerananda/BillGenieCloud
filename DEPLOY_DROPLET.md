@@ -3,6 +3,81 @@
 Production API: `https://api.thebillgenie.com`  
 Server layout: `/opt/billgenie/app` (git clone) + `/opt/billgenie/.env`
 
+## Postgres on this Droplet (fresh DB)
+
+Prefer a **local Docker Postgres** on the same droplet instead of DigitalOcean Managed Database (cost). Start empty — the API runs GORM AutoMigrate on boot. Do **not** expose port 5432 publicly.
+
+### One-time DB setup
+
+```bash
+cd /opt/billgenie/app
+git pull origin main
+
+# 1) Credentials (chmod 600)
+cp scripts/db.env.example /opt/billgenie/db.env
+nano /opt/billgenie/db.env   # set a long random POSTGRES_PASSWORD
+chmod 600 /opt/billgenie/db.env
+
+# 2) Shared network (API + Postgres)
+docker network create billgenie_net 2>/dev/null || true
+
+# 3) Start Postgres
+docker compose -f docker-compose.droplet-db.yml --env-file /opt/billgenie/db.env up -d
+docker ps --filter name=billgenie-postgres
+docker exec billgenie-postgres pg_isready -U billgenie -d billgenie
+```
+
+### Point the API at local Postgres
+
+Edit `/opt/billgenie/.env` — replace the managed `DATABASE_URL` with:
+
+```bash
+DATABASE_URL=postgresql://billgenie:YOUR_PASSWORD@billgenie-postgres:5432/billgenie?sslmode=disable
+```
+
+**Required:** include `sslmode=disable`. In production the app otherwise appends `sslmode=require`, which fails against plain Docker Postgres.
+
+Then redeploy so the API joins `billgenie_net`:
+
+```bash
+cd /opt/billgenie/app
+chmod +x scripts/deploy-droplet.sh scripts/backup-droplet-postgres.sh
+./scripts/deploy-droplet.sh
+```
+
+### Verify
+
+```bash
+curl -fsS https://api.thebillgenie.com/health
+docker logs billgenie-api 2>&1 | grep -iE 'Database connected|migrations|Failed to connect'
+```
+
+Register a test restaurant or use platform ops against the empty DB. When healthy, **destroy the Managed Database** in the DigitalOcean console to stop billing.
+
+### Backups
+
+```bash
+./scripts/backup-droplet-postgres.sh
+# files under /opt/billgenie/backups/*.sql.gz
+```
+
+Cron (daily 03:15 UTC, keep 14 days via script default):
+
+```bash
+crontab -e
+# add:
+15 3 * * * /opt/billgenie/app/scripts/backup-droplet-postgres.sh >>/var/log/billgenie-pg-backup.log 2>&1
+```
+
+Occasionally copy a dump off the droplet (laptop / object storage).
+
+### Firewall
+
+- DO Cloud Firewall / UFW: allow 80/443 (and SSH). **Do not** open 5432 to the world.
+- Compose already binds host Postgres to `127.0.0.1:5432` only.
+
+---
+
 ## One-time server setup (nginx upstream)
 
 Blue/green deploys need nginx to proxy via named upstream `billgenie_backend`.
@@ -61,10 +136,11 @@ chmod +x scripts/deploy-droplet.sh
 What it does:
 
 1. Builds `billgenie-api:<git-sha>` and tags `billgenie-api:latest`
-2. Starts a **new** container on the idle port (`3000` or `3001`)
-3. Waits until `http://127.0.0.1:<port>/health` succeeds
-4. Points nginx upstream at the new port and reloads
-5. Removes the old container and renames the new one to `billgenie-api`
+2. Ensures Docker network `billgenie_net` exists (for local Postgres)
+3. Starts a **new** container on the idle port (`3000` or `3001`) on that network
+4. Waits until `http://127.0.0.1:<port>/health` succeeds
+5. Points nginx upstream at the new port and reloads
+6. Removes the old container and renames the new one to `billgenie-api`
 
 ---
 
