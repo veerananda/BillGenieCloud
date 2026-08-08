@@ -1,0 +1,42 @@
+# Postgres on a dedicated DigitalOcean Droplet (not Managed Database).
+# Fresh empty DB — API GORM AutoMigrate creates schema on first connect.
+#
+# Run this compose ON the DB droplet only. API droplet points DATABASE_URL at
+# this host's VPC private IP (see DEPLOY_DB_DROPLET.md).
+#
+# One-time (on DB droplet):
+#   1. cp scripts/db.env.example /opt/billgenie/db.env  # set strong password
+#   2. docker compose -f docker-compose.droplet-db.yml --env-file /opt/billgenie/db.env up -d
+#   3. UFW / DO firewall: allow 5432 only from the API droplet private IP
+#
+# Requires Docker Compose v2.
+
+name: billgenie-db
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: billgenie-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-billgenie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in /opt/billgenie/db.env}
+      POSTGRES_DB: ${POSTGRES_DB:-billgenie}
+    # Bound for VPC access from the API droplet. Never open 5432 to 0.0.0.0/0
+    # in DO Cloud Firewall / UFW — allow only the API private IP.
+    ports:
+      - "${POSTGRES_BIND_HOST:0.0.0.0}:5432:5432"
+    volumes:
+      - billgenie_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-billgenie} -d ${POSTGRES_DB:-billgenie}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  billgenie_pgdata:

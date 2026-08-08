@@ -3,6 +3,25 @@
 Production API: `https://api.thebillgenie.com`  
 Server layout: `/opt/billgenie/app` (git clone) + `/opt/billgenie/.env`
 
+## Postgres (dedicated DB droplet)
+
+Production Postgres runs on a **separate** DigitalOcean droplet (not Managed Database, not on this API box).
+
+Full create + firewall + compose steps: **[DEPLOY_DB_DROPLET.md](./DEPLOY_DB_DROPLET.md)**
+
+On this API droplet you only set:
+
+```bash
+# /opt/billgenie/.env — use the DB droplet's VPC private IP
+DATABASE_URL=postgresql://billgenie:YOUR_PASSWORD@DB_PRIVATE_IP:5432/billgenie?sslmode=disable
+```
+
+Then `./scripts/deploy-droplet.sh`. Include `sslmode=disable` or the app will force `sslmode=require` in production.
+
+After smoke tests, destroy the old **Managed Database** in the DO console.
+
+---
+
 ## One-time server setup (nginx upstream)
 
 Blue/green deploys need nginx to proxy via named upstream `billgenie_backend`.
@@ -61,10 +80,11 @@ chmod +x scripts/deploy-droplet.sh
 What it does:
 
 1. Builds `billgenie-api:<git-sha>` and tags `billgenie-api:latest`
-2. Starts a **new** container on the idle port (`3000` or `3001`)
-3. Waits until `http://127.0.0.1:<port>/health` succeeds
-4. Points nginx upstream at the new port and reloads
-5. Removes the old container and renames the new one to `billgenie-api`
+2. Ensures Docker network `billgenie_net` exists (optional; for future local sidecars)
+3. Starts a **new** container on the idle port (`3000` or `3001`)
+4. Waits until `http://127.0.0.1:<port>/health` succeeds
+5. Points nginx upstream at the new port and reloads
+6. Removes the old container and renames the new one to `billgenie-api`
 
 ---
 

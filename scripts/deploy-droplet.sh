@@ -17,6 +17,7 @@ set -euo pipefail
 APP_NAME="${APP_NAME:-billgenie-api}"
 ENV_FILE="${ENV_FILE:-/opt/billgenie/.env}"
 UPSTREAM_CONF="${UPSTREAM_CONF:-/etc/nginx/conf.d/billgenie-upstream.conf}"
+DOCKER_NETWORK="${DOCKER_NETWORK:-billgenie_net}"
 HEALTH_PATH="${HEALTH_PATH:-/health}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
 HEALTH_SLEEP_SEC="${HEALTH_SLEEP_SEC:-2}"
@@ -153,10 +154,17 @@ fi
 log "removing any leftover ${NEXT_NAME}"
 docker rm -f "$NEXT_NAME" >/dev/null 2>&1 || true
 
-log "starting ${NEXT_NAME} on 127.0.0.1:${NEXT_PORT}"
+# Shared network with billgenie-postgres (see docker-compose.droplet-db.yml).
+if ! docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1; then
+  log "creating docker network ${DOCKER_NETWORK}"
+  docker network create "$DOCKER_NETWORK" >/dev/null
+fi
+
+log "starting ${NEXT_NAME} on 127.0.0.1:${NEXT_PORT} (network ${DOCKER_NETWORK})"
 docker run -d \
   --name "$NEXT_NAME" \
   --restart unless-stopped \
+  --network "$DOCKER_NETWORK" \
   --env-file "$ENV_FILE" \
   -e ENABLE_LOGGING="${ENABLE_LOGGING:-true}" \
   -p "127.0.0.1:${NEXT_PORT}:3000" \
