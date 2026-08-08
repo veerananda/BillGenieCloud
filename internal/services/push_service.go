@@ -152,12 +152,13 @@ func (s *PushService) notifyRestaurantStaff(restaurantID, alertType, title, body
 }
 
 func pushSoundForAlert(alertType string) (sound, channel string) {
+	// Filenames must match Android resource rules (a-z, 0-9, _) — no hyphens.
 	switch alertType {
 	case PushAlertItemsReady:
-		return "items-ready.wav", "items_ready"
+		return "items_ready.wav", "items_ready"
 	case PushAlertItemCancelled:
-		return "item-cancelled.wav", "item_cancelled"
+		return "item_cancelled.wav", "item_cancelled"
 	default:
-		return "assistance-alert.wav", "assistance"
+		return "assistance_alert.wav", "assistance"
 	}
 }
