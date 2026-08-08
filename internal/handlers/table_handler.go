@@ -369,6 +369,7 @@ func (h *TableHandler) GetAssistanceQR(c *gin.Context) {
 	}
 	if table.CurrentOrderID != nil && strings.TrimSpace(*table.CurrentOrderID) != "" {
 		resp["order_id"] = *table.CurrentOrderID
+		resp["unlock_code"] = services.DeriveAssistanceUnlockCode(*table.CurrentOrderID)
 	}
 	c.JSON(http.StatusOK, resp)
 }

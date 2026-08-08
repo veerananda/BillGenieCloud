@@ -89,18 +89,23 @@ func TableNeedsAssistance(table *models.RestaurantTable) bool {
 }
 
 var (
-	ErrTableVacant = errors.New("table is vacant")
+	ErrTableVacant          = errors.New("table is vacant")
+	ErrWaiterSessionInvalid = errors.New("waiter session invalid")
+	ErrNoActiveOrder        = errors.New("no active order")
 )
 
 // RequestTableAssistance sets the call-waiter flag. Returns true when this call newly raised it
 // (so staff push can be sent once until cleared).
-// Vacant tables cannot request assistance (prevents abuse from leftover QR page sessions).
+// Requires an occupied table with a live order (vacant / idle QR sessions cannot alert staff).
 func RequestTableAssistance(db *gorm.DB, table *models.RestaurantTable) (newlyRequested bool, err error) {
 	if table == nil {
 		return false, errors.New("table not found")
 	}
 	if !table.IsOccupied {
 		return false, ErrTableVacant
+	}
+	if table.CurrentOrderID == nil || strings.TrimSpace(*table.CurrentOrderID) == "" {
+		return false, ErrNoActiveOrder
 	}
 	if table.AssistanceRequestedAt != nil {
 		return false, nil
@@ -158,8 +163,13 @@ type AssistanceStatus struct {
 	IsOccupied          bool   `json:"is_occupied"`
 	AssistanceRequested bool   `json:"assistance_requested"`
 	CallWaiterAllowed   bool   `json:"call_waiter_allowed"`
-	HasActiveOrder      bool   `json:"has_active_order"`
-	MenuVisible         bool   `json:"menu_visible"`
+	// UnlockRequired means the guest must enter the staff-shown PIN before Call waiter works.
+	UnlockRequired bool `json:"unlock_required"`
+	// VisitID is the live dine-in order id (used by the guest page to bind unlock/session).
+	VisitID        string `json:"visit_id,omitempty"`
+	WaiterSession  string `json:"waiter_session,omitempty"`
+	HasActiveOrder bool   `json:"has_active_order"`
+	MenuVisible    bool   `json:"menu_visible"`
 	OrderStatus         string `json:"order_status,omitempty"`
 	ItemCount           int    `json:"item_count"`
 	Items               []AssistanceBillItem `json:"items,omitempty"`
@@ -218,11 +228,10 @@ func BuildAssistanceStatusForTable(db *gorm.DB, orderService *OrderService, tabl
 	}
 
 	status := &AssistanceStatus{
-		TableName:         table.Name,
-		IsOccupied:        table.IsOccupied,
-		// Only while guests are seated (occupied). Vacant/idle QR pages can browse
-		// the menu but must not spam call-waiter after leaving.
-		CallWaiterAllowed: table.IsOccupied,
+		TableName:  table.Name,
+		IsOccupied: table.IsOccupied,
+		// Call waiter only for the live dine-in order (not vacant, not "occupied" with no order).
+		CallWaiterAllowed: false,
 		Phase:             "idle",
 		MenuVisible:       true,
 	}
@@ -249,8 +258,11 @@ func BuildAssistanceStatusForTable(db *gorm.DB, orderService *OrderService, tabl
 	status.HasActiveOrder = true
 	status.IsOccupied = true
 	status.CallWaiterAllowed = true
+	status.UnlockRequired = true
+	status.VisitID = order.ID
 	status.OrderStatus = order.Status
 	status.Phase = "seated"
+	// WaiterSession is NOT issued here — guest must unlock with the staff PIN first.
 	status.OrderTotal = order.Total
 	if order.Total <= 0 {
 		status.OrderTotal = order.SubTotal

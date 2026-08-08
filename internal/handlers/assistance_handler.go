@@ -38,6 +38,7 @@ func SetupAssistanceRoutes(router *gin.Engine, db *gorm.DB) {
 	router.GET("/a/:token/events", handler.AssistanceEvents)
 	router.GET("/a/:token/menu", handler.AssistanceMenu)
 	router.POST("/a/:token/call-waiter", callWaiterLimit, handler.CallWaiter)
+	router.POST("/a/:token/unlock", callWaiterLimit, handler.UnlockWaiterSession)
 	log.Println("✅ Customer table session routes registered at /a/:token")
 }
 
@@ -170,6 +171,53 @@ func (h *AssistanceHandler) AssistanceEvents(c *gin.Context) {
 	}
 }
 
+func (h *AssistanceHandler) UnlockWaiterSession(c *gin.Context) {
+	token := c.Param("token")
+	table, err := services.ResolveTableByAssistanceToken(h.db, token)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Table link not found."})
+		return
+	}
+	if !table.IsOccupied || table.CurrentOrderID == nil || strings.TrimSpace(*table.CurrentOrderID) == "" {
+		status, _ := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "No active seating at this table yet.",
+			"status": status,
+		})
+		return
+	}
+
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Enter the 4-digit code from staff."})
+		return
+	}
+	want := services.DeriveAssistanceUnlockCode(*table.CurrentOrderID)
+	got := strings.TrimSpace(body.Code)
+	if want == "" || got != want {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Incorrect code. Ask staff for the current table code."})
+		return
+	}
+
+	sess, err := services.IssueWaiterSession(table.ID, *table.CurrentOrderID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not unlock call waiter."})
+		return
+	}
+	status, _ := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
+	if status != nil {
+		status.WaiterSession = sess
+		status.UnlockRequired = false
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "Unlocked",
+		"waiter_session": sess,
+		"status":         status,
+	})
+}
+
 func (h *AssistanceHandler) CallWaiter(c *gin.Context) {
 	token := c.Param("token")
 	table, err := services.ResolveTableByAssistanceToken(h.db, token)
@@ -177,17 +225,35 @@ func (h *AssistanceHandler) CallWaiter(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Table link not found."})
 		return
 	}
-	if !table.IsOccupied {
+	if !table.IsOccupied || table.CurrentOrderID == nil || strings.TrimSpace(*table.CurrentOrderID) == "" {
 		status, _ := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
 		if status != nil {
 			publishAssistanceStatusForTable(table, *status)
 		}
 		c.JSON(http.StatusConflict, gin.H{
-			"error":  "This table is vacant. Call waiter is only available while you are seated.",
+			"error":  "Call waiter is only available while you are seated with an active order.",
 			"status": status,
 		})
 		return
 	}
+
+	var body struct {
+		WaiterSession string `json:"waiter_session"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	sessionTok := strings.TrimSpace(body.WaiterSession)
+	if sessionTok == "" {
+		sessionTok = strings.TrimSpace(c.GetHeader("X-Waiter-Session"))
+	}
+	if err := services.ValidateWaiterSession(sessionTok, table.ID, *table.CurrentOrderID); err != nil {
+		status, _ := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":  "Ask staff for this seating's Call waiter code, then unlock on this page.",
+			"status": status,
+		})
+		return
+	}
+
 	if err := services.EnsureTableAssistanceToken(h.db, table); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not open table session."})
 		return
@@ -195,10 +261,10 @@ func (h *AssistanceHandler) CallWaiter(c *gin.Context) {
 
 	newly, err := services.RequestTableAssistance(h.db, table)
 	if err != nil {
-		if errors.Is(err, services.ErrTableVacant) {
+		if errors.Is(err, services.ErrTableVacant) || errors.Is(err, services.ErrNoActiveOrder) {
 			status, _ := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
 			c.JSON(http.StatusConflict, gin.H{
-				"error":  "This table is vacant. Call waiter is only available while you are seated.",
+				"error":  "Call waiter is only available while you are seated with an active order.",
 				"status": status,
 			})
 			return
