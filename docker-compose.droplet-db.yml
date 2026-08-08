@@ -22,10 +22,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-billgenie}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in /opt/billgenie/db.env}
       POSTGRES_DB: ${POSTGRES_DB:-billgenie}
-    # Bound for VPC access from the API droplet. Never open 5432 to 0.0.0.0/0
-    # in DO Cloud Firewall / UFW — allow only the API private IP.
+    # Published on all interfaces; restrict with DO Cloud Firewall / UFW
+    # (API droplet private IP only — never 0.0.0.0/0 on 5432).
     ports:
-      - "${POSTGRES_BIND_HOST:0.0.0.0}:5432:5432"
+      - "5432:5432"
     volumes:
       - billgenie_pgdata:/var/lib/postgresql/data
     healthcheck:
