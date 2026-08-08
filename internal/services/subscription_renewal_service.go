@@ -675,7 +675,7 @@ func (s *SubscriptionRenewalService) notifyCustomDealRequestSubmitted(
 		req.ContactPhone,
 		req.Notes,
 	)
-	if err := sendEmailSMTP(to, subject, body); err != nil {
+	if err := sendEmail(to, subject, body); err != nil {
 		// Non-fatal — request is already stored for platform list.
 		fmt.Printf("custom deal request notify email failed: %v\n", err)
 	}
@@ -721,7 +721,7 @@ func (s *SubscriptionRenewalService) NotifyPlanChangeRequest(restaurantID, notes
 		dealSummary,
 		strings.TrimSpace(notes),
 	)
-	if err := sendEmailSMTP(to, subject, body); err != nil {
+	if err := sendEmail(to, subject, body); err != nil {
 		return fmt.Errorf("failed to notify BillGenie: %w", err)
 	}
 	return nil

@@ -37,7 +37,7 @@ func smtpEnvelopeAddress(from string) (string, error) {
 	return addr.Address, nil
 }
 
-// sendEmailSMTP sends email using SMTP_* env vars.
+// sendEmailSMTP sends email using SMTP_* env vars (fallback when RESEND_API_KEY is unset).
 // Port 465 uses implicit TLS; other ports use STARTTLS + PLAIN auth.
 // Dial/IO are time-bounded so a blocked SMTP port cannot hang HTTP handlers.
 func sendEmailSMTP(to, subject, body string) error {

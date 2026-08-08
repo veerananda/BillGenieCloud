@@ -272,7 +272,7 @@ func (s *AuthService) SendVerificationEmail(restaurantID, email string) (string,
 		verificationLink,
 	)
 
-	if err := sendEmailSMTP(email, subject, body); err != nil {
+	if err := sendEmail(email, subject, body); err != nil {
 		fmt.Printf("❌ Failed to send verification email to %s: %v\n", email, err)
 		return verificationLink, err
 	}
@@ -948,7 +948,7 @@ func (s *AuthService) ForgotPassword(identifier string) (string, error) {
 		resetLink,
 	)
 
-	if err := sendEmailSMTP(user.Email, subject, body); err != nil {
+	if err := sendEmail(user.Email, subject, body); err != nil {
 		return "", fmt.Errorf("failed to send reset email: %w", err)
 	}
 
@@ -1086,7 +1086,7 @@ func (s *AuthService) RequestLoginRecovery(identifier string) error {
 		otp,
 	)
 
-	if err := sendEmailSMTP(user.Email, subject, body); err != nil {
+	if err := sendEmail(user.Email, subject, body); err != nil {
 		return fmt.Errorf("failed to send recovery email: %w", err)
 	}
 
