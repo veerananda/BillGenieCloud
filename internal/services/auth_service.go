@@ -268,14 +268,15 @@ func (s *AuthService) SendVerificationEmail(restaurantID, email string) (string,
 	publicBase := publicAppBaseURL()
 	verificationLink := fmt.Sprintf("%s/verify-email?token=%s", publicBase, token)
 
-	subject := "Verify your BillGenie email"
-	body := fmt.Sprintf(
-		"Hi,\n\nPlease verify your email by opening this link:\n%s\n\n"+
-			"This link expires in 24 hours. You must verify before you can sign in.\n\n- BillGenie",
-		verificationLink,
-	)
+	ownerName, restaurantName := "", ""
+	var restaurant models.Restaurant
+	if err := s.db.Select("owner_name", "name").Where("id = ?", restaurantID).First(&restaurant).Error; err == nil {
+		ownerName = restaurant.OwnerName
+		restaurantName = restaurant.Name
+	}
 
-	if err := sendEmail(email, subject, body); err != nil {
+	mail := buildVerificationEmail(ownerName, restaurantName, verificationLink)
+	if err := sendComposedEmail(email, mail); err != nil {
 		fmt.Printf("❌ Failed to send verification email to %s: %v\n", email, err)
 		return verificationLink, err
 	}
