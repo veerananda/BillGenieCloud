@@ -43,8 +43,8 @@ func SetupAuthRoutes(router *gin.Engine, db *gorm.DB) {
 		public.POST("/auth/reset-password", authStrict, authHandler.ResetPassword)
 		public.POST("/auth/forgot-login-id", authStrict, authHandler.ForgotLoginID)
 		public.POST("/auth/verify-login-recovery", authStrict, authHandler.VerifyLoginRecovery)
-		public.POST("/auth/verify-email", authHandler.VerifyEmail)
-		public.GET("/auth/verification-status", authHandler.GetVerificationStatus)
+		public.POST("/auth/verify-email", authStrict, authHandler.VerifyEmail)
+		public.GET("/auth/verification-status", authStrict, authHandler.GetVerificationStatus)
 		public.POST("/auth/resend-verification", authStrict, authHandler.ResendVerificationEmail)
 		public.GET("/health", authHandler.HealthCheck)
 	}
@@ -239,6 +239,7 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 		tablesOps.POST("", tableHandler.CreateTable)
 		tablesOps.PUT("/:id", tableHandler.UpdateTable)
 		tablesOps.DELETE("/:id", tableHandler.DeleteTable)
+		tablesOps.POST("/:id/assistance-qr/rotate", tableHandler.RotateAssistanceQR)
 	}
 
 	log.Println("✅ Table routes registered")
@@ -250,6 +251,7 @@ func SetupTableRoutes(router *gin.Engine, db *gorm.DB) {
 	log.Println("   📍 PUT    /tables/:id/occupy (auth required - any role)")
 	log.Println("   📍 PUT    /tables/:id/vacant (auth required - any role)")
 	log.Println("   📍 GET    /tables/:id/assistance-qr (auth required - any role)")
+	log.Println("   📍 POST   /tables/:id/assistance-qr/rotate (admin/manager)")
 	log.Println("   📍 POST   /tables/:id/clear-assistance (auth required - any role)")
 }
 
@@ -337,20 +339,12 @@ func SetupIngredientRoutes(router *gin.Engine, db *gorm.DB) {
 
 // SetupPublicRoutes registers public endpoints (no authentication required)
 func SetupPublicRoutes(router *gin.Engine, db *gorm.DB) {
-	publicHandler := NewPublicHandler(db)
 	leadHandler := NewCustomPlanLeadHandler(services.NewCustomPlanLeadService(db))
 	inviteHandler := NewAccountInviteHandler(services.NewAccountInviteService(db))
 	leadLimit := middleware.RateLimit(10, 15*time.Minute)
 
 	public := router.Group("/public")
 	{
-		// Menu endpoints - accessible without authentication
-		public.GET("/menu", publicHandler.GetPublicMenu)
-		public.GET("/menu/:menu_item_id", publicHandler.GetPublicMenuItem)
-
-		// Restaurant info endpoint
-		public.GET("/restaurant", publicHandler.GetPublicRestaurant)
-
 		// Signup custom-plan sales lead (legacy; prefer account-requests)
 		public.POST("/custom-plan-leads", leadLimit, leadHandler.CreateLead)
 

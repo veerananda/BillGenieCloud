@@ -433,8 +433,8 @@ func (h *AuthHandler) GetVerificationStatus(c *gin.Context) {
 
 	verified, err := h.authService.GetEmailVerificationStatus(restaurantID, email)
 	if err != nil {
-		log.Printf("❌ Verification status error: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Avoid email↔restaurant enumeration: same shape for unknown pairs.
+		c.JSON(http.StatusOK, gin.H{"is_email_verified": false})
 		return
 	}
 

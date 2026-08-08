@@ -15,7 +15,7 @@ import (
 func BuildAssistanceURL(token string) string {
 	base := strings.TrimRight(os.Getenv("API_BASE_URL"), "/")
 	if base == "" {
-		base = "https://billgenie-api.fly.dev"
+		base = "https://api.thebillgenie.com"
 	}
 	return base + "/a/" + token
 }
@@ -37,6 +37,25 @@ func EnsureTableAssistanceToken(db *gorm.DB, table *models.RestaurantTable) erro
 	}
 	table.AssistanceToken = &token
 	return nil
+}
+
+// RotateTableAssistanceToken replaces the table customer QR token.
+// Use when reprinting a compromised sticker — not on every vacant (printed QRs stay fixed).
+func RotateTableAssistanceToken(db *gorm.DB, tableID, restaurantID string) (string, error) {
+	token, err := GenerateTrackingToken()
+	if err != nil {
+		return "", err
+	}
+	res := db.Model(&models.RestaurantTable{}).
+		Where("id = ? AND restaurant_id = ?", tableID, restaurantID).
+		Update("assistance_token", token)
+	if res.Error != nil {
+		return "", res.Error
+	}
+	if res.RowsAffected == 0 {
+		return "", errors.New("table not found")
+	}
+	return token, nil
 }
 
 // EnsureOrderAssistanceToken kept for counter tracking / legacy callers.
