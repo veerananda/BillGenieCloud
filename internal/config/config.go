@@ -180,16 +180,14 @@ func validatePlatformOpsAllowlist(cfg *Config) {
 	if !hasKeys {
 		return
 	}
-	allowlist := strings.TrimSpace(os.Getenv("PLATFORM_OPS_IP_ALLOWLIST"))
-	if cfg.Environment == "production" {
-		if allowlist == "" {
-			log.Fatal("PLATFORM_OPS_IP_ALLOWLIST must be set in production when platform ops keys are configured")
-		}
+	if strings.TrimSpace(os.Getenv("PLATFORM_OPS_IP_ALLOWLIST")) != "" {
 		return
 	}
-	if allowlist == "" {
-		log.Println("⚠️  PLATFORM_OPS_IP_ALLOWLIST is empty — any IP with the platform API key can call /platform/*")
+	if cfg.Environment == "production" {
+		log.Println("⚠️  PLATFORM_OPS_IP_ALLOWLIST is empty in production — platform routes rely on API key strength only (IPs often rotate; allowlist is optional)")
+		return
 	}
+	log.Println("⚠️  PLATFORM_OPS_IP_ALLOWLIST is empty — any IP with the platform API key can call /platform/*")
 }
 
 func localhostCORSOrigins() []string {

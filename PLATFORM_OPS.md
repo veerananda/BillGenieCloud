@@ -13,8 +13,9 @@ PLATFORM_OPS_API_KEYS=veera=<long-secret>,mani=<long-secret>
 # Or legacy single key (audit actor is always "platform_ops")
 PLATFORM_OPS_API_KEY=<generate-long-random-string>
 
-# Required in production when any platform key is set
-PLATFORM_OPS_IP_ALLOWLIST=203.0.113.10,10.0.0.0/8
+# Optional IP/CIDR allowlist. Skip if your client IPs rotate (home/mobile ISP).
+# Prefer strong per-actor keys + hosting the platform console behind your own auth.
+# PLATFORM_OPS_IP_ALLOWLIST=203.0.113.10,10.0.0.0/8
 ```
 
 Generate (PowerShell):
@@ -36,6 +37,8 @@ X-Platform-Api-Key: <secret for this actor>
 Or: `Authorization: Bearer <secret>`
 
 Audit `actor` comes from the key mapping (`PLATFORM_OPS_API_KEYS`), or `platform_ops` for the legacy single key. Do not send `X-Platform-Actor` — it is ignored.
+
+`PLATFORM_OPS_IP_ALLOWLIST` is optional. Use it only if you have a **stable egress IP** (office static IP, VPN, or cloud NAT). Rotating residential/mobile IPs should not use an allowlist.
 ## Endpoints
 
 ### `GET /platform/restaurants`
