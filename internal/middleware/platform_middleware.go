@@ -24,8 +24,8 @@ type platformKeyEntry struct {
 //  1. PLATFORM_OPS_API_KEYS — comma-separated actor=secret pairs (preferred; actor bound to key)
 //  2. PLATFORM_OPS_API_KEY  — legacy shared secret; actor is always "platform_ops"
 //
-// PLATFORM_OPS_IP_ALLOWLIST — comma-separated IPs or CIDRs.
-// Required in production when any platform key is configured (enforced at config load).
+// PLATFORM_OPS_IP_ALLOWLIST — optional comma-separated IPs or CIDRs.
+// Useful only with stable egress; skip when client IPs rotate.
 func PlatformAuthMiddleware() gin.HandlerFunc {
 	entries := loadPlatformKeyEntries()
 	allowlist := parseIPAllowlist(os.Getenv("PLATFORM_OPS_IP_ALLOWLIST"))
