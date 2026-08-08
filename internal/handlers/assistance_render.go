@@ -376,11 +376,17 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
       if (state.assistance_requested) {
         callBtn.disabled = true;
         callBtn.textContent = 'Waiter notified';
+        callBtn.hidden = false;
         note.textContent = 'Staff has been notified. Someone will be with you shortly.';
-      } else {
+      } else if (state.call_waiter_allowed) {
+        callBtn.hidden = false;
         callBtn.disabled = false;
         callBtn.textContent = 'Call waiter';
         note.textContent = '';
+      } else {
+        callBtn.disabled = true;
+        callBtn.hidden = true;
+        note.textContent = 'Call waiter is available once you are seated at this table.';
       }
 
       const showBill = !!(state.bill_available && state.bill_url);
@@ -440,6 +446,10 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
     }
 
     callBtn.addEventListener('click', async () => {
+      if (!state.call_waiter_allowed) {
+        note.textContent = 'Call waiter is available once you are seated at this table.';
+        return;
+      }
       callBtn.disabled = true;
       note.textContent = 'Notifying staff…';
       try {
@@ -447,6 +457,7 @@ func renderAssistancePageHTML(token string, status services.AssistanceStatus) st
         const data = await res.json();
         if (data.status) render(data.status);
         else await refresh();
+        if (!res.ok) note.textContent = data.error || 'Could not notify staff. Please try again.';
       } catch (e) {
         note.textContent = 'Could not notify staff. Please try again.';
         callBtn.disabled = false;

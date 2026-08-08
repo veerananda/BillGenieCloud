@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -176,6 +177,18 @@ func (h *AssistanceHandler) CallWaiter(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Table link not found."})
 		return
 	}
+	if !table.IsOccupied || table.CurrentOrderID == nil || strings.TrimSpace(*table.CurrentOrderID) == "" {
+		status, _ := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
+		if status != nil {
+			publishAssistanceStatusForTable(table, *status)
+		}
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "Call waiter is only available while you are seated with an active order.",
+			"status": status,
+		})
+		return
+	}
+
 	if err := services.EnsureTableAssistanceToken(h.db, table); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not open table session."})
 		return
@@ -183,6 +196,14 @@ func (h *AssistanceHandler) CallWaiter(c *gin.Context) {
 
 	newly, err := services.RequestTableAssistance(h.db, table)
 	if err != nil {
+		if errors.Is(err, services.ErrTableVacant) || errors.Is(err, services.ErrNoActiveOrder) {
+			status, _ := services.BuildAssistanceStatusForTable(h.db, h.orderService, table)
+			c.JSON(http.StatusConflict, gin.H{
+				"error":  "Call waiter is only available while you are seated with an active order.",
+				"status": status,
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not notify staff"})
 		return
 	}
